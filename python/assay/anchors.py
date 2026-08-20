@@ -36,10 +36,17 @@ from .checks import find_runners
 
 
 def anchors_of(path):
-    """Every anchor string a harness's MUTATIONS table carries."""
+    """(anchors, unreadable). Every anchor a harness's MUTATIONS table carries.
+
+    `unreadable` holds the LABELS of entries carrying more strings than the two
+    documented shapes, where the anchor cannot be identified without guessing. Those
+    are reported as a `look` rather than counted: a wrong conviction about a table
+    this audit has never seen is worse than saying it could not tell.
+    """
     with open(path, encoding="utf-8") as fh:
         tree = ast.parse(fh.read())
     found = []
+    unreadable = []
     for node in ast.walk(tree):
         if isinstance(node, ast.AugAssign):
             names = [node.target.id] if isinstance(node.target, ast.Name) else []
@@ -52,19 +59,25 @@ def anchors_of(path):
         for elt in getattr(node.value, "elts", []):
             parts = [e for e in getattr(elt, "elts", [])
                      if isinstance(e, ast.Constant) and isinstance(e.value, str)]
-            # The anchor is the string that gets replaced. Tables are
-            # (label, old, new, ...) or (label, target, old, new, ...); the anchor is
-            # whichever string is long enough to be code AND is followed by another
-            # string. Take every candidate and let the occurrence count decide — a
-            # label will simply not be found, and that is reported as UNMATCHED rather
-            # than guessed at. Guessing which element is the anchor would make the
-            # audit wrong about tables it has never seen.
-            for i in range(len(parts) - 1):
-                value = parts[i].value
-                if len(value) > 12 and ("\n" in value or " " in value
-                                        or "(" in value):
-                    found.append(value)
-    return found
+            # THE ANCHOR IS THE SECOND-TO-LAST STRING, which is a consequence of
+            # `replace(old, new)` rather than a guess about column order: whatever else
+            # an entry carries — a label, a target file — `old` and `new` are adjacent
+            # and in that order, because that is the call they feed. Both documented
+            # shapes fall out of it, `(label, old, new)` and
+            # `(label, target, old, new)`, without knowing which one is in front of it.
+            #
+            # AN EARLIER VERSION TOOK EVERY STRING long enough to look like code and
+            # let the occurrence count decide which was the anchor. It could not tell a
+            # label from an anchor, so roughly half of what it counted were labels that
+            # match nothing by construction, and `unmatched` became a number nobody
+            # could read: 60 of 118 on this package's own runner — with one genuinely
+            # dead anchor sitting among them, invisible. Counting the wrong things
+            # precisely is worse than counting fewer things.
+            if 2 <= len(parts) <= 4:
+                found.append(parts[-2].value)
+            elif len(parts) > 4:
+                unreadable.append(parts[0].value)
+    return found, unreadable
 
 
 def source_files(root, exts=(".py", ".js")):
@@ -115,28 +128,41 @@ def audit_anchors(root, config, report=None):
             continue
         path = os.path.join(root, rel)
         try:
-            anchors = anchors_of(path)
+            anchors, unreadable = anchors_of(path)
         except SyntaxError as exc:
             rep.finding("%s does not parse (%s)" % (rel, exc), rel)
             continue
-        ambiguous, unmatched = [], 0
+        ambiguous, dead = [], []
         for anchor in anchors:
             total += 1
             worst = max([src.count(anchor) for src in corpus.values()] or [0])
             if worst == 0:
-                unmatched += 1
+                dead.append(anchor)
             elif worst > 1:
                 # PER FILE, not in total: the same anchor legitimately appearing once
                 # in two different files is not ambiguous for a harness that names its
                 # target, and calling it so would be the crying-wolf failure.
                 ambiguous.append((anchor, worst))
-        if ambiguous:
-            for anchor, hits in ambiguous:
-                rep.finding("%s: an anchor matches %d times in ONE file — "
-                            "`replace(..., 1)` will take the first: %r"
-                            % (rel, hits, anchor[:60]), rel)
-        else:
-            rep.ok("%-46s %d anchors, %d unmatched"
-                   % (rel, len(anchors), unmatched), rel)
+        for anchor, hits in ambiguous:
+            rep.finding("%s: an anchor matches %d times in ONE file — "
+                        "`replace(..., 1)` will take the first: %r"
+                        % (rel, hits, anchor[:60]), rel)
+        # ZERO MATCHES IS A FINDING, and it is the half of this rule that used to be
+        # counted and then reported as `ok`. An anchor matching nothing means the code
+        # moved out from under it: loud if the harness checks its target (TARGET
+        # MISSING) and SILENTLY INERT if it does not, which is a guard nobody is
+        # testing any more inside a suite that still reports a pass. That was only
+        # ever reported as a number because the parser could not tell a label from an
+        # anchor and would have failed on every label; it can now, so it can say so.
+        for anchor in dead:
+            rep.finding("%s: an anchor matches NOTHING — the code moved out from "
+                        "under it, so its mutation tests a guard that is no longer "
+                        "there: %r" % (rel, anchor[:60]), rel)
+        for label in unreadable:
+            rep.look("%s: cannot tell which column is the anchor in %r — more strings "
+                     "than either documented table shape" % (rel, label[:50]), rel)
+        if not ambiguous and not dead:
+            rep.ok("%-46s %d anchors, each matching exactly once"
+                   % (rel, len(anchors)), rel)
     rep.note("\n  %d anchors checked across %d runners" % (total, len(runners)))
     return rep

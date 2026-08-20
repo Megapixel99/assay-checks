@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Mutation runner for assay — does its own suite notice when a guard breaks?
+"""Mutation runner for assay — do its own suites notice when a guard breaks?
+
+BOTH HALVES, and for a long time only one. This runner could mutate Python only, and
+the gap did not show in its score: it printed a full tally while every guard in
+`js/src` had nothing breaking it on purpose. A tally over the half you can reach reads
+exactly like a tally over the whole thing, which is the shape of defect this package
+exists to report — so it was pointed at itself. A mutation names a FILE, the suffix
+says which half, and that half's suite is the one that has to go red.
 
 Every mutation makes a guard SILENTLY PERMISSIVE or SILENTLY STRICT rather than loud,
 because that is the failure mode that matters in an auditing tool. One whose detectors
@@ -27,21 +34,120 @@ as a catch, and no scratch state written into the tree.
 
 import argparse
 import ast
+import glob
 import os
+import re
 import signal
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-SUITE = [sys.executable, os.path.join(HERE, "run_tests.py")]
-# A suite has RUN only if this appears. "No failures" and "no test executed" are
-# different things, and conflating them is the first property this tool audits for.
-EVIDENCE = "tests, "
+ROOT = os.path.dirname(HERE)          # python/
+REPO = os.path.dirname(ROOT)          # the repository, which holds both halves
+
+# --------------------------------------------------------------------------- #
+# THE TWO HALVES.
+#
+# This runner used to be able to mutate Python only, and the gap was not visible in
+# its score: it printed `59/59` while every guard in `js/src` had nothing breaking it
+# on purpose. A tally over the half you can reach reads exactly like a tally over the
+# whole thing, which is the shape of defect this package exists to report.
+#
+# A mutation names a FILE, and the file's SUFFIX decides which half's suite has to
+# notice it. Inferred rather than declared, because an entry naming both a file and a
+# language can disagree with itself and the suffix is the fact.
+#
+# Each half brings its own four answers: where its sources live, how to run its suite,
+# how to tell that the suite RAN, and how to read a failure out of what it printed.
+# --------------------------------------------------------------------------- #
+
+# A suite has RUN only if its EVIDENCE appears. "No failures" and "no test executed"
+# are different things, and conflating them is the first property this tool audits for.
+PY_EVIDENCE = re.compile(r"^\d+ tests, ", re.M)
+# Node prints `# tests 141` under TAP (18 and 22) and `ℹ tests 141` under the spec
+# reporter (24). Either proves the run happened AND discovered something: a count of
+# zero is not evidence, it is the silence this check exists to refuse.
+JS_EVIDENCE = re.compile(r"^[#\u2139]\s*tests\s+[1-9]", re.M)
+
+# Node 18 and 22 report `not ok 3 - name`; Node 24 reports `✖ name (1.2ms)` and then
+# repeats every failure under a `✖ failing tests:` heading. The heading carries no
+# duration, so requiring one is what keeps it out of the list.
+JS_FAILURE = re.compile(r"^(?:not ok \d+ - (.+)|\u2716 (.+?) \(\d[\d.]*ms\))$", re.M)
+
+
+def _python_failures(out):
+    return [l.strip() for l in out.splitlines()
+            if l.startswith(("FAIL:", "ERROR:"))]
+
+
+def _node_failures(out):
+    names = [inline or summary for inline, summary in JS_FAILURE.findall(out)]
+    # `dict.fromkeys` rather than a set: Node 24 prints each failure twice and the
+    # ORDER is what the score reports, so the first one has to stay first.
+    return ["FAIL: %s" % name for name in dict.fromkeys(names)]
+
+
+def _python_syntax_error(_path, text):
+    try:
+        ast.parse(text)
+    except SyntaxError as exc:
+        return str(exc)
+    return None
+
+
+def _node_syntax_error(path, _text):
+    """`node --check`, run on the file WHERE IT LIVES.
+
+    Node decides a `.js` file's module format from the nearest `package.json`, so a
+    check fed the text from anywhere else parses `export` as CommonJS and calls every
+    valid mutant a syntax error — which would score the weakest possible mutation as
+    the strongest possible catch, the exact failure this guard exists to prevent.
+    """
+    proc = subprocess.run(["node", "--check", path], capture_output=True, text=True)
+    if proc.returncode == 0:
+        return None
+    # The LAST line of node's stderr is its version banner, not its complaint. Taking
+    # it would report `Node.js v24.11.1` as the reason a mutant does not parse, which
+    # is a number reported without saying what produced it.
+    for line in proc.stderr.splitlines():
+        if re.match(r"^\w*Error: ", line.strip()):
+            return line.strip()[:80]
+    said = [l for l in proc.stderr.strip().splitlines() if l.strip()]
+    return (said[0] if said else "node --check gave no reason")[:80]
+
+
+LANGUAGES = {
+    ".py": {
+        "name": "python",
+        "sources": os.path.join(ROOT, "assay"),
+        "suite": [sys.executable, os.path.join(HERE, "run_tests.py")],
+        "evidence": PY_EVIDENCE,
+        "failures": _python_failures,
+        "syntax_error": _python_syntax_error,
+    },
+    ".js": {
+        "name": "javascript",
+        "sources": os.path.join(REPO, "js", "src"),
+        "suite": ["node", "--test"] + sorted(
+            glob.glob(os.path.join(REPO, "js", "test", "*.test.js"))),
+        "evidence": JS_EVIDENCE,
+        "failures": _node_failures,
+        "syntax_error": _node_syntax_error,
+    },
+}
+
+
+def language(name):
+    """Which half a mutation targets, decided by the file's suffix."""
+    suffix = os.path.splitext(name)[1]
+    if suffix not in LANGUAGES:
+        raise SystemExit("no language for %r — this runner knows %s"
+                         % (name, ", ".join(sorted(LANGUAGES))))
+    return LANGUAGES[suffix]
 
 
 def target(name):
-    return os.path.join(ROOT, "assay", name)
+    return os.path.join(language(name)["sources"], name)
 
 
 # (label, file, old, new)
@@ -296,11 +402,24 @@ MUTATIONS = [
             names = [node.target.id] if isinstance(node.target, ast.Name) else []''',
      '''        if isinstance(node, ast.AugAssign):
             names = []'''),
-    ("anchors: a label short enough to be prose is taken as an anchor",
+    ("anchors: every column is taken as an anchor, so labels are counted too",
      "anchors.py",
-     '''                if len(value) > 12 and ("\\n" in value or " " in value
-                                        or "(" in value):''',
-     '''                if True:'''),
+     '''            if 2 <= len(parts) <= 4:
+                found.append(parts[-2].value)''',
+     '''            if 2 <= len(parts) <= 4:
+                found.extend(p.value for p in parts[:-1])'''),
+    ("anchors: an anchor matching NOTHING goes back to being counted, not reported",
+     "anchors.py",
+     '''        for anchor in dead:
+            rep.finding(''',
+     '''        for anchor in []:
+            rep.finding('''),
+    ("anchors: a table shape it cannot read is guessed at rather than offered",
+     "anchors.py",
+     '''            elif len(parts) > 4:
+                unreadable.append(parts[0].value)''',
+     '''            elif len(parts) > 4:
+                found.append(parts[-2].value)'''),
 
     # ---- config, read in both directions -------------------------------------- #
     ("config: broken JSON becomes an empty config rather than an error",
@@ -395,15 +514,103 @@ MUTATIONS = [
 ]
 
 
-def run_suite():
+# --------------------------------------------------------------------------- #
+# THE JAVASCRIPT HALF.
+#
+# Every entry here is a guard that had NOTHING breaking it on purpose until this
+# table existed. Six of them are defects this tool actually shipped and that the
+# first real project it was pointed at found — kept as mutations rather than as
+# comments, so a defect fixed once cannot come back quietly.
+#
+# The suite that must go red is `node --test js/test/*.test.js`, not the Python one:
+# a Python test cannot observe a JavaScript guard, and scoring a JavaScript mutation
+# against a green Python suite would be a tally over a suite that was never going to
+# see it.
+# --------------------------------------------------------------------------- #
+
+MUTATIONS += [
+    # ---- one function object is one function -------------------------------- #
+    ("js probe: two names for ONE function object are a pair again (a shipped defect)",
+     "probe.js",
+     """    if (typeof value !== 'function' || seen.has(value)) return;""",
+     """    if (typeof value !== 'function') return;"""),
+    ("js probe: a barrel re-export duplicates its helper again (a shipped defect)",
+     "probe.js",
+     """  const seen = new Set(inherited);""",
+     """  const seen = new Set();"""),
+
+    # ---- the answer channel -------------------------------------------------- #
+    ("js sameness: the probe answer shares stdout again (a shipped defect)",
+     "sameness.js",
+     """export const ANSWER_FD = 3;""",
+     """export const ANSWER_FD = 1;"""),
+
+    # ---- two populations, two counts ----------------------------------------- #
+    ("js sameness: a refused FILE is counted as a skipped function (a shipped defect)",
+     "sameness.js",
+     """      scan.unloadable.set(rel, why);""",
+     """      scan.skipped.set(rel, why);"""),
+
+    # ---- gates that must read code, not prose -------------------------------- #
+    ("js sameness: the purity gates read prose again (a shipped defect)",
+     "sameness.js",
+     """    if (!cache.has(scope)) cache.set(scope, stripNonCode(source, scope === CODE));""",
+     """    if (!cache.has(scope)) cache.set(scope, source);"""),
+    ("js sameness: an unlexable file has its refusal cleared by a guess",
+     "sameness.js",
+     """    if (text !== null && !pattern.test(text)) continue;""",
+     """    if (!pattern.test(text)) continue;"""),
+
+    # ---- the vacuity guards -------------------------------------------------- #
+    ("js sameness: a shallow COPY stops counting as vacuous (a shipped defect)",
+     "sameness.js",
+     """  const vacuous = [
+    (i) => (...a) => a[i],
+    (i) => (...a) => ({ ...a[i] }),
+  ];""",
+     """  const vacuous = [
+    (i) => (...a) => a[i],
+  ];"""),
+    ("js sameness: the discrimination threshold stops being consulted",
+     "sameness.js",
+     """  if (new Set(returned).size < MIN_DISTINCT) return null;""",
+     """  if (false) return null;"""),
+    ("js sameness: the projection guard stops being consulted",
+     "sameness.js",
+     """  if (inputs && isProjection(vector, inputs)) return null;""",
+     """  if (false) return null;"""),
+    ("js sameness: two different ladders are zipped together",
+     "sameness.js",
+     """  if (aKey !== bKey) return ['look', `not comparable: ${aKey} vs ${bKey}`];""",
+     """  if (false) return ['look', `not comparable: ${aKey} vs ${bKey}`];"""),
+
+    # ---- the config is judgment, and it is validated -------------------------- #
+    ("js config: an exemption without a REASON is accepted",
+     "config.js",
+     """      if (!entry[field]) {""",
+     """      if (false) {"""),
+
+    # ---- the baseline, and the cry-wolf failure ------------------------------- #
+    ("js cli: a PARTIAL run calls a baseline entry stale (cries wolf at itself)",
+     "cli.js",
+     """    const [still] = applyBaseline(report.findings, config.baseline);
+    const accepted = report.findings.length - still.length;
+    report.items = report.items.filter((i) => i.verdict !== FINDING).concat(still);""",
+     """    const [still, stale] = applyBaseline(report.findings, config.baseline);
+    const accepted = report.findings.length - still.length;
+    report.items = report.items.filter((i) => i.verdict !== FINDING).concat(still);
+    for (const line of stale) report.finding(`no longer fires: ${line}`);"""),
+]
+
+
+def run_suite(lang):
     """(ran, failures). Positive evidence required, per the property this audits for."""
-    proc = subprocess.run(SUITE, capture_output=True, text=True, timeout=1800)
+    proc = subprocess.run(lang["suite"], capture_output=True, text=True, timeout=1800)
     out = proc.stdout + proc.stderr
-    if EVIDENCE not in out:
+    if not lang["evidence"].search(out):
         return False, ["DID NOT RUN (%s)"
                        % (out.strip().splitlines() or ["silent"])[-1][:80]]
-    fails = [l.strip() for l in out.splitlines() if l.startswith(("FAIL:", "ERROR:"))]
-    return True, fails
+    return True, lang["failures"](out)
 
 
 def main(argv=None):
@@ -419,6 +626,11 @@ def main(argv=None):
     if not table:
         print("no mutation matches %r" % args.only)
         return 2
+
+    # Keyed by id() so two halves are never collapsed by dict ordering, and sorted by
+    # name so the baselines print in a fixed order.
+    used = sorted({language(m[1])["name"]: language(m[1]) for m in table}.values(),
+                  key=lambda l: l["name"])
 
     files = sorted({m[1] for m in MUTATIONS})
     originals = {}
@@ -439,35 +651,49 @@ def main(argv=None):
         signal.signal(sig, _bail)
 
     try:
-        ran, base = run_suite()
-        if not ran:
-            print("BASELINE DID NOT RUN — refusing to score mutations")
-            return 2
-        if base:
-            print("baseline FAILURES, refusing to score: %s" % base[:2])
-            return 2
-        print("baseline: clean\n")
+        # A BASELINE PER HALF, and only for the halves this run touches. Scoring a
+        # JavaScript mutation against a green Python baseline would be evidence about
+        # a suite that was never going to see the mutation — and a `--only` filter
+        # that selects one half should not be held up by the other's suite.
+        for lang in used:
+            ran, base = run_suite(lang)
+            if not ran:
+                print("BASELINE DID NOT RUN (%s) — refusing to score mutations"
+                      % lang["name"])
+                return 2
+            if base:
+                print("baseline FAILURES in %s, refusing to score: %s"
+                      % (lang["name"], base[:2]))
+                return 2
+            print("baseline %s: clean" % lang["name"])
+        print()
 
         detected = 0
         for label, name, old, new in table:
+            lang = language(name)
             original = originals[name]
             if original.count(old) != 1:
                 print("%-64s TARGET MISSING (%d matches)"
                       % (label[:64], original.count(old)))
                 continue
             mutated = original.replace(old, new, 1)
-            # A mutation that breaks the FILE would make the suite fail for the wrong
-            # reason and score as a catch — the strongest possible score from the
-            # weakest possible mutation.
-            try:
-                ast.parse(mutated)
-            except SyntaxError as exc:
-                print("%-64s INVALID MUTATION (does not parse: %s)" % (label[:64], exc))
-                continue
+            # THE MUTANT IS WRITTEN BEFORE IT IS CHECKED, which is not an oversight.
+            # `node --check` reads module format from the nearest `package.json`, so
+            # the only place a `.js` mutant can be parsed honestly is where it lives.
+            # The write is therefore inside the same `try` whose `finally` restores —
+            # an invalid mutant leaves the tree exactly as clean as a valid one.
             with open(target(name), "w", encoding="utf-8") as fh:
                 fh.write(mutated)
             try:
-                ran, fails = run_suite()
+                # A mutation that breaks the FILE would make the suite fail for the
+                # wrong reason and score as a catch — the strongest possible score
+                # from the weakest possible mutation.
+                why = lang["syntax_error"](target(name), mutated)
+                if why:
+                    print("%-64s INVALID MUTATION (does not parse: %s)"
+                          % (label[:64], why))
+                    continue
+                ran, fails = run_suite(lang)
             finally:
                 restore()
             # The three questions kept separate: did it RUN, did it FAIL, and was the

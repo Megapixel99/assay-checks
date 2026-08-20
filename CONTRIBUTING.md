@@ -3,9 +3,9 @@
 ## Running it
 
 ```bash
-python3 python/tests/run_tests.py          # 159 tests, ~19 s, no dependencies
+python3 python/tests/run_tests.py          # 161 tests, ~19 s, no dependencies
 node --test js/test/*.test.js              # 141 tests, ~15 s
-python3 python/tests/mutations_assay.py    # 57 mutations, ~4 min
+python3 python/tests/mutations_assay.py    # 73 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master
 ```
@@ -62,7 +62,9 @@ from an oversight.
 3. **Add a mutation to `python/tests/mutations_assay.py`** that puts the defect back — not
    one that merely changes the code. Several entries there are versions this package
    actually shipped, kept as mutations rather than comments so a fix cannot come back
-   quietly.
+   quietly. It breaks **both** halves: name a `.js` file and the Node suite is what
+   has to go red, name a `.py` file and it is the Python one. Nothing else changes,
+   because the suffix is what decides.
 4. **Run the mutation runner and check WHICH test went red.** "Something failed" and
    "the check that covers this failed" are different claims.
 

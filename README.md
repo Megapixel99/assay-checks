@@ -387,9 +387,9 @@ are what is already published and do not change. `pyproject.toml` bridges the tw
 Working from a checkout rather than an install, `python/` is what goes on the path:
 
 ```bash
-python3 python/tests/run_tests.py        # 159 tests, ~19 s
+python3 python/tests/run_tests.py        # 161 tests, ~19 s
 npm test                                 # 141 tests, ~15 s
-python3 python/tests/mutations_assay.py  # 57 mutations, ~4 min
+python3 python/tests/mutations_assay.py  # 73 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master
 ```
@@ -402,6 +402,13 @@ happens when a mutation comes back `NOT DETECTED`.
 The mutation runner carries all six properties `assay runners` audits for, and several
 of its mutations are versions this tool actually shipped — kept as mutations rather than
 as comments, so a defect fixed once cannot come back quietly.
+
+**It breaks both halves.** For a while it could mutate Python only, and the gap did not
+show in its score: it printed a full tally while every guard in `js/src` had nothing
+breaking it on purpose. A tally over the half you can reach reads exactly like a tally
+over the whole thing, which is the defect this package exists to report — so it was
+pointed at itself. A mutation names a file, the suffix says which half, and that half's
+suite is the one that has to go red.
 
 One of them is worth naming here because no ordinary test could have caught it: a **NUL
 byte** landed where a space belonged inside a template literal. The file displayed

@@ -140,15 +140,30 @@ jobs:
             echo "::error::the refusal must name where the command does exist"; exit 1; }
 
   mutations:
-    # ~4 minutes: every guard broken in turn, each declaring the test that must go red.
+    # Every guard in BOTH halves broken in turn, each declaring the test that must go
+    # red. A `.js` mutation runs the Node suite and a `.py` one runs the Python suite:
+    # a Python test cannot observe a JavaScript guard, so scoring one against the other
+    # would be a tally over a suite that was never going to see it.
     # Separate job so the fast feedback above is never held up behind it.
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The Python half dominates the wall clock; the JavaScript mutations add a few
+    # minutes. Raised from 20 when the runner learned to break both halves, because a
+    # timeout kills the runner and SIGKILL does not run `finally` — the one way this
+    # job can leave the tree mutated is by being cut off.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      # BOTH runtimes, because the runner now mutates `js/src` too and scores those
+      # against `node --test`. Without this the JavaScript mutations run on whatever
+      # node the image happens to carry, or on none — and a suite that cannot start
+      # reports DID NOT RUN, which this runner refuses to score rather than counting
+      # as a catch. Pinned to the same major the `javascript` matrix ends on.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
 
       - name: every guard, broken in turn
         run: python3 python/tests/mutations_assay.py

@@ -66,6 +66,34 @@ its arguments but not one that merely copies it, so two unrelated object transfo
 whose vocabulary the ladder lacks both degraded to a shallow copy and were reported as
 the same function. Both halves now reject the copy alongside the identity.
 
+**The mutation runner reaches the JavaScript half.** It could mutate Python only,
+and the gap did not show in its score: it printed a full tally while every guard in
+`js/src` had nothing breaking it on purpose. A tally over the half you can reach reads
+exactly like a tally over the whole thing, which is the defect this package exists to
+report, so it was pointed at itself. A mutation names a file, the suffix says which
+half, and that half's suite is the one that has to go red — each half bringing its own
+four answers: where its sources are, how to run its suite, how to tell the suite RAN,
+and how to read a failure out of what it printed. Twelve JavaScript mutations now
+cover the six defects the first real project found, plus the vacuity guards, the
+ladder-key check, the config validation and the baseline's cry-wolf rule.
+
+The `parses-mutant` property holds on the new half too: a `.js` mutant is checked with
+`node --check` **where it lives**, because Node reads module format from the nearest
+`package.json` and a check fed the text from anywhere else calls every valid mutant a
+syntax error — scoring the weakest possible mutation as the strongest possible catch.
+
+**A dead mutation anchor is a finding, not a footnote.** `assay anchors` counted an
+anchor that matches nothing and then reported `ok`, so the failure its own docstring
+names — the code moved out from under the anchor, leaving a guard nobody is testing
+inside a suite that still passes — was the one thing it would not fail on. The reason
+was real: the parser could not tell a label from an anchor, so failing on zero matches
+would have failed on every label. It reads the anchor precisely now — the
+second-to-last string in an entry, which follows from `replace(old, new)` rather than
+from a guess about column order — and the count fell from 118 anchors with 60
+unmatched to 73 anchors with none. An entry carrying more strings than either
+documented shape is a `look`: a wrong conviction about a table this audit has never
+seen is worse than saying it could not tell.
+
 **Both halves now call the same extensions source.** `assay diff` under Node audited
 `.mjs` and `.cjs`; under Python it did not, so one commit produced two different file
 lists depending on which binary CI invoked — and a file missing from the list is not a
