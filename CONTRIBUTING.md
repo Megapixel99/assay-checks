@@ -89,6 +89,47 @@ worth. Two rules:
   ASCII and one written over Unicode categories agreed on every value — and one
   character turned that `same` into a `differs` with a witness.
 
+## Releasing
+
+One version ships to two registries. `pyproject.toml` and `package.json` must carry
+the **same** number, and `.github/workflows/release.yml` refuses to publish anything
+if they disagree — two numbers means `pip install assay-checks` and
+`npm install assay-checks` answer different questions from one set of docs.
+
+To cut a release: bump both versions, add the `## <version>` section to
+`CHANGELOG.md`, and merge to `master`. The push matches the workflow's path filter,
+the full suite runs on that exact commit, and only then does anything upload. The tag
+and the GitHub release are created **last** — a tag naming a version no registry
+serves is worse than a missing tag.
+
+Every step asks first whether its half is already published, so a run that failed
+halfway is finished by re-running the workflow (`workflow_dispatch`) rather than by
+another commit.
+
+### Neither registry has a token here
+
+Both use **trusted publishing**: the runner mints a short-lived OIDC token and the
+registry checks its claims against a publisher registered for this repository and
+this workflow file. There is no secret in this repository to leak, rotate, or
+accidentally print.
+
+Each side has to be registered once:
+
+- **PyPI** — <https://pypi.org/manage/account/publishing/>. A *pending* publisher can
+  be added before the project exists, which is how the first release works: owner
+  `Megapixel99`, repository `assay-checks`, workflow `release.yml`, no environment.
+- **npm** — the package page → Settings → Trusted publishing → a GitHub Actions
+  publisher for `Megapixel99/assay-checks`, workflow `release.yml`, no environment.
+
+**npm has no pending publisher, and that is the one manual step.** A trusted
+publisher can only be configured on a package that already exists, so the *first*
+version has to be pushed by hand — `npm publish` from a logged-in machine — and the
+publisher configured immediately afterwards. Every release after that runs through
+the workflow with no token. Until it is configured the `npm` job fails with an
+authentication error; the step before it prints the OIDC claims npm is matching on,
+so a publisher pinned to the wrong workflow filename or to an environment this job
+does not declare shows up as a concrete difference rather than as `ENEEDAUTH`.
+
 ## Things that will not be accepted
 
 - A check that makes `look` fail the build.

@@ -26,9 +26,17 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+  # `release.yml` calls this workflow rather than copying the jobs into itself. A
+  # release gate that has drifted from the suite it claims to be is worse than no
+  # gate, and a copy drifts the first time a job is added here.
+  workflow_call:
 
 concurrency:
-  group: ci-${{ github.head_ref || github.ref }}
+  # `github.workflow` is part of the key because a version-bump push matches BOTH this
+  # workflow and `release.yml`, and `release.yml` calls this one. Without it both land
+  # in `ci-refs/heads/master`, and `cancel-in-progress` cancels the release's own test
+  # run — a gate cancelled by the push that needs it.
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
