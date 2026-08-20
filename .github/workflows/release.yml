@@ -1,0 +1,342 @@
+# One version, two registries, and nothing published that the suite has not run against.
+#
+# This package ships twice from one tree — `assay-checks` on PyPI and `assay-checks`
+# on npm — and that is the failure mode this workflow exists to prevent. Two version
+# numbers in two files drift the moment one of them is bumped alone, and the result is
+# not a broken build: it is `pip install assay-checks` and `npm install assay-checks`
+# answering different questions from the same documentation. So the versions are
+# COMPARED before anything is uploaded, rather than each half being trusted to be
+# right about itself.
+#
+# Neither registry is given a long-lived token. Both use trusted publishing (OIDC):
+# the runner mints a short-lived token, the registry checks its claims against a
+# publisher registered for this repository and this workflow file, and a leaked
+# secret is not a thing this repository has to own. Setup for both is in
+# CONTRIBUTING.md under "Releasing" — until it is done, the publish steps fail with
+# an authentication error and nothing else is wrong.
+#
+# A publish cannot be taken back. Every step is therefore guarded by its own answer to
+# "is this already published?", so a run that failed halfway can be repeated with
+# workflow_dispatch and will do only what is still missing rather than failing on
+# "already exists".
+name: Release
+
+on:
+  push:
+    branches: [master]
+    # A version bump always touches one of these. It is a cheap pre-filter, not the
+    # decision — the `check` job below still compares both versions against both
+    # registries before anything is published.
+    paths:
+      - 'pyproject.toml'
+      - 'package.json'
+  # Lets a partially failed release be finished without another commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Do the versions agree, and is anything unpublished?
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      tag_missing: ${{ steps.read.outputs.tag_missing }}
+      pypi_missing: ${{ steps.read.outputs.pypi_missing }}
+      npm_missing: ${{ steps.read.outputs.npm_missing }}
+      release_needed: ${{ steps.read.outputs.release_needed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tags, so "is this already tagged?" is answered from the repository
+          # rather than from the API.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: One version, or the release stops here
+        id: read
+        run: |
+          set -euo pipefail
+
+          # tomllib rather than a regex: `version = "0.1.0"` also appears in a
+          # dependency pin or a comment, and a regex that reads the wrong line
+          # publishes the wrong number without saying so.
+          py_version="$(python3 -c '
+          import tomllib
+          with open("pyproject.toml", "rb") as fh:
+              print(tomllib.load(fh)["project"]["version"])
+          ')"
+          js_version="$(node -p 'require("./package.json").version')"
+          py_name="$(python3 -c '
+          import tomllib
+          with open("pyproject.toml", "rb") as fh:
+              print(tomllib.load(fh)["project"]["name"])
+          ')"
+          js_name="$(node -p 'require("./package.json").name')"
+
+          if [ "$py_version" != "$js_version" ]; then
+            echo "::error::pyproject.toml says $py_version and package.json says $js_version."
+            echo "Both halves ship under one version. Bump them together, or one registry"
+            echo "serves a release the other has never heard of."
+            exit 1
+          fi
+          version="$py_version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # A release with no changelog entry is a release nobody can read. This is a
+          # findable mistake, so it is found here rather than after the upload.
+          if ! grep -q "^## $version\b" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## $version' section."
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            tag_missing=false
+          else
+            tag_missing=true
+          fi
+
+          # A 200 means that exact version is already on PyPI. `--fail` turns the 404
+          # into a non-zero exit rather than a body that happens to say "Not Found".
+          if curl -sS --fail --max-time 30 -o /dev/null \
+               "https://pypi.org/pypi/$py_name/$version/json"; then
+            pypi_missing=false
+          else
+            pypi_missing=true
+          fi
+
+          # `npm view` exits non-zero when that exact version is not published.
+          if npm view "$js_name@$version" version > /dev/null 2>&1; then
+            npm_missing=false
+          else
+            npm_missing=true
+          fi
+
+          {
+            echo "tag_missing=$tag_missing"
+            echo "pypi_missing=$pypi_missing"
+            echo "npm_missing=$npm_missing"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$tag_missing" = false ] \
+             && [ "$pypi_missing" = false ] \
+             && [ "$npm_missing" = false ]; then
+            echo "release_needed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$version is tagged and on both registries; nothing to do."
+          else
+            echo "release_needed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Releasing $version (tag missing: $tag_missing, PyPI missing: $pypi_missing, npm missing: $npm_missing)."
+          fi
+
+  # The suite, in full, on THIS commit and inside THIS run. Publishing cannot be
+  # undone, so the gate is not "ci was green on some earlier event" — that green tick
+  # can belong to a different tree. `ci.yml` is called rather than copied, because a
+  # release gate that has drifted from the suite it claims to be is worse than none.
+  tests:
+    name: Every check, before anything leaves the runner
+    needs: check
+    if: needs.check.outputs.release_needed == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build the Python distributions
+    needs: [check, tests]
+    if: needs.check.outputs.pypi_missing == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Nothing here needs to push, and a checkout that leaves credentials in
+          # `.git/config` hands them to every step that follows.
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Build the sdist and the wheel
+        run: |
+          python3 -m pip install --upgrade build twine
+          python3 -m build
+
+      - name: The metadata PyPI will reject, rejected here instead
+        # A rejected upload is a release that half-happened. `twine check` reads the
+        # long description the way PyPI's renderer does.
+        run: python3 -m twine check --strict dist/*
+
+      - name: The wheel installs, and the console script it promises exists
+        # `[project.scripts] assay = "assay.cli:main"` is a claim about the built
+        # artifact, not about the tree — so it is checked against the artifact, in a
+        # clean environment, before that artifact is published.
+        run: |
+          python3 -m venv /tmp/verify
+          /tmp/verify/bin/pip install --quiet dist/*.whl
+          /tmp/verify/bin/assay --version
+          /tmp/verify/bin/python -c 'import assay; print("imports from the wheel:", assay.__version__)'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-distributions
+          path: dist/
+
+  pypi:
+    name: Publish to PyPI
+    needs: [check, build]
+    if: needs.check.outputs.pypi_missing == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      # Mandatory for trusted publishing: it mints the OIDC token PyPI verifies.
+      # Nothing else in this job needs a permission, and it has none.
+      id-token: write
+    steps:
+      # The distributions are the ones the `build` job checked. Rebuilding here would
+      # publish an artifact nothing has verified — a wheel built twice is not
+      # guaranteed to be the wheel that passed.
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-distributions
+          path: dist/
+
+      # No password and no API token. PyPI matches the OIDC token's claims against a
+      # trusted publisher registered for this repository and `release.yml`.
+      - name: Upload with trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  npm:
+    name: Publish to npm
+    needs: [check, tests]
+    if: needs.check.outputs.npm_missing == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Deliberately NO `registry-url` here. setup-node would write an .npmrc holding
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, and this job sets no
+      # such token — so npm sends an unresolved credential and answers E404 instead of
+      # falling back to OIDC. registry.npmjs.org is the default anyway, and trusted
+      # publishing wants no auth line at all.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+
+      # OIDC publishing landed in npm 11.5.1, and Node 24 ships well past that — but
+      # `24.x` resolves to whatever is newest on the day, and a release must not turn
+      # on that. Versions past the floor have also needed the upgrade in practice, so
+      # this is unconditional rather than a comparison.
+      - name: Use the newest npm
+        run: |
+          echo "bundled: $(npm --version)"
+          npm install -g npm@latest
+          echo "now:     $(npm --version)"
+
+      - name: The claims npm will be matched on
+        # A trusted publisher is matched against these. Printing them turns "npm says
+        # ENEEDAUTH" into a concrete comparison with what is registered on npmjs.com:
+        # a workflow filename that does not match, or a publisher pinned to an
+        # environment this job does not declare, both show up here. The token itself
+        # is never printed — only its claims.
+        run: |
+          curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
+            > /tmp/idt.json
+          node -e '
+            const fs = require("fs");
+            const raw = JSON.parse(fs.readFileSync("/tmp/idt.json", "utf8"));
+            if (!raw.value) { console.log("no token returned:", JSON.stringify(raw).slice(0, 200)); process.exit(0); }
+            const claims = JSON.parse(Buffer.from(raw.value.split(".")[1], "base64url").toString());
+            for (const k of ["iss", "aud", "sub", "repository", "repository_owner",
+                             "workflow", "workflow_ref", "job_workflow_ref", "ref",
+                             "event_name", "environment", "runner_environment"]) {
+              console.log(`  ${k}: ${claims[k] === undefined ? "(absent)" : claims[k]}`);
+            }
+          '
+          rm -f /tmp/idt.json
+
+      - name: What the tarball actually contains
+        # `files` in package.json is a claim about the published tarball. `npm pack
+        # --dry-run` is the only thing that reads it the way the registry will, and a
+        # missing `js/src` ships a `bin` that points at nothing.
+        run: |
+          npm pack --dry-run
+          npm publish --dry-run
+
+      # No token. Provenance attestations are generated automatically when a public
+      # package is published from a public repository this way, so `--provenance` is
+      # not passed. Verbose, so npm's own account of the OIDC exchange — or its
+      # silence about attempting one — is on the record rather than inferred.
+      - name: Publish with trusted publishing
+        id: publish
+        run: npm publish --loglevel verbose
+
+      - name: What a failure here means
+        if: failure() && steps.publish.outcome == 'failure'
+        run: |
+          echo "::error::npm publish failed. A 404 on PUT means npm rejected the credential."
+          echo "Trusted publishing needs a publisher configured on the npm side:"
+          echo "  npmjs.com -> assay-checks -> Settings -> Trusted publishing"
+          echo "  -> GitHub Actions publisher for ${{ github.repository }}, workflow release.yml"
+          echo "npm cannot configure one for a package that does not exist yet, so the"
+          echo "FIRST version has to be pushed by hand — see CONTRIBUTING.md, 'Releasing'."
+
+  tag:
+    name: Tag and announce
+    needs: [check, tests, pypi, npm]
+    # `always()` with an explicit failure test, because `pypi` and `npm` are SKIPPED
+    # when their version is already published — and a plain `needs` would read a skip
+    # as a reason not to tag, so a resumed run could never catch the tag up.
+    if: >-
+      always()
+      && needs.check.outputs.release_needed == 'true'
+      && needs.check.outputs.tag_missing == 'true'
+      && needs.tests.result == 'success'
+      && needs.pypi.result != 'failure' && needs.pypi.result != 'cancelled'
+      && needs.npm.result != 'failure' && needs.npm.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the tag and the GitHub release
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Last, not first. A tag is what people pin to, and one that names a version no
+      # registry serves is a worse artifact than a missing tag.
+      - name: Tag the commit that was published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes \
+            --verify-tag
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### Released v$VERSION"
+            echo
+            echo "- PyPI: ${{ needs.pypi.result == 'success' && 'published' || 'already published' }} — https://pypi.org/project/assay-checks/$VERSION/"
+            echo "- npm: ${{ needs.npm.result == 'success' && 'published' || 'already published' }} — https://www.npmjs.com/package/assay-checks/v/$VERSION"
+            echo "- tag and GitHub release: created"
+            echo
+            echo "Both registries were published with trusted publishing (OIDC). No long-lived token is stored in this repository."
+          } >> "$GITHUB_STEP_SUMMARY"
