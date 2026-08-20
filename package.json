@@ -1,0 +1,42 @@
+{
+  "name": "assay-checks",
+  "version": "0.1.0",
+  "description": "Audit the checks, and find the answers your tree already has: could those tests have failed, and does the tree already answer this?",
+  "keywords": [
+    "audit",
+    "mutation-testing",
+    "duplication",
+    "code-quality",
+    "test-quality",
+    "differential-testing",
+    "static-analysis",
+    "ci"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "bin": {
+    "assay": "js/src/cli.js"
+  },
+  "exports": {
+    ".": "./js/src/index.js",
+    "./verdicts": "./js/src/verdicts.js",
+    "./sameness": "./js/src/sameness.js",
+    "./checks": "./js/src/checks.js"
+  },
+  "files": [
+    "js/src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test js/test/*.test.js"
+  },
+  "dependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Megapixel99/assay.git"
+  }
+}

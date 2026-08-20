@@ -1,0 +1,113 @@
+name: assay
+description: >-
+  Audit the checks, and find the answers your tree already has — could those tests have
+  failed, and does the tree already answer this?
+author: Seth Wheeler
+
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  command:
+    description: >-
+      runners | anchors | diff | all | scan | pair | search.
+      `all` is the usual choice for a pull request.
+    required: false
+    default: all
+  paths:
+    description: >-
+      Paths for `scan`, or the FILE::NAME references for `pair` and `search`.
+      Ignored by the audit commands.
+    required: false
+    default: ''
+  root:
+    description: Project root to audit.
+    required: false
+    default: '.'
+  base:
+    description: >-
+      Ref to diff against for `diff` and `all`. Defaults to the pull request's base
+      branch, which is the ref that makes `diff` mean anything.
+    required: false
+    default: ''
+  config:
+    description: Path to assay.json. Found in `root` when not given.
+    required: false
+    default: ''
+  language:
+    description: python | node — which implementation to run.
+    required: false
+    default: python
+  fail-on-findings:
+    description: >-
+      Fail the step when there are findings. Set to `false` to report without gating,
+      which is the honest way to adopt this on a project that starts with a backlog —
+      though a baseline in assay.json is better, because it fails on anything NEW.
+    required: false
+    default: 'true'
+
+outputs:
+  findings:
+    description: Number of findings, 0 when clean.
+    value: ${{ steps.assay.outputs.findings }}
+
+runs:
+  using: composite
+  steps:
+    # `diff` compares against a base ref, and a shallow checkout does not have one.
+    # Without this the tool reports "cannot diff against <ref>" — which is at least
+    # honest, but it is a wasted run. Checking here means the failure names the cause.
+    - name: the checkout must have history for `diff`
+      if: inputs.command == 'diff' || inputs.command == 'all'
+      shell: bash
+      run: |
+        cd "${{ inputs.root }}"
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          echo "::warning::this checkout is shallow, so \`assay diff\` has no base to"
+          echo "::warning::compare against. Add \`fetch-depth: 0\` to actions/checkout."
+        fi
+
+    - name: run assay
+      id: assay
+      shell: bash
+      env:
+        ASSAY_HOME: ${{ github.action_path }}
+      run: |
+        set -o pipefail
+        base="${{ inputs.base }}"
+        if [ -z "$base" ] && [ -n "${{ github.base_ref }}" ]; then
+          base="origin/${{ github.base_ref }}"
+        fi
+        args=()
+        [ -n "${{ inputs.root }}" ] && args+=(--root "${{ inputs.root }}")
+        [ -n "${{ inputs.config }}" ] && args+=(--config "${{ inputs.config }}")
+        args+=("${{ inputs.command }}")
+        case "${{ inputs.command }}" in
+          diff|all) [ -n "$base" ] && args+=(--base "$base") ;;
+        esac
+        [ -n "${{ inputs.paths }}" ] && args+=(${{ inputs.paths }})
+
+        if [ "${{ inputs.language }}" = "node" ]; then
+          node "$ASSAY_HOME/js/src/cli.js" "${args[@]}" | tee assay-output.txt
+        else
+          PYTHONPATH="$ASSAY_HOME" python3 -m assay "${args[@]}" | tee assay-output.txt
+        fi
+        # The exit code is the tool's verdict and `tee` would otherwise hide it behind
+        # its own. 0 = nothing to read, 1 = findings, 2 = could not run.
+        status=${PIPESTATUS[0]}
+        findings=$(grep -c '^  finding  ' assay-output.txt || true)
+        echo "findings=$findings" >> "$GITHUB_OUTPUT"
+
+        # 2 is never suppressible. "The tool could not run" and "the tool found
+        # nothing" are opposite situations, and letting the second silence the first
+        # is how a broken invocation reads as a clean audit for months.
+        if [ "$status" = "2" ]; then
+          echo "::error::assay could not run — see the output above"
+          exit 2
+        fi
+        if [ "$status" = "1" ] && [ "${{ inputs.fail-on-findings }}" != "true" ]; then
+          echo "::warning::$findings finding(s); not failing because fail-on-findings is false"
+          exit 0
+        fi
+        exit "$status"
