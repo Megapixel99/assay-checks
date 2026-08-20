@@ -12,6 +12,17 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+- Test fixtures declare `"type": "module"`, so the JavaScript suites pass on Node
+  18 as `engines` claims. A `.js` file containing `export` with no `package.json`
+  beside it is a SyntaxError on Node 18 and loads fine on Node 22 — the fixture was
+  the unrealistic thing, since a real project declares its type. The version
+  difference is now stated in the README's limits, because it changes what the
+  census reports rather than producing a wrong answer.
+- The symlink guard in `changed_files` has a test that **creates** the symlink
+  rather than relying on the platform's temp directory having one. It was exercised
+  by accident on macOS and untested on Linux, where the mutation came back NOT
+  DETECTED.
+
 - `assay diff` no longer reports a **deleted** file as needing a check. A commit
   that removes a directory used to produce one `look` per file, all of them advice
   about code that is gone. Found by a repository converting a subdirectory into a

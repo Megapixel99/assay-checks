@@ -302,6 +302,13 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
   are out of reach. That needs a declared pairing, and this does not replace one.
 - **The ladder is hand-written for three arities.** A domain whose inputs are structured
   (an AST, a socket, a dataframe) gets `not discriminated`, and correctly so.
+- **The JavaScript half inherits Node's module resolution, including its version
+  differences.** A `.js` file containing `export` in a directory with no
+  `package.json` is a SyntaxError on Node 18 and loads fine on Node 22 —
+  module-syntax detection arrived in between — so the same tree can report different
+  coverage on two runners. Ordinary projects declare `"type"` and are unaffected; a
+  loose directory of ESM `.js` files is not, and shows up as `could not load` in the
+  census rather than as a wrong answer.
 - **A timeout is an outcome, not a `look` on its own.** A non-terminating input lands in
   the vector as a raise. A function that spins on *some* inputs and answers on others is
   compared on the strength of the ones it answered.
@@ -318,9 +325,9 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
 ## Development
 
 ```bash
-python3 tests/run_tests.py        # 148 tests, ~15 s
+python3 tests/run_tests.py        # 151 tests, ~15 s
 npm test                          # 111 tests, ~2 s
-python3 tests/mutations_assay.py  # 56 mutations, ~4 min
+python3 tests/mutations_assay.py  # 57 mutations, ~4 min
 python3 -m assay scan assay/      # the package, scanned by its own scanner
 python3 -m assay --root . all --base origin/master
 ```

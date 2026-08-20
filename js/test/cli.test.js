@@ -37,6 +37,14 @@ export function b(s) {
 
 function tree(files) {
   const root = mkdtempSync(path.join(tmpdir(), 'assay-cli-'));
+  // A throwaway project must DECLARE its module type, and this is not fixture
+  // tidiness. A `.js` file containing `export` in a directory with no
+  // `package.json` is a SyntaxError on Node 18 and loads fine on Node 22, because
+  // module-syntax detection arrived in between. Without this the suite passes on
+  // a new Node and fails on an old one for a reason that has nothing to do with
+  // the code under test — and a real project always has a package.json, so the
+  // fixture was the unrealistic thing.
+  writeFileSync(path.join(root, 'package.json'), '{"type":"module"}\n', 'utf8');
   for (const [name, body] of Object.entries(files)) {
     const full = path.join(root, name);
     mkdirSync(path.dirname(full), { recursive: true });

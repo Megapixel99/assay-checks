@@ -329,6 +329,34 @@ class ChangeAudit(unittest.TestCase):
         rep = checks.audit_diff(root, "HEAD", Config())
         self.assertTrue(any("keep.py" in i.message for i in rep.looks))
 
+    def test_a_SYMLINKED_root_still_matches_what_git_reports(self):
+        """The realpath half, built so it can fail ANYWHERE.
+
+        `show-toplevel` resolves symlinks and the root you were handed usually does
+        not, so the two disagree about a path naming the same file and the relative
+        path between them climbs out of the tree. On macOS every temp directory has a
+        symlinked parent and the ordinary fixtures exercise this by accident; on Linux
+        they do not, so the mutation that removes the fix came back NOT DETECTED in
+        CI — a guard passing on one platform and untested on the other, which is the
+        environment-dependence this suite is supposed to be free of.
+
+        So the symlink is CREATED rather than hoped for.
+        """
+        real = self.repo()
+        self.write(real, "a.py", "def f(n):\n    return n\n")
+        self.write(real, "mutations_a.py", 'T = "a.py"\nMUTATIONS = []\n')
+        self.commit(real, "first")
+        self.write(real, "a.py",
+                   "def f(n):\n    if n < 0:\n        return 0\n    return n\n")
+
+        link = os.path.join(tempfile.mkdtemp(prefix="assay-link-"), "via-symlink")
+        os.symlink(real, link)
+        self.assertNotEqual(link, os.path.realpath(link))   # the fixture discriminates
+
+        rep = checks.audit_diff(link, "HEAD", Config())
+        self.assertEqual(len(rep.findings), 1, [i.message for i in rep.items])
+        self.assertIn("a.py adds a guard", rep.findings[0].message)
+
     def test_limitation_shaped_tests_are_a_LOOK(self):
         root = self.repo()
         self.write(root, "a.py", "def f(n):\n    return n\n")

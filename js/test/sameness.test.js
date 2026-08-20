@@ -22,6 +22,13 @@ import { exportedFunctions, probeFunction } from '../src/probe.js';
 /** A throwaway module, never inside this package's own tree. */
 function write(body, name = 'm.js') {
   const dir = mkdtempSync(path.join(tmpdir(), 'assay-same-'));
+  // The module type is DECLARED, and that is not fixture tidiness: a `.js` file
+  // containing `export` in a directory with no `package.json` is a SyntaxError on
+  // Node 18 and loads fine on Node 22, because module-syntax detection arrived in
+  // between. Without this the suite passes on a new Node and fails on an old one
+  // for a reason unrelated to the code under test — and a real project always has
+  // a package.json, so the fixture was the unrealistic thing.
+  writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}\n', 'utf8');
   const file = path.join(dir, name);
   writeFileSync(file, body, 'utf8');
   return file;
