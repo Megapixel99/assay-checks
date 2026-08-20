@@ -39,6 +39,11 @@ def js(name):
         return fh.read()
 
 
+def py(name):
+    with open(os.path.join(ROOT, "assay", name), encoding="utf-8") as fh:
+        return fh.read()
+
+
 class SourceIsWhatItLooksLike(unittest.TestCase):
 
     def source_files(self):
@@ -91,6 +96,32 @@ class TheTwoHalvesAgree(unittest.TestCase):
         table = re.search(r"PROPERTIES = \[(.*?)\n\];", js("checks.js"), re.S).group(1)
         found = set(re.findall(r"^\s*\['([a-z-]+)',", table, re.M))
         self.assertEqual(found, set(checks.PROPERTY_KEYS))
+
+    def test_the_six_property_DESCRIPTIONS_and_failures_are_identical(self):
+        """The keys being equal is not enough, and the gap let a divergence through.
+
+        Both halves PRINT this table above every `assay runners` run. `sigterm` read
+        "SIGTERM becomes an exception so `finally` runs" in one half and "SIGTERM is
+        handled so the restore still runs" in the other, with two different accounts
+        of what goes wrong — so the same audit, on the same tree, taught two different
+        rules depending on which binary CI invoked. A rule stated two ways is a rule
+        a reader has to reconcile, which is the job the tool was supposed to do.
+        """
+        table = re.search(r"PROPERTIES = \[(.*?)\n\];", js("checks.js"), re.S).group(1)
+        found = dict((key, (desc, why)) for key, desc, why in re.findall(
+            r"\['([a-z-]+)',\s*'([^']*)',\s*'([^']*)',", table))
+        expected = dict((key, (desc, why))
+                        for key, desc, why, _det in checks.PROPERTIES)
+        self.assertEqual(found, expected)
+
+    def test_both_halves_refuse_to_call_a_baseline_STALE_from_a_partial_run(self):
+        """The rule, not the wording: a line is only stale to a run that could have
+        seen it fire. Python says so from any command but `all`; the JavaScript half
+        says so from every command, because `anchors` is Python-only and no run there
+        performs every audit able to produce a baseline line. What must match is that
+        BOTH say it rather than printing a zero that reads as `nothing is stale`."""
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn("staleness needs", source)
 
     def test_the_verdict_names_are_identical(self):
         source = js("verdicts.js")

@@ -28,6 +28,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+import { Report } from './verdicts.js';
+
 export const RUNNER_PREFIX = 'mutations';
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', 'vendor',
@@ -86,8 +88,8 @@ export const PROPERTIES = [
   ['restore-in-finally', 'the restore cannot be skipped by an exception',
     'an exception mid-run leaves the target mutated',
     (src) => /\bfinally\s*\{/.test(src)],
-  ['sigterm', 'SIGTERM is handled so the restore still runs',
-    'a kill between mutations leaves the tree broken',
+  ['sigterm', 'SIGTERM becomes an exception so `finally` runs',
+    'SIGTERM does not run `finally`; a kill leaves the tree broken',
     (src) => src.includes('SIGTERM')],
   ['parses-mutant', 'a file-breaking mutation is not scored',
     'a syntax error makes every suite fail, which reads as a catch',
@@ -107,7 +109,13 @@ export const PROPERTY_KEYS = new Set(PROPERTIES.map(([k]) => k));
 export const THREE_QUESTIONS = 'a harness must answer separately whether the suite '
   + 'RAN, whether it FAILED, and whether the failure was the RIGHT one';
 
-export function auditRunners(root, config, report) {
+/** `"src/m.js sigterm"` -> `['src/m.js', 'sigterm']`. The property never has a space. */
+function splitExemptKey(key) {
+  const cut = key.lastIndexOf(' ');
+  return [key.slice(0, cut), key.slice(cut + 1)];
+}
+
+export function auditRunners(root, config, report = new Report()) {
   const rels = findRunners(root);
   if (!rels.length) {
     report.note(`MUTATION RUNNERS — none found under ${root}.\n`
@@ -138,8 +146,13 @@ export function auditRunners(root, config, report) {
       report.ok(rel, rel);
     }
   }
-  for (const [key, why] of [...config.runnerExempt.entries()].sort()) {
-    report.note(`  exempt   ${key.padEnd(46)} ${why.slice(0, 60)}`);
+  // The path and the property are separate columns, as they are on the Python side.
+  // One `assay.json` serves both halves, so the same exemption printed two different
+  // ways is a reader comparing two runs and finding a difference that is not there.
+  for (const key of [...config.runnerExempt.keys()].sort()) {
+    const [rel, property] = splitExemptKey(key);
+    report.note(`  exempt   ${rel.padEnd(46)} ${property}: `
+      + `${config.runnerExempt.get(key).slice(0, 60)}`);
   }
   return report;
 }
@@ -149,11 +162,9 @@ export function auditRunners(root, config, report) {
  *
  * The second direction. Without it the file only ever grows.
  */
-export function checkExemptions(root, config, report) {
+export function checkExemptions(root, config, report = new Report()) {
   for (const key of [...config.runnerExempt.keys()].sort()) {
-    const split = key.lastIndexOf(' ');
-    const rel = key.slice(0, split);
-    const property = key.slice(split + 1);
+    const [rel, property] = splitExemptKey(key);
     if (!existsSync(path.join(root, rel))) {
       report.finding(`exemption names a runner that no longer exists: ${rel}`, rel);
     }
@@ -275,7 +286,7 @@ export function guardsPerFile(root, base) {
 }
 
 /** Does this change carry the checks it needs? */
-export function auditDiff(root, base, config, report) {
+export function auditDiff(root, base, config, report = new Report()) {
   const [changed, error] = changedFiles(root, base);
   if (error) { report.finding(error); return report; }
   if (!changed.length) {
@@ -291,7 +302,7 @@ export function auditDiff(root, base, config, report) {
   report.note(`\nCHANGE — ${changed.length} source file(s) against ${base}`);
   for (const name of changed) {
     const baseName = path.basename(name);
-    if (baseName.startsWith(RUNNER_PREFIX) || baseName.startsWith('test')) continue;
+    if (baseName.startsWith(RUNNER_PREFIX) || baseName.startsWith('test_')) continue;
     const owning = [...covers.entries()]
       .filter(([, t]) => t.has(baseName)).map(([r]) => r).sort();
     if (!owning.length) {

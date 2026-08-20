@@ -37,6 +37,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { Report } from './verdicts.js';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const MAX_PAIRS_PER_INPUT = 40;
@@ -356,8 +358,12 @@ export class Scan {
       const key = why.split('(')[0].split(':')[0].trim();
       counts.set(key, (counts.get(key) || 0) + 1);
     }
+    // Descending by count, then code-point order — `sorted(key=lambda kv: (-kv[1],
+    // kv[0]))` on the Python side. NOT `localeCompare`: ICU ignores punctuation and
+    // case at primary strength, so the same census prints in a different order
+    // depending on which half of the tool rendered it.
     return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   }
 }
 
@@ -412,7 +418,7 @@ export function group(scan) {
   scan.groups = [...buckets.values()]
     .filter((g) => g.length > 1)
     .map((g) => g.sort())
-    .sort((a, b) => a[0].localeCompare(b[0]));
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   return scan.groups;
 }
 
@@ -424,7 +430,7 @@ export function group(scan) {
  * telling them apart is a judgment about what the two pieces of code are FOR, which no
  * execution can make.
  */
-export function reportScan(scan, report) {
+export function reportScan(scan, report = new Report()) {
   for (const grp of scan.groups) {
     report.finding(
       `same answer (${scan.keys.get(grp[0])}): ${grp.join(', ')}`,
