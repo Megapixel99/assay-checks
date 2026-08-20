@@ -236,6 +236,12 @@ MUTATIONS = [
             changed.append(name)''',
      '''        if False:
             changed.append(name)'''),
+    ("checks: a DELETED file is reported as needing a check",
+     "checks.py",
+     '''        if not os.path.exists(os.path.join(root, name)):
+            continue''',
+     '''        if False:
+            continue'''),
     ("checks: a missing runner becomes a finding rather than a look",
      "checks.py",
      '''            rep.look("%s has NO mutation runner naming it — a missing check is a "

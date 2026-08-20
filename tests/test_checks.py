@@ -303,6 +303,32 @@ class ChangeAudit(unittest.TestCase):
         self.assertEqual(len(rep.findings), 1, [i.message for i in rep.items])
         self.assertIn("a.py adds a guard", rep.findings[0].message)
 
+    def test_a_DELETED_file_is_not_reported_as_needing_a_check(self):
+        """A commit that removes a directory otherwise reports one `look` per file,
+        all of them advice about code that no longer exists. Found by a repository
+        converting a subdirectory into a submodule: the diff lists every file as
+        deleted and the audit had an opinion about each one."""
+        root = self.repo()
+        for name in ("keep.py", "gone_a.py", "gone_b.py"):
+            self.write(root, name, "x = 1\n")
+        self.commit(root, "first")
+        os.remove(os.path.join(root, "gone_a.py"))
+        os.remove(os.path.join(root, "gone_b.py"))
+        rep = checks.audit_diff(root, "HEAD", Config())
+        said = "\n".join(i.message for i in rep.looks)
+        self.assertNotIn("gone_a.py", said)
+        self.assertNotIn("gone_b.py", said)
+
+    def test_a_file_that_still_EXISTS_is_still_reported(self):
+        """The other direction, because a fix that only removes findings is
+        indistinguishable from deleting the check."""
+        root = self.repo()
+        self.write(root, "keep.py", "x = 1\n")
+        self.commit(root, "first")
+        self.write(root, "keep.py", "x = 2\n")
+        rep = checks.audit_diff(root, "HEAD", Config())
+        self.assertTrue(any("keep.py" in i.message for i in rep.looks))
+
     def test_limitation_shaped_tests_are_a_LOOK(self):
         root = self.repo()
         self.write(root, "a.py", "def f(n):\n    return n\n")

@@ -10,6 +10,14 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## Unreleased
+
+- `assay diff` no longer reports a **deleted** file as needing a check. A commit
+  that removes a directory used to produce one `look` per file, all of them advice
+  about code that is gone. Found by a repository converting a subdirectory into a
+  submodule: the diff lists every file as deleted, and the audit had an opinion
+  about each one.
+
 ## 0.1.0
 
 First release. Two halves that answer adjacent questions about work that already

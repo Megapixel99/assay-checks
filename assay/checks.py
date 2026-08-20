@@ -364,6 +364,13 @@ def audit_diff(root, base, config, report=None):
         base_name = os.path.basename(name)
         if base_name.startswith(RUNNER_PREFIX) or base_name.startswith("test_"):
             continue
+        # A DELETED file needs no check, and saying otherwise is the crying-wolf
+        # failure at its most annoying: a commit that removes a directory reports one
+        # `look` per file removed, all of them advice about code that is gone. Found
+        # by a repository converting a subdirectory into a submodule — the diff lists
+        # every file as deleted, and the audit had opinions about all of them.
+        if not os.path.exists(os.path.join(root, name)):
+            continue
         owning = sorted(r for r, t in covers.items() if base_name in t)
         if not owning:
             rep.look("%s has NO mutation runner naming it — a missing check is a "
