@@ -14,8 +14,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  canon, collect, compare, discriminating, fileRefusal, functionRefusal, group,
-  isProjection, ladder, ladderKey, MIN_DISTINCT, outcomeOf, probeFile, stripNonCode,
+  canon, collect, compare, declaredArity, discriminating, fileRefusal,
+  functionRefusal, group, isProjection, ladder, ladderKey, MIN_DISTINCT, outcomeOf,
+  probeFile, stripNonCode,
 } from '../src/sameness.js';
 import { exportedFunctions, probeFunction } from '../src/probe.js';
 
@@ -258,6 +259,67 @@ test('async, generators and methods are each refused', () => {
 // probe and grouping
 // --------------------------------------------------------------------------- //
 
+// --------------------------------------------------------------------------- //
+// Arity comes from the DECLARED parameter list, never from fn.length
+// --------------------------------------------------------------------------- //
+
+test('a default parameter still counts, because fn.length stops at it', () => {
+  // The defect this replaced: `fn.length` is 1 for `(a, b = 10)`, so the function was
+  // probed on the one-argument ladder, `b` never received a value, and it was reported
+  // as answering the same question as a genuinely one-argument function.
+  assert.equal(declaredArity('function f(a, b = 10) {}'), 2);
+  assert.equal(declaredArity('function f(a = 1, b = 2, c = 3) {}'), 3);
+});
+
+test('a destructured parameter is ONE parameter', () => {
+  assert.equal(declaredArity('function f({ x, y }, [p, q]) {}'), 2);
+});
+
+test('commas inside a default value do not add parameters', () => {
+  assert.equal(declaredArity('function f(a = g(1, 2), b) {}'), 2);
+  assert.equal(declaredArity('function f(a = { x: 1, y: 2 }) {}'), 1);
+  assert.equal(declaredArity("function f(a = ',', b) {}"), 2);
+  assert.equal(declaredArity('function f(a, /* , */ b) {}'), 2);
+});
+
+test('an arrow with one bare parameter has no parentheses to find', () => {
+  // The scan below it would otherwise find the first `(` in the BODY.
+  assert.equal(declaredArity('a => a + 1'), 1);
+  assert.equal(declaredArity('a => f(a, a)'), 1);
+  assert.equal(declaredArity('(a, b) => a + b'), 2);
+});
+
+test('no parameters is zero, not unreadable', () => {
+  assert.equal(declaredArity('function f() {}'), 0);
+});
+
+test('a list that cannot be read is REFUSED, never guessed from fn.length', () => {
+  // Falling back would restore the wrong answer silently in exactly the cases the
+  // parser found hardest. Refusing costs coverage and says so in the census.
+  assert.equal(declaredArity('function f(a'), null);
+  assert.equal(declaredArity("function f(a = ') {}"), null);
+});
+
+test('probeFunction chooses the ladder by the DECLARED count', () => {
+  const withDefault = (a, b = 10) => a + b;
+  const result = probeFunction(withDefault, 'withDefault',
+    { 1: ladder(1), 2: ladder(2), 3: ladder(3) });
+  assert.equal(result.arity, 2, result.skip);
+  assert.equal(result.vector.length, ladder(2).length);
+});
+
+test('two functions that differ only past a default are NOT grouped', async () => {
+  // The whole defect, end to end: `withDefault(1, 2)` is 3 and `plainOne(1)` is 11,
+  // and they were reported as one function because the second argument was never
+  // passed. The Python half never had this, so it was a parity break too.
+  const scan = await collect([write(
+    'export function plainOne(a) {\n  return a + 10;\n}\n'
+    + 'export function withDefault(a, b = 10) {\n  return a + b;\n}\n',
+  )]);
+  group(scan);
+  assert.deepEqual(scan.groups, []);
+});
+
 test('exported functions are found under their exported names', () => {
   assert.deepEqual(exportedFunctions({ b: () => 1, a: () => 2 }).map(([n]) => n),
     ['a', 'b']);
@@ -388,6 +450,53 @@ test('a function COPIED into two files is still two implementations', async () =
 // --------------------------------------------------------------------------- //
 // The child's answer travels on its own channel.
 // --------------------------------------------------------------------------- //
+
+// --------------------------------------------------------------------------- //
+// A hang costs the function that hung, not the file
+// --------------------------------------------------------------------------- //
+
+test('one non-terminating function does not cost the whole file', async () => {
+  // Before incremental answers the child computed everything and spoke once at the
+  // end, so the SIGKILL that bounds a `while (true)` threw away every result it had
+  // already produced: a file of good functions reported `probe failed` and nothing
+  // else. There is no per-input interrupt for synchronous JavaScript, so the wall
+  // clock is the only bound — the fix is to have answered before it fires.
+  const file = write(
+    'export function fine(a) {\n'
+    + "  return a === 0 ? 'zero' : String(a).length;\n}\n"
+    + 'export function spins(a) {\n'
+    + '  while (a !== undefined) { /* never returns */ }\n  return a;\n}\n',
+  );
+  const result = await probeFile(file, 2500);
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.equal(result.functions.length, 2);
+  const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
+  assert.ok(byName.fine.vector, 'the function that answered keeps its vector');
+  assert.match(byName.spins.skip, /did not answer/);
+});
+
+test('a killed probe tells the hung function from the ones never started', async () => {
+  // Two different facts. Reporting them as one would claim the probe examined
+  // functions it never reached.
+  const file = write(
+    "export function aFirst(a) { return a === 0 ? 'zero' : String(a).length; }\n"
+    + 'export function bSpins(a) { while (a !== undefined) { /* hangs */ } return a; }\n'
+    + "export function cLater(a) { return a === 1 ? 'one' : typeof a; }\n",
+  );
+  const result = await probeFile(file, 2500);
+  const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
+  assert.ok(byName.aFirst.vector);
+  assert.match(byName.bSpins.skip, /did not answer/);
+  assert.match(byName.cLater.skip, /not reached: the probe was killed in bSpins/);
+});
+
+test('a module with no exports is not mistaken for a killed probe', async () => {
+  // The roster is what tells them apart: an empty roster arrived, so nothing was
+  // found — as opposed to no roster at all, which is a child that never got that far.
+  const result = await probeFile(write('export const x = 1;\n'));
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.deepEqual(result.functions, []);
+});
 
 test('a module that PRINTS at import time is still probed', async () => {
   // Loading a module runs its top-level code, and plenty of ordinary code announces

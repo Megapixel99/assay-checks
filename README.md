@@ -282,11 +282,15 @@ timeout, so an infinite loop is a `look`, not a hang.
 only exists once its module has been evaluated, so the JS half **loads the module and
 therefore runs its top-level code**. The child answers the parent on **fd 3**, never on
 stdout, because a module is free to print at import time and an answer sharing a channel
-with arbitrary output is an answer that output can destroy. Two compensations: it happens in a child process,
+with arbitrary output is an answer that output can destroy — **one function per line, as
+each finishes**, so the kill that bounds a non-terminating function costs that function
+rather than the file. Two compensations: it happens in a child process,
 and the file's source is gated *before* it is loaded at all — a file that reaches for
 the filesystem, the network, the clock, randomness or the process is skipped whole. A
 per-function gate then runs over `fn.toString()`, which is real source rather than a
-guess. **The residue is genuine:** a module with an import-time side effect that
+guess — including the **declared parameter list**, because `fn.length` stops counting at
+the first default and would pick the ladder for a function of the wrong shape. **The
+residue is genuine:** a module with an import-time side effect that
 mentions none of the gated names will still be evaluated. If that is unacceptable for
 your tree, point the tool at the files you trust rather than at the whole repository.
 
@@ -354,9 +358,16 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
   coverage on two runners. Ordinary projects declare `"type"` and are unaffected; a
   loose directory of ESM `.js` files is not, and shows up as `could not load` in the
   census rather than as a wrong answer.
-- **A timeout is an outcome, not a `look` on its own.** A non-terminating input lands in
-  the vector as a raise. A function that spins on *some* inputs and answers on others is
-  compared on the strength of the ones it answered.
+- **A timeout is an outcome in Python, and a `look` in JavaScript.** Python gets a
+  per-input `SIGALRM`, so a non-terminating input lands in the vector as a raise and a
+  function that spins on *some* inputs is still compared on the strength of the ones it
+  answered. **Synchronous JavaScript has no equivalent interrupt** — there is nothing to
+  deliver to a spinning loop from inside its own process — so the JS half bounds the
+  whole probe with a wall clock and a kill. A function that hangs is therefore a `look`
+  there, never a vector. It costs only itself: the child answers one function at a time,
+  so the kill loses the function that hung and, after it, the ones never started — each
+  named as such in the census — while every function that had already answered keeps
+  its vector.
 - **The six properties are about mutation harnesses.** If your project has none, that
   half has nothing to say about it and says so rather than reporting a pass.
 - **`targets_mentioned` under-reports.** A harness that merely mentions a filename counts
@@ -387,9 +398,9 @@ are what is already published and do not change. `pyproject.toml` bridges the tw
 Working from a checkout rather than an install, `python/` is what goes on the path:
 
 ```bash
-python3 python/tests/run_tests.py        # 161 tests, ~19 s
-npm test                                 # 141 tests, ~15 s
-python3 python/tests/mutations_assay.py  # 73 mutations, both halves
+python3 python/tests/run_tests.py        # 162 tests, ~19 s
+npm test                                 # 152 tests, ~25 s
+python3 python/tests/mutations_assay.py  # 78 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master
 ```

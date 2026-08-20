@@ -280,6 +280,64 @@ export function fileRefusal(source) {
   return firstGate(IMPURE_SOURCE, source);
 }
 
+/**
+ * How many parameters a function DECLARES, or null when the list cannot be read.
+ *
+ * NOT `fn.length`, and the difference is a wrong answer rather than a missing one.
+ * `fn.length` stops counting at the first parameter with a default, so
+ * `withDefault(a, b = 10)` reports 1. The ladder is then chosen for a one-argument
+ * function, the second parameter never receives a value, and the function is probed
+ * as something it is not — `withDefault` reported as answering the same question as a
+ * genuinely one-argument `plainOne`, which is a finding a person has to read and
+ * dismiss. The Python half reads the declared parameter list off the AST and probes
+ * at 2, where the first rung already tells them apart, so this was also the two halves
+ * disagreeing about one file.
+ *
+ * WHEN THE LIST CANNOT BE READ THIS REFUSES rather than falling back to `fn.length`.
+ * A fallback would restore the wrong answer silently in exactly the cases the parser
+ * found hardest; refusing costs coverage and says so in the census.
+ */
+export function declaredArity(source) {
+  // Strings and comments blanked first: a default value like `x = ')'` or a comma
+  // inside a comment would otherwise close the list early or add a parameter.
+  const text = stripNonCode(source, true);
+  if (text === null) return null;
+  // `a => a + 1` declares one parameter and has no parentheses around it. Checked
+  // before the scan below, which would otherwise find the first `(` in the BODY.
+  if (/^\s*(?:async\s+)?[A-Za-z_$][\w$]*\s*=>/.test(text)) return 1;
+
+  const open = text.indexOf('(');
+  if (open === -1) return null;
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < text.length; i += 1) {
+    if ('(['.includes(text[i]) || text[i] === '{') depth += 1;
+    else if (')]'.includes(text[i]) || text[i] === '}') {
+      depth -= 1;
+      if (depth === 0) { close = i; break; }
+    }
+  }
+  if (close === -1) return null;
+
+  // Split on commas at depth 0 only. A destructured parameter is ONE parameter, and
+  // so is a default whose value is a call or an object literal full of commas.
+  let count = 0;
+  let current = '';
+  depth = 0;
+  for (const ch of text.slice(open + 1, close)) {
+    if ('(['.includes(ch) || ch === '{') depth += 1;
+    else if (')]'.includes(ch) || ch === '}') depth -= 1;
+    if (ch === ',' && depth === 0) {
+      if (current.trim()) count += 1;
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) count += 1;
+  return count;
+}
+
 /** Why this FUNCTION may not be probed, or null. `source` is fn.toString(). */
 export function functionRefusal(source, arity) {
   if (arity === 0) return 'no arguments (a ladder cannot discriminate)';
@@ -543,16 +601,45 @@ export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null) {
     child.stderr.on('data', (d) => { err += d; });
     child.on('close', () => {
       clearTimeout(timer);
-      try {
-        resolve(JSON.parse(answer));
-      } catch {
+      const said = () => {
         // Whatever the child managed to say, in the order it is likely to be useful.
         // `silent` is reachable only when it said nothing at all: a reason that names
         // nothing is a number reported without saying what produced it.
-        const said = err.trim() || out.trim() || answer.trim();
-        const tail = (said.split('\n').pop() || 'silent').slice(0, 70);
-        resolve({ error: `probe failed (${tail})` });
+        const text = err.trim() || out.trim() || answer.trim();
+        return (text.split('\n').pop() || 'silent').slice(0, 70);
+      };
+      // NDJSON, and a TRAILING PARTIAL LINE IS DROPPED rather than repaired. A child
+      // killed mid-write leaves half an object; parsing what survives of it would be
+      // inventing an answer, which is the one thing worse than not having one.
+      const lines = answer.split('\n').filter((l) => l.trim());
+      const messages = [];
+      for (const line of lines) {
+        try {
+          messages.push(JSON.parse(line));
+        } catch {
+          break;
+        }
       }
+      const failed = messages.find((m) => m.error);
+      if (failed) { resolve({ error: failed.error }); return; }
+      const roster = messages.find((m) => m.roster);
+      if (!roster) { resolve({ error: `probe failed (${said()})` }); return; }
+
+      // What arrived, plus a `look` for every name that did not. The child answers in
+      // roster order, so the FIRST missing name is where it stopped and the rest were
+      // never started — two different facts, and reporting them as one would say the
+      // probe examined functions it never reached.
+      const answered = new Map(
+        messages.filter((m) => m.entry).map((m) => [m.entry.name, m.entry]),
+      );
+      const missing = roster.roster.filter((name) => !answered.has(name));
+      const functions = roster.roster.map((name) => answered.get(name) || {
+        name,
+        skip: name === missing[0]
+          ? `did not answer (killed at the ${timeout}ms wall timeout)`
+          : `not reached: the probe was killed in ${missing[0]}`,
+      });
+      resolve({ functions });
     });
     const ladders = {};
     for (let arity = 1; arity <= MAX_ARITY; arity += 1) ladders[arity] = ladder(arity);

@@ -12,6 +12,37 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+**The JavaScript half chose the ladder by `fn.length`, and reported a wrong finding
+for it.** `fn.length` stops counting at the first parameter with a default, so
+`withDefault(a, b = 10)` came back as arity 1: probed on the one-argument ladder,
+never handed a second argument, and reported as answering the same question as a
+genuinely one-argument `plainOne` — `withDefault(1, 2)` is `3`, `plainOne(1)` is `11`.
+That is the worst category this package has, a finding a reader must dismiss, and it
+was a parity break as well: the Python half reads the declared list off the AST, probes
+at 2, and the first rung separates them. Arity now comes from the declared parameter
+list in `fn.toString()`, which the per-function gates already parse textually — with
+commas inside defaults, destructured parameters and bare-identifier arrows all counted
+correctly, and a list that cannot be read REFUSED rather than fallen back to
+`fn.length`, because a fallback restores the wrong answer exactly where the parser
+found it hardest. The parsed count is checked against `fn.length` as a lower bound,
+since `fn.length` can never exceed the declared count.
+
+**One non-terminating function cost the whole file.** Synchronous JavaScript has no
+per-input interrupt, so the probe is bounded by a wall clock and a SIGKILL — and a
+child that answered once at the end lost everything it had already computed when that
+fired. A file with one `while (true)` and one perfectly probeable function reported
+`1 files, 1 not loaded / probe failed` and nothing about the function that was fine.
+The child now writes one NDJSON line per function to fd 3 as each completes, after a
+roster line naming what it will attempt. A kill costs the function that hung and, after
+it, the ones never started — reported separately, because "it hung here" and "we never
+got to it" are different facts. Everything already answered keeps its vector. A
+trailing partial line is dropped rather than repaired: parsing half an object would be
+inventing an answer.
+
+The README's Limits section claimed a timeout is an outcome rather than a `look`,
+unqualified. That is true of Python, which has `SIGALRM` per input, and was never true
+of JavaScript. It now says so per half.
+
 - Test fixtures declare `"type": "module"`, so the JavaScript suites pass on Node
   18 as `engines` claims. A `.js` file containing `export` with no `package.json`
   beside it is a SyntaxError on Node 18 and loads fine on Node 22 — the fixture was

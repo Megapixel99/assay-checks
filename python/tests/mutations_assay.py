@@ -584,6 +584,45 @@ MUTATIONS += [
      """  if (aKey !== bKey) return ['look', `not comparable: ${aKey} vs ${bKey}`];""",
      """  if (false) return ['look', `not comparable: ${aKey} vs ${bKey}`];"""),
 
+    # ---- the ladder is chosen by the DECLARED parameter list ------------------ #
+    ("js probe: arity comes from fn.length again (a shipped defect)",
+     "probe.js",
+     """  const arity = declaredArity(source);
+  if (arity === null) return { name, skip: 'cannot read the parameter list' };""",
+     """  const arity = fn.length;
+  if (arity === null) return { name, skip: 'cannot read the parameter list' };"""),
+    ("js sameness: a default parameter stops counting toward arity",
+     "sameness.js",
+     """    if (ch === ',' && depth === 0) {
+      if (current.trim()) count += 1;
+      current = '';
+      continue;
+    }""",
+     """    if (ch === ',' && depth === 0) {
+      if (current.trim() && !current.includes('=')) count += 1;
+      current = '';
+      continue;
+    }"""),
+    ("js sameness: an unreadable parameter list is guessed at rather than refused",
+     "sameness.js",
+     """  const text = stripNonCode(source, true);
+  if (text === null) return null;""",
+     """  const text = stripNonCode(source, true) || source;
+  if (text === null) return null;"""),
+
+    # ---- a hang costs the function that hung, not the file --------------------- #
+    ("js probe: the child answers once at the end, so a kill loses everything",
+     "probe.js",
+     """  for (const [name, fn] of found) {
+    say({ entry: probeFunction(fn, name, request.ladders) });
+  }""",
+     """  const all = found.map(([name, fn]) => probeFunction(fn, name, request.ladders));
+  for (const entry of all) say({ entry });"""),
+    ("js sameness: a function that never answered is dropped rather than reported",
+     "sameness.js",
+     """      const functions = roster.roster.map((name) => answered.get(name) || {""",
+     """      const functions = [...answered.values()].map((e) => e || {"""),
+
     # ---- the config is judgment, and it is validated -------------------------- #
     ("js config: an exemption without a REASON is accepted",
      "config.js",
