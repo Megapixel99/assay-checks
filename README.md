@@ -79,6 +79,14 @@ than a quadratic sweep, and the decider is **execution**, not text.
 **Names are never read.** In the tree this grew out of, it paired `is_wordy` with
 `_word` — which no textual or name-based detector puts together.
 
+**One function is never a pair with itself**, and the ways it can look like one are not
+obvious. A CommonJS module whose export IS a function arrives under two keys, `default`
+and `module.exports`; a barrel module hands back the very objects its dependencies
+defined, so a helper is reachable as both `registry.js::truncate` and
+`truncate.js::default`. Both are one function wearing two names, and both are rejected
+by **identity** rather than by comparing names or source text — so a function genuinely
+copied into two files is still the two implementations it is.
+
 | verdict | means | fails? |
 |---|---|---|
 | **differs** | a **witness input** on which the two disagree | no — this is the good outcome |
@@ -114,11 +122,19 @@ are different claims**, and only one of them is evidence. Every scan ends with a
 of what it refused and why:
 
 ```
-247 files, 1412 functions, 137 probed, 1275 not probed
+247 files, 32 not loaded
+  reads the clock                               19
+  touches os                                    13
+1412 functions, 137 probed, 1275 not probed
   no arguments                                 274
   not discriminated by the ladder              127
-  touches os                                    76
 ```
+
+**Files and functions are counted separately, and the second line is an equation.** A
+file nobody opened holds an unknown number of functions — not opening it is exactly why
+the number is unknown — so adding the two populations together prints a total nobody
+measured. Reading `probed + not probed` and not getting `functions` is the shape of
+that mistake.
 
 **Exit codes are identical for every subcommand**, because scripts depend on them more
 than on anything printed: `0` nothing to read, `1` findings, `2` the tool could not
@@ -217,6 +233,12 @@ Both halves of that guard exist because both mistakes were made:
   vocabulary the ladder lacks is the identity wherever it answers and raises everywhere
   else, so its vector differs from the projection at exactly the positions where the
   function refused to run. The question is about the positions where it **answered**.
+- **Returning an argument is not the only way to do nothing with it.** COPYING it is
+  the same emptiness in another shape. Two unrelated query-param transforms — one
+  renaming keys, one splitting a `sort` value — agreed on every rung of the ladder,
+  because it holds no key either of them recognises and both degraded to *copy the
+  object through*. A shallow copy is not behaviour the ladder reached; it is behaviour
+  the ladder missed, so it is rejected alongside the identity.
 
 The general form: *a round trip is necessary and not sufficient, because an identity
 program passes it.*
@@ -237,7 +259,9 @@ timeout, so an infinite loop is a `look`, not a hang.
 
 **JavaScript, and this is a real difference rather than a detail.** A function object
 only exists once its module has been evaluated, so the JS half **loads the module and
-therefore runs its top-level code**. Two compensations: it happens in a child process,
+therefore runs its top-level code**. The child answers the parent on **fd 3**, never on
+stdout, because a module is free to print at import time and an answer sharing a channel
+with arbitrary output is an answer that output can destroy. Two compensations: it happens in a child process,
 and the file's source is gated *before* it is loaded at all — a file that reaches for
 the filesystem, the network, the clock, randomness or the process is skipped whole. A
 per-function gate then runs over `fn.toString()`, which is real source rather than a

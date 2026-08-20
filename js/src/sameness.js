@@ -37,7 +37,12 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { Report } from './verdicts.js';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+/** The child answers on fd 3, never on stdout. See `probeFile`. */
+export const ANSWER_FD = 3;
 
 export const MAX_PAIRS_PER_INPUT = 40;
 export const MAX_ARITY = 3;
@@ -61,15 +66,24 @@ const SKIP_DIRS = new Set([
 const CORE_MODULES = 'fs|net|http|https|child_process|dgram|dns|tls|os|cluster'
   + '|worker_threads|v8|vm|repl|readline|perf_hooks|inspector';
 
+/**
+ * `SPECIFIER` marks a gate whose subject IS a string literal — a module name. Those
+ * must be matched with string bodies INTACT; blanking them turns `from 'node:fs'` into
+ * `from '      '` and the file loads unrefused. Everything else is `CODE`, matched with
+ * strings and comments blanked so prose cannot trip it.
+ */
+const CODE = 'code';
+const SPECIFIER = 'specifier';
+
 const IMPURE_SOURCE = [
   [new RegExp('\\brequire\\s*\\(\\s*[\'"](?:node:)?(?:' + CORE_MODULES + ')'),
-    'reaches a node core module'],
+    'reaches a node core module', SPECIFIER],
   [new RegExp('\\bfrom\\s+[\'"](?:node:)?(?:' + CORE_MODULES + ')'),
-    'reaches a node core module'],
-  [/\bprocess\s*\./, 'touches process'],
+    'reaches a node core module', SPECIFIER],
+  [/(?<![.?\w$])process\s*\./, 'touches process'],
   [/\bMath\s*\.\s*random\b/, 'uses randomness'],
   [/\bDate\s*\.\s*now\b|\bnew\s+Date\b/, 'reads the clock'],
-  [/\bglobalThis\b|\bglobal\s*\./, 'touches global state'],
+  [/\bglobalThis\b|(?<![.?\w$])global\s*\./, 'touches global state'],
   [/\beval\s*\(|new\s+Function\s*\(/, 'evaluates source at runtime'],
   [/\bfetch\s*\(|XMLHttpRequest|WebSocket/, 'reaches the network'],
 ];
@@ -82,22 +96,195 @@ const IMPURE_FUNCTION = [
   [/\.\.\.\w+\s*[,)]/, 'rest parameters'],
 ];
 
-/** Why this FILE may not be loaded at all, or null. */
-export function fileRefusal(source) {
-  for (const [pattern, why] of IMPURE_SOURCE) {
-    if (pattern.test(source)) return why;
+/** A `/` here opens a regex rather than dividing. */
+const REGEX_MAY_FOLLOW = new Set([
+  '', '(', '[', '{', ',', ';', ':', '=', '!', '&', '|', '?', '+', '-', '*', '%',
+  '~', '^', '<', '>',
+]);
+
+/** ...and so does a `/` right after one of these words. */
+const REGEX_KEYWORDS = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw',
+  'case', 'do', 'else', 'yield', 'await',
+]);
+
+/** The last real token of the code emitted so far: its final character and its word. */
+function precedingToken(text) {
+  let j = text.length - 1;
+  while (j >= 0 && /\s/.test(text[j])) j -= 1;
+  if (j < 0) return { ch: '', word: '' };
+  const ch = text[j];
+  if (!/[A-Za-z0-9_$]/.test(ch)) return { ch, word: '' };
+  let k = j;
+  while (k >= 0 && /[A-Za-z0-9_$]/.test(text[k])) k -= 1;
+  return { ch, word: text.slice(k + 1, j + 1) };
+}
+
+function startsRegex(emitted) {
+  const { ch, word } = precedingToken(emitted);
+  if (word) return REGEX_KEYWORDS.has(word);
+  return REGEX_MAY_FOLLOW.has(ch);
+}
+
+/** Index just past a regex literal's closing `/`, or -1 if it does not close. */
+function scanRegex(source, start) {
+  let j = start + 1;
+  let inClass = false;
+  while (j < source.length) {
+    const c = source[j];
+    if (c === '\\') { j += 2; continue; }
+    if (c === '\n') return -1;
+    if (inClass) { if (c === ']') inClass = false; } else if (c === '[') inClass = true;
+    else if (c === '/') return j + 1;
+    j += 1;
+  }
+  return -1;
+}
+
+/**
+ * The same source with comments and string bodies blanked — or null when the scan
+ * lost the thread.
+ *
+ * The gates above are regexes, and a regex reads prose exactly as eagerly as it reads
+ * code. Both halves of that were measured on a real tree: the English word "this" in a
+ * comment refused a plain function as a method, and `perms.global.includes(...)`
+ * refused a whole file as touching the global object.
+ *
+ * THE DANGEROUS DIRECTION IS THE OTHER ONE, and it is why this returns null rather
+ * than its best guess. A gate that stops firing does not print a wrong line — it LOADS
+ * a file the gate exists to refuse, and loading runs top-level code. So a template
+ * placeholder keeps its contents, string DELIMITERS survive so a following `/` is still
+ * read as division, and anything unterminated gives up. The caller then reads raw
+ * source and the refusal stands: uncertainty keeps the `look`, never spends it.
+ */
+export function stripNonCode(source, blankStrings = true) {
+  const n = source.length;
+  const stack = [{ kind: 'code', depth: 0 }];
+  let out = '';
+  let i = 0;
+  const blankRun = (from, to) => {
+    for (let k = from; k < to && k < n; k += 1) out += source[k] === '\n' ? '\n' : ' ';
+  };
+  // A string BODY is blanked only when the caller is matching code. Comments are
+  // blanked either way — a commented-out `require('fs')` does not execute.
+  const emit = (from, to) => {
+    if (blankStrings) blankRun(from, to);
+    else out += source.slice(from, Math.min(to, n));
+  };
+
+  while (i < n) {
+    const frame = stack[stack.length - 1];
+    const ch = source[i];
+
+    if (frame.kind === 'template') {
+      if (ch === '\\') { emit(i, i + 2); i += 2; continue; }
+      if (ch === '`') { out += ch; i += 1; stack.pop(); continue; }
+      if (source.startsWith('${', i)) {
+        out += '${';
+        i += 2;
+        stack.push({ kind: 'code', depth: 0 });
+        continue;
+      }
+      emit(i, i + 1);
+      i += 1;
+      continue;
+    }
+
+    if (source.startsWith('//', i)) {
+      const nl = source.indexOf('\n', i);
+      const stop = nl === -1 ? n : nl;
+      blankRun(i, stop);
+      i = stop;
+      continue;
+    }
+    if (source.startsWith('/*', i)) {
+      const end = source.indexOf('*/', i + 2);
+      if (end === -1) return null;
+      blankRun(i, end + 2);
+      i = end + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      let closed = false;
+      while (j < n) {
+        const c = source[j];
+        if (c === '\\') { j += 2; continue; }
+        if (c === '\n') break;
+        if (c === ch) { closed = true; break; }
+        j += 1;
+      }
+      if (!closed) return null;
+      out += ch;
+      emit(i + 1, j);
+      out += ch;
+      i = j + 1;
+      continue;
+    }
+    if (ch === '`') { out += ch; i += 1; stack.push({ kind: 'template' }); continue; }
+    if (ch === '{') { frame.depth += 1; out += ch; i += 1; continue; }
+    if (ch === '}') {
+      if (frame.depth === 0 && stack.length > 1) { out += ch; i += 1; stack.pop(); continue; }
+      frame.depth = Math.max(0, frame.depth - 1);
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '/' && startsRegex(out)) {
+      const end = scanRegex(source, i);
+      if (end !== -1) {
+        out += '/';
+        blankRun(i + 1, end - 1);
+        out += '/';
+        let j = end;
+        while (j < n && /[a-z]/.test(source[j])) { out += source[j]; j += 1; }
+        i = j;
+        continue;
+      }
+      // It never closed on this line, so it was division after all. Ordinary code.
+    }
+    out += ch;
+    i += 1;
+  }
+  if (stack.length !== 1) return null;
+  return out;
+}
+
+/**
+ * The first gate `source` trips, or null.
+ *
+ * A pattern must match the CODE, not the prose around it. When the stripper cannot
+ * lex the file it returns null and the raw match stands — refusing something probeable
+ * costs coverage and says so in the census; the other mistake loads it.
+ */
+function firstGate(patterns, source) {
+  // Lexed only when a pattern actually matches the raw text, and at most once per
+  // scope. A clean file trips nothing and is never scanned at all; this runs per file
+  // AND per function, so doing it eagerly would lex a large module dozens of times.
+  const cache = new Map();
+  const cleaned = (scope) => {
+    if (!cache.has(scope)) cache.set(scope, stripNonCode(source, scope === CODE));
+    return cache.get(scope);
+  };
+  for (const [pattern, why, scope = CODE] of patterns) {
+    if (!pattern.test(source)) continue;
+    const text = cleaned(scope);
+    if (text !== null && !pattern.test(text)) continue;
+    return why;
   }
   return null;
+}
+
+/** Why this FILE may not be loaded at all, or null. */
+export function fileRefusal(source) {
+  return firstGate(IMPURE_SOURCE, source);
 }
 
 /** Why this FUNCTION may not be probed, or null. `source` is fn.toString(). */
 export function functionRefusal(source, arity) {
   if (arity === 0) return 'no arguments (a ladder cannot discriminate)';
   if (arity > MAX_ARITY) return `arity ${arity} (no ladder above ${MAX_ARITY})`;
-  for (const [pattern, why] of IMPURE_FUNCTION) {
-    if (pattern.test(source)) return why;
-  }
-  return null;
+  return firstGate(IMPURE_FUNCTION, source);
 }
 
 /**
@@ -235,12 +422,32 @@ export function outcomeOf(fn, args) {
 // The decisions.
 // --------------------------------------------------------------------------- //
 
+/**
+ * For each parameter, the vectors a function that does NOTHING WITH IT would give.
+ *
+ * Returning the argument is the obvious one. COPYING it is the same emptiness wearing
+ * a different shape, and it was measured on a real tree: two unrelated query-param
+ * transforms, one renaming keys and one splitting a `sort` value, agreed on every rung
+ * because the ladder holds no key either of them recognises — so both degraded to
+ * "copy the object through" and were reported as the same function. A spread is not
+ * behaviour the ladder reached; it is behaviour the ladder missed.
+ */
 export function projections(inputs) {
   const parsed = inputs.map((src) => JSON.parse(src));
   const arity = parsed.length ? parsed[0].length : 0;
   const out = [];
+  // The object copy only, not an array one. Rejecting too much costs a `look` rather
+  // than a wrong finding, but it is still coverage spent; the measured defect was
+  // object-to-object, so that is what this rejects.
+  const vacuous = [
+    (i) => (...a) => a[i],
+    (i) => (...a) => ({ ...a[i] }),
+  ];
   for (let i = 0; i < arity; i += 1) {
-    out.push(parsed.map((args) => outcomeOf((...a) => a[i], args)));
+    for (const make of vacuous) {
+      const fn = make(i);
+      out.push(parsed.map((args) => outcomeOf(fn, args)));
+    }
   }
   return out;
 }
@@ -319,18 +526,31 @@ export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null) {
         source = '';
       }
     }
-    const child = spawn(process.execPath, [worker], { stdio: ['pipe', 'pipe', 'pipe'] });
+    // FOUR pipes, and the fourth is the whole point. Loading a module runs its
+    // top-level code, and ordinary code announces itself — a dotenv banner was the one
+    // that cost 58 files in a single directory of a real project. Sharing stdout
+    // between the answer and whatever the module prints means the banner lands in
+    // front of the JSON, the parse throws, and a diagnosis the child had ALREADY
+    // COMPUTED (`could not load (JWT_SECRET must be set...)`) is replaced by silence.
+    const child = spawn(process.execPath, [worker],
+      { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+    let answer = '';
     let out = '';
     let err = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
+    child.stdio[ANSWER_FD].on('data', (d) => { answer += d; });
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
     child.on('close', () => {
       clearTimeout(timer);
       try {
-        resolve(JSON.parse(out));
+        resolve(JSON.parse(answer));
       } catch {
-        const tail = (err.trim().split('\n').pop() || 'silent').slice(0, 70);
+        // Whatever the child managed to say, in the order it is likely to be useful.
+        // `silent` is reachable only when it said nothing at all: a reason that names
+        // nothing is a number reported without saying what produced it.
+        const said = err.trim() || out.trim() || answer.trim();
+        const tail = (said.split('\n').pop() || 'silent').slice(0, 70);
         resolve({ error: `probe failed (${tail})` });
       }
     });
@@ -340,25 +560,48 @@ export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null) {
   });
 }
 
+/**
+ * Reasons, counted, most common first.
+ *
+ * Descending by count, then code-point order — `sorted(key=lambda kv: (-kv[1],
+ * kv[0]))` on the Python side. NOT `localeCompare`: ICU ignores punctuation and case
+ * at primary strength, so the same census prints in a different order depending on
+ * which half of the tool rendered it.
+ */
+function tally(reasons) {
+  const counts = new Map();
+  for (const why of reasons) {
+    const key = why.split('(')[0].split(':')[0].trim();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
+
 export class Scan {
   constructor() {
-    this.probed = new Map();   // ref -> vector
-    this.keys = new Map();     // ref -> ladder key
-    this.skipped = new Map();  // ref -> reason
+    this.probed = new Map();      // ref -> vector
+    this.keys = new Map();        // ref -> ladder key
+    this.skipped = new Map();     // ref -> reason   (FUNCTIONS)
+    this.unloadable = new Map();  // path -> reason  (FILES)
     this.groups = [];
     this.files = 0;
     this.functions = 0;
   }
 
-  census() {
-    const counts = new Map();
-    for (const why of this.skipped.values()) {
-      const key = why.split('(')[0].split(':')[0].trim();
-      counts.set(key, (counts.get(key) || 0) + 1);
-    }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  }
+  /** Reasons a FUNCTION was not probed. */
+  census() { return tally(this.skipped.values()); }
+
+  /**
+   * Reasons a FILE was never loaded — a different population, kept apart on purpose.
+   *
+   * A refused file holds an unknown number of functions, and not loading it is exactly
+   * why the number is unknown. Counting it among the functions made `probed + not
+   * probed` stop equalling `functions`, with nothing on screen to say why: one run
+   * read `146 files, 37 functions, 8 probed, 149 not probed`. Worse than the arithmetic
+   * is what it hid — how much of the tree was never opened at all.
+   */
+  fileCensus() { return tally(this.unloadable.values()); }
 }
 
 export async function collect(targets, scan = new Scan()) {
@@ -375,13 +618,13 @@ export async function collect(targets, scan = new Scan()) {
     if (why) {
       // A refused FILE is counted once with its reason rather than silently dropped:
       // a census that omits what it never looked at reads exactly like a clean sweep.
-      scan.skipped.set(`${rel}::*`, why);
+      scan.unloadable.set(rel, why);
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
     const result = await probeFile(file, PROBE_TIMEOUT_MS, source);
     if (result.error) {
-      scan.skipped.set(`${rel}::*`, result.error);
+      scan.unloadable.set(rel, result.error);
       continue;
     }
     for (const entry of result.functions || []) {
@@ -412,7 +655,7 @@ export function group(scan) {
   scan.groups = [...buckets.values()]
     .filter((g) => g.length > 1)
     .map((g) => g.sort())
-    .sort((a, b) => a[0].localeCompare(b[0]));
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   return scan.groups;
 }
 
@@ -424,7 +667,7 @@ export function group(scan) {
  * telling them apart is a judgment about what the two pieces of code are FOR, which no
  * execution can make.
  */
-export function reportScan(scan, report) {
+export function reportScan(scan, report = new Report()) {
   for (const grp of scan.groups) {
     report.finding(
       `same answer (${scan.keys.get(grp[0])}): ${grp.join(', ')}`,
@@ -433,8 +676,12 @@ export function reportScan(scan, report) {
       + 'whether the duplication is a defect',
     );
   }
-  report.note(`\n${scan.files} files, ${scan.functions} functions, `
-    + `${scan.probed.size} probed, ${scan.skipped.size} not probed`);
+  report.note(`\n${scan.files} files, ${scan.unloadable.size} not loaded`);
+  for (const [why, count] of scan.fileCensus()) {
+    report.note(`  ${why.padEnd(44)} ${count}`);
+  }
+  report.note(`${scan.functions} functions, ${scan.probed.size} probed, `
+    + `${scan.skipped.size} not probed`);
   for (const [why, count] of scan.census()) {
     report.note(`  ${why.padEnd(44)} ${count}`);
   }

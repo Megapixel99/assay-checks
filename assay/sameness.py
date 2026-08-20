@@ -62,6 +62,7 @@ and counted, because "we found none" and "we never looked" are different claims.
 """
 
 import ast
+import functools
 import builtins
 import hashlib
 import json
@@ -433,11 +434,32 @@ def outcome_of(fn, args):
 # --------------------------------------------------------------------------- #
 
 def projections(inputs):
-    """For each parameter, the vector a function that just RETURNS that argument gives."""
+    """For each parameter, the vectors a function that does NOTHING WITH IT gives.
+
+    Returning the argument is the obvious one. COPYING it is the same emptiness wearing
+    a different shape, and it was measured on a real tree: two unrelated query-param
+    transforms, one renaming keys and one splitting a `sort` value, agreed on every rung
+    because the ladder holds no key either of them recognises — so both degraded to
+    "copy the mapping through" and were reported as the same function. A copy is not
+    behaviour the ladder reached; it is behaviour the ladder missed.
+
+    ONLY the mapping copy, not a sequence one. Rejecting too much is safe in the sense
+    that costs a `look` rather than a wrong finding — but it is still coverage spent,
+    and `list(d)` would swallow honest functions like `sorted`. The measured defect was
+    object-to-object; that is what this rejects.
+    """
     out = []
+    # `dict` UNGUARDED, because the point is to mirror what the function under test
+    # does — `dict(q)` answers `{}` for an empty list and raises for an int, and a
+    # candidate that raised where the real one answered would never match it.
+    vacuous = (
+        lambda *a, _i=0: a[_i],
+        lambda *a, _i=0: dict(a[_i]),
+    )
     for i in range(len(ast.literal_eval(inputs[0])) if inputs else 0):
-        out.append([outcome_of(lambda *a, _i=i: a[_i], ast.literal_eval(src))
-                    for src in inputs])
+        for make in vacuous:
+            fn = functools.partial(make, _i=i)
+            out.append([outcome_of(fn, ast.literal_eval(src)) for src in inputs])
     return out
 
 
@@ -502,28 +524,43 @@ class Scan:
     def __init__(self):
         self.probed = {}         # ref -> vector
         self.keys = {}           # ref -> ladder key
-        self.skipped = {}        # ref -> reason
+        self.skipped = {}        # ref -> reason        (FUNCTIONS)
+        self.unloadable = {}     # path -> reason       (FILES)
         self.groups = []         # [[ref, ...]] — same-answer candidates
         self.files = 0
         self.functions = 0
 
-    def census(self):
-        """Reasons functions were not probed, counted. Never a finding, always shown."""
-        reasons = {}
-        for why in self.skipped.values():
+    @staticmethod
+    def _tally(reasons):
+        counts = {}
+        for why in reasons:
             key = why.split("(")[0].split(":")[0].strip()
-            reasons[key] = reasons.get(key, 0) + 1
-        return sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))
+            counts[key] = counts.get(key, 0) + 1
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def census(self):
+        """Reasons FUNCTIONS were not probed. Never a finding, always shown."""
+        return self._tally(self.skipped.values())
+
+    def file_census(self):
+        """Reasons a FILE was never opened — a different population, kept apart.
+
+        A file that does not parse used to be dropped before `files` was even
+        incremented, so it appeared in no number at all and a directory of broken
+        files reported zero of everything. That reads exactly like a clean sweep.
+        """
+        return self._tally(self.unloadable.values())
 
 
 def collect(paths, python=None, scan=None):
     """Probe every function under `paths`. Returns a Scan."""
     out = scan or Scan()
     for path in python_files(paths):
+        out.files += 1
         mod = parse(path)
         if mod is None:
+            out.unloadable[path] = "could not parse"
             continue
-        out.files += 1
         for name in sorted(mod.funcs):
             func = mod.funcs[name]
             out.functions += 1
@@ -572,8 +609,11 @@ def report_scan(scan, report=None):
                     grp[0],
                     "no input in the ladder told them apart — READ them; only a "
                     "person decides whether the duplication is a defect")
-    rep.note("\n%d files, %d functions, %d probed, %d not probed"
-             % (scan.files, scan.functions, len(scan.probed), len(scan.skipped)))
+    rep.note("\n%d files, %d not loaded" % (scan.files, len(scan.unloadable)))
+    for why, count in scan.file_census():
+        rep.note("  %-44s %d" % (why, count))
+    rep.note("%d functions, %d probed, %d not probed"
+             % (scan.functions, len(scan.probed), len(scan.skipped)))
     for why, count in scan.census():
         rep.note("  %-44s %d" % (why, count))
     rep.note("  (a not-probed function is a `look`, never a finding — "
