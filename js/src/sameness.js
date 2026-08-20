@@ -299,9 +299,26 @@ export function compare(aVec, bVec, aKey, bKey, inputs) {
 }
 
 /** Probe every exported function of one file, in a child process. */
-export function probeFile(file, timeout = PROBE_TIMEOUT_MS) {
+export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null) {
   return new Promise((resolve) => {
     const worker = path.join(HERE, 'probe.js');
+    // The source travels WITH the path. The child loads by path, so relative imports
+    // still resolve; the text is its fallback for a runtime that will not read a
+    // `.js` file as a module — see `loadModule` in probe.js for why that is Node 18
+    // and not Node 24.
+    //
+    // `gated` is the source a caller ALREADY read and passed `fileRefusal`. Re-reading
+    // here would mean the bytes that were gated and the bytes that get loaded are two
+    // separate reads of a file that can change between them — and the whole point of
+    // the gate is that nothing unreviewed reaches the loader.
+    let source = gated;
+    if (source === null) {
+      try {
+        source = readFileSync(file, 'utf8');
+      } catch {
+        source = '';
+      }
+    }
     const child = spawn(process.execPath, [worker], { stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
@@ -319,7 +336,7 @@ export function probeFile(file, timeout = PROBE_TIMEOUT_MS) {
     });
     const ladders = {};
     for (let arity = 1; arity <= MAX_ARITY; arity += 1) ladders[arity] = ladder(arity);
-    child.stdin.end(JSON.stringify({ file, ladders }));
+    child.stdin.end(JSON.stringify({ file, source, ladders }));
   });
 }
 
@@ -362,7 +379,7 @@ export async function collect(targets, scan = new Scan()) {
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
-    const result = await probeFile(file);
+    const result = await probeFile(file, PROBE_TIMEOUT_MS, source);
     if (result.error) {
       scan.skipped.set(`${rel}::*`, result.error);
       continue;

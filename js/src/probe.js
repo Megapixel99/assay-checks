@@ -59,13 +59,43 @@ export function probeFunction(fn, name, ladders) {
   return { name, arity, vector };
 }
 
+/**
+ * Load a module, and treat a `.js` file holding ESM syntax as ESM on every supported
+ * runtime rather than only on the newest ones.
+ *
+ * Node decides a `.js` file's format from the nearest `package.json`: no `"type":
+ * "module"` means CommonJS, and `export function f() {}` is then a SyntaxError. Node
+ * 22.7 and later paper over this by SNIFFING the source, so the same file that loads
+ * on 24 fails on 18 — and `engines` here says `>=18`. Without this fallback the tool
+ * silently reports "could not load" for every ESM file in a package that has not
+ * opted in, which reads as a clean tree rather than as a scan that never ran.
+ *
+ * The retry re-enters the source as a `data:` URL, which is unambiguously a module.
+ * A file with RELATIVE imports cannot resolve them from a `data:` URL and is reported
+ * as unloadable — the same verdict it already got, never a wrong one — so the
+ * ORIGINAL error is what gets reported when the retry fails too.
+ */
+async function loadModule(file, source) {
+  try {
+    return await import(pathToFileURL(file).href);
+  } catch (err) {
+    if (!source || !(err instanceof SyntaxError)) throw err;
+    try {
+      const encoded = Buffer.from(source, 'utf8').toString('base64');
+      return await import(`data:text/javascript;base64,${encoded}`);
+    } catch {
+      throw err;
+    }
+  }
+}
+
 async function main() {
   let raw = '';
   for await (const chunk of process.stdin) raw += chunk;
   const request = JSON.parse(raw);
   let namespace;
   try {
-    namespace = await import(pathToFileURL(request.file).href);
+    namespace = await loadModule(request.file, request.source);
   } catch (err) {
     process.stdout.write(JSON.stringify({
       error: `could not load (${(err && err.message) || err})`.slice(0, 120),
