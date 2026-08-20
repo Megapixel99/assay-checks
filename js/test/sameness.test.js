@@ -15,7 +15,7 @@ import test from 'node:test';
 
 import {
   canon, collect, compare, discriminating, fileRefusal, functionRefusal, group,
-  isProjection, ladder, ladderKey, MIN_DISTINCT, outcomeOf, probeFile,
+  isProjection, ladder, ladderKey, MIN_DISTINCT, outcomeOf, probeFile, stripNonCode,
 } from '../src/sameness.js';
 import { exportedFunctions, probeFunction } from '../src/probe.js';
 
@@ -32,6 +32,25 @@ function write(body, name = 'm.js') {
   const file = path.join(dir, name);
   writeFileSync(file, body, 'utf8');
   return file;
+}
+
+/** The same, for a CommonJS tree: `module.exports = fn` is the shape that broke. */
+function writeCjs(body, name = 'm.js') {
+  const dir = mkdtempSync(path.join(tmpdir(), 'assay-cjs-'));
+  writeFileSync(path.join(dir, 'package.json'), '{"type":"commonjs"}\n', 'utf8');
+  const file = path.join(dir, name);
+  writeFileSync(file, body, 'utf8');
+  return file;
+}
+
+/** Several modules in ONE directory, so `collect` sees them as one tree. */
+function writeTree(files) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'assay-tree-'));
+  writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}\n', 'utf8');
+  for (const [name, body] of Object.entries(files)) {
+    writeFileSync(path.join(dir, name), body, 'utf8');
+  }
+  return dir;
 }
 
 const TWINS = `
@@ -292,8 +311,8 @@ test('the census counts every reason a function was not probed', async () => {
 test('a file that cannot be loaded is counted, not silently dropped', async () => {
   const scan = await collect([write('export function f(n) { syntax error here\n')]);
   assert.equal(scan.probed.size, 0);
-  assert.equal(scan.skipped.size, 1);
-  assert.match([...scan.skipped.values()][0], /could not load|probe failed/);
+  assert.equal(scan.unloadable.size, 1);
+  assert.match([...scan.unloadable.values()][0], /could not load|probe failed/);
 });
 
 test('probing happens in a CHILD process, so a module that exits cannot kill us', async () => {
@@ -303,4 +322,248 @@ test('probing happens in a CHILD process, so a module that exits cannot kill us'
   const result = await probeFile(file);
   assert.ok(result.functions.length >= 1);
   assert.equal(typeof process.exitCode, typeof undefined === 'undefined' ? 'undefined' : 'number');
+});
+
+// --------------------------------------------------------------------------- //
+// One function is not two. (`module.exports = fn` arrives under two names.)
+// --------------------------------------------------------------------------- //
+
+test('two names for ONE function object is one function, not a duplicate pair', () => {
+  // The ESM bridge gives a CJS module whose export IS a function two keys — `default`
+  // and `module.exports` — pointing at the same object. Reported as two, every such
+  // file duplicates itself, and a FINDING is what a person then has to dismiss.
+  const fn = (a) => a + 1;
+  assert.deepEqual(exportedFunctions({ default: fn, 'module.exports': fn }).map(([n]) => n),
+    ['default']);
+});
+
+test('two names for two DIFFERENT functions are still two functions', () => {
+  // The other direction: dedupe is by identity, so it must not collapse a module that
+  // genuinely exports two functions which happen to be reachable under two names.
+  const found = exportedFunctions({ a: (x) => x + 1, b: (x) => x * 2 });
+  assert.deepEqual(found.map(([n]) => n), ['a', 'b']);
+});
+
+test('a CommonJS file exporting one function does not duplicate itself', async () => {
+  const scan = await collect([writeCjs(
+    'function truncate(str, len) {\n'
+    + "  if (!str) return '';\n"
+    + "  return str.length > len ? `${str.substring(0, len)}...` : str;\n"
+    + '}\n'
+    + 'module.exports = truncate;\n',
+  )]);
+  group(scan);
+  assert.deepEqual(scan.groups, []);
+  assert.equal(scan.functions, 1);
+});
+
+test('a barrel that RE-EXPORTS a helper does not duplicate it', async () => {
+  // The same rule as above, one scope out. A barrel hands back the very objects its
+  // dependencies defined, so `registry.js::truncate` and `truncate.js::default` are
+  // one function reachable by two paths — true, and useless to be told.
+  const dir = writeTree({
+    'impl.js': "export function shout(s) { return String(s).toUpperCase() + '!'; }\n",
+    'barrel.js': "export { shout } from './impl.js';\n",
+  });
+  const scan = await collect([dir]);
+  group(scan);
+  assert.deepEqual(scan.groups, []);
+  assert.deepEqual([...scan.probed.keys()].map((r) => r.split('/').pop()),
+    ['impl.js::shout']);
+});
+
+test('a function COPIED into two files is still two implementations', async () => {
+  // The other direction, and the one that matters: dedupe is by identity, so a
+  // verbatim copy — which is duplication a person should see — must survive it.
+  const dir = writeTree({
+    'one.js': "export function shout(s) { return String(s).toUpperCase() + '!'; }\n",
+    'two.js': "export function holler(s) { return String(s).toUpperCase() + '!'; }\n",
+  });
+  const scan = await collect([dir]);
+  group(scan);
+  assert.equal(scan.groups.length, 1);
+  assert.equal(scan.groups[0].length, 2);
+});
+
+// --------------------------------------------------------------------------- //
+// The child's answer travels on its own channel.
+// --------------------------------------------------------------------------- //
+
+test('a module that PRINTS at import time is still probed', async () => {
+  // Loading a module runs its top-level code, and plenty of ordinary code announces
+  // itself — a dotenv banner is the common one. If the answer shares stdout with the
+  // module, that banner lands in front of the JSON and the whole file is lost.
+  const file = write("console.log('◇ injected env (0) from .env');\n"
+    + 'export function f(n) { return n * 3 + 1; }\n');
+  const result = await probeFile(file);
+  assert.equal(result.error, undefined);
+  assert.deepEqual((result.functions || []).map((e) => e.name), ['f']);
+});
+
+test('a module that prints AND fails to load reports the FAILURE, not silence', async () => {
+  // The diagnosis was already computed; it was thrown away because something printed
+  // before it. "probe failed (silent)" and "could not load (JWT_SECRET must be set)"
+  // send you to opposite ends of the problem.
+  const file = write("console.log('banner');\nthrow new Error('boom at import');\n");
+  const result = await probeFile(file);
+  assert.match(result.error, /could not load/);
+  assert.match(result.error, /boom at import/);
+});
+
+test('a probe that dies without answering says what it printed', async () => {
+  // `silent` must be unreachable when the child produced output. A reason that names
+  // nothing is a number reported without saying what produced it.
+  const file = write("console.log('the useful part');\nprocess.exit(3);\n");
+  const result = await probeFile(file);
+  assert.match(result.error, /the useful part/);
+});
+
+// --------------------------------------------------------------------------- //
+// The census adds up, and says which unit each number is in.
+// --------------------------------------------------------------------------- //
+
+test('probed + not probed = functions, counting only files that loaded', async () => {
+  const dir = writeTree({
+    'good.js': 'export function f(n) { return n * 3 + 1; }\n'
+      + 'export function g() { return 1; }\n',
+    'refused.js': 'export function h(n) { return new Date(n).getTime(); }\n',
+  });
+  const scan = await collect([dir]);
+  assert.equal(scan.functions, scan.probed.size + scan.skipped.size);
+  assert.equal(scan.functions, 2);          // f probed, g skipped (no arguments)
+  assert.equal(scan.unloadable.size, 1);    // refused.js, counted as a FILE
+  assert.equal(scan.files, 2);
+});
+
+test('a file refused before loading is counted as a file, never as a function', async () => {
+  // It has an unknown number of functions in it — that is the point of not loading it.
+  // Folding it into a function count invents a number nobody measured.
+  const scan = await collect([writeTree({ 'a.js': 'export const x = Date.now();\n' })]);
+  assert.equal(scan.functions, 0);
+  assert.equal(scan.skipped.size, 0);
+  assert.deepEqual(scan.fileCensus(), [['reads the clock', 1]]);
+});
+
+// --------------------------------------------------------------------------- //
+// The gates read code, not prose.
+// --------------------------------------------------------------------------- //
+
+test('a module specifier is read even though it lives inside a string', () => {
+  // The gate's subject IS a string literal. Blanking string bodies to keep prose from
+  // tripping the OTHER gates turned `from 'node:fs'` into `from '      '`, and the file
+  // loaded unrefused — the one direction that runs code instead of printing a wrong line.
+  assert.match(fileRefusal("import { readFileSync } from 'node:fs';"), /core module/);
+  assert.match(fileRefusal("const fs = require('fs');"), /core module/);
+});
+
+test('a require that is COMMENTED OUT does not execute, so it does not refuse', () => {
+  assert.equal(fileRefusal("// const fs = require('fs');\nexport const x = 1;"), null);
+});
+
+test('the word "this" in a COMMENT is not the `this` keyword', () => {
+  const source = 'function f(a) {\n'
+    + '  // COMMAND_LINE_RE anchors the full line, so this is a command-only line.\n'
+    + '  return a + 1;\n'
+    + '}';
+  assert.equal(functionRefusal(source, 1), null);
+});
+
+test('a real `this` is still a method', () => {
+  assert.match(functionRefusal('function f(a) { return this.x + a; }', 1), /method/);
+});
+
+test('a property NAMED global is not the global object', () => {
+  assert.equal(fileRefusal("const ok = Array.isArray(perms.global) && perms.global.includes('t');"),
+    null);
+});
+
+test('the actual global object is still refused', () => {
+  assert.match(fileRefusal('global.cache = 1;'), /global/);
+  assert.match(fileRefusal('globalThis.cache = 1;'), /global/);
+});
+
+test('a clock named in prose is not a clock', () => {
+  assert.equal(fileRefusal('// startTime is Date.now() captured by the CALLER\n'
+    + 'export function f(a) { return a + 1; }'), null);
+  assert.match(fileRefusal('export function f() { return Date.now(); }'), /clock/);
+});
+
+// --------------------------------------------------------------------------- //
+// Stripping prose must never strip CODE. The dangerous direction is a gate that
+// stops firing, because that loads a file the gate exists to refuse.
+// --------------------------------------------------------------------------- //
+
+test('a quote inside a regex literal does not swallow the rest of the file', () => {
+  // If `/['"]/` is read as opening a string, everything after it disappears and the
+  // file loads unrefused. A false FINDING is noise; this would be a wrong LOAD.
+  const source = 'const r = /[\'"]/;\nprocess.exit(1);\n';
+  assert.match(stripNonCode(source), /process\s*\.\s*exit/);
+  assert.match(fileRefusal(source), /process/);
+});
+
+test('code inside a template placeholder is code', () => {
+  const source = 'const t = `x${process.env.A}y`;\n';
+  assert.match(stripNonCode(source), /process\s*\.\s*env/);
+  assert.match(fileRefusal(source), /process/);
+});
+
+test('a // inside a string literal does not start a comment', () => {
+  const source = 'const u = "https://example.com";\nprocess.exit(1);\n';
+  assert.match(stripNonCode(source), /process\s*\.\s*exit/);
+  assert.match(fileRefusal(source), /process/);
+});
+
+test('an unlexable file keeps its refusal rather than being cleared by a guess', () => {
+  // Bail out, do not guess. An unterminated string means the scanner lost the thread,
+  // and the safe answer to "did the thread just get lost" is to keep refusing.
+  assert.equal(stripNonCode('const s = "never closed\nprocess.exit(1);\n'), null);
+  assert.match(fileRefusal('const s = "never closed\nprocess.exit(1);\n'), /process/);
+});
+
+test('division is not a regex literal', () => {
+  const source = 'const half = total / 2;\nconst other = count / 2;\nprocess.exit(1);\n';
+  assert.match(stripNonCode(source), /process\s*\.\s*exit/);
+});
+
+// --------------------------------------------------------------------------- //
+// A shallow copy is as vacuous as the identity.
+// --------------------------------------------------------------------------- //
+
+test('a function indistinguishable from a shallow copy is not discriminated', () => {
+  // Two unrelated object transforms whose vocabulary the ladder lacks BOTH degrade to
+  // "copy the object through". Their vectors match, and neither has been discriminated
+  // — the ladder never reached either one's behaviour.
+  const inputs = ladder(1);
+  const vector = inputs.map((src) => outcomeOf((q) => ({ ...(q || {}) }), JSON.parse(src)));
+  assert.equal(isProjection(vector, inputs), true);
+  assert.equal(discriminating(vector, inputs), null);
+});
+
+test('a spread that CHANGES something is discriminated', () => {
+  // The other direction: the guard rejects vacuity, not object-returning functions.
+  const inputs = ladder(1);
+  const vector = inputs.map((src) => outcomeOf((q) => ({ ...(q || {}), seen: true }),
+    JSON.parse(src)));
+  assert.equal(isProjection(vector, inputs), false);
+  assert.notEqual(discriminating(vector, inputs), null);
+});
+
+test('two unrelated shallow-copy transforms do not group', async () => {
+  // The measured case: `decodeQuery` and `splitSortParam` from a real tree, neither of
+  // whose keys appear in the ladder.
+  const scan = await collect([writeTree({
+    'q.js': 'const SHORT_TO_LONG = { s: \'status\' };\n'
+      + 'export function decodeQuery(query) {\n'
+      + '  const out = {};\n'
+      + '  Object.keys(query || {}).forEach((k) => { out[SHORT_TO_LONG[k] || k] = query[k]; });\n'
+      + '  return out;\n'
+      + '}\n'
+      + 'export function splitSortParam(query) {\n'
+      + '  const out = { ...(query || {}) };\n'
+      + '  if (out.sort) { out.sort_by = String(out.sort); delete out.sort; }\n'
+      + '  return out;\n'
+      + '}\n',
+  })]);
+  group(scan);
+  assert.deepEqual(scan.groups, []);
 });

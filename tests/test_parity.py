@@ -114,6 +114,24 @@ class TheTwoHalvesAgree(unittest.TestCase):
                         for key, desc, why, _det in checks.PROPERTIES)
         self.assertEqual(found, expected)
 
+    def test_both_halves_treat_a_SHALLOW_COPY_as_vacuous(self):
+        """The vacuity guard decides what `same` is worth, so it has to decide the same
+        thing twice. A function that only copies its argument through has not been
+        discriminated by the ladder — if one half knows that and the other does not,
+        the same pair is a finding or a look depending on which binary CI invoked."""
+        self.assertIn("{ ...a[i] }", js("sameness.js"))
+        self.assertIn("dict(a[_i])", py("sameness.py"))
+
+    def test_both_halves_count_FILES_and_FUNCTIONS_as_separate_populations(self):
+        """A file nobody opened holds an unknown number of functions, which is why the
+        two are never added together. Both halves report `probed + not probed =
+        functions` and put unopened files in their own census; a half that folded them
+        together would print a different total for the same tree."""
+        for source, member in ((js("sameness.js"), "fileCensus"),
+                               (py("sameness.py"), "file_census")):
+            self.assertIn("unloadable", source)
+            self.assertIn(member, source)
+
     def test_both_halves_refuse_to_call_a_baseline_STALE_from_a_partial_run(self):
         """The rule, not the wording: a line is only stale to a run that could have
         seen it fire. Python says so from any command but `all`; the JavaScript half

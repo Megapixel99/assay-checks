@@ -83,6 +83,28 @@ class Discrimination(unittest.TestCase):
         self.assertTrue(S.is_projection(vector, S.ladder(1)))
         self.assertIsNone(S.discriminating(vector, S.ladder(1)))
 
+    def test_a_function_indistinguishable_from_a_SHALLOW_COPY_is_not_discriminated(self):
+        """Returning the argument is the obvious emptiness; COPYING it is the same
+        emptiness in another shape. Two unrelated query-param transforms agreed on
+        every rung because the ladder holds no key either recognises, so both degraded
+        to copying the mapping through and were reported as the same function."""
+        path = write("def f(q):\n    return dict(q)\n")
+        func = S.parse(path).funcs["f"]
+        vector, why = S.probe(func)
+        self.assertIsNone(why, why)
+        self.assertTrue(S.is_projection(vector, S.ladder(1)))
+        self.assertIsNone(S.discriminating(vector, S.ladder(1)))
+
+    def test_a_copy_that_CHANGES_something_is_discriminated(self):
+        """The other direction: the guard rejects vacuity, not mapping-returning
+        functions."""
+        path = write("def f(q):\n    out = dict(q)\n    out['seen'] = True\n    return out\n")
+        func = S.parse(path).funcs["f"]
+        vector, why = S.probe(func)
+        self.assertIsNone(why, why)
+        self.assertFalse(S.is_projection(vector, S.ladder(1)))
+        self.assertIsNotNone(S.discriminating(vector, S.ladder(1)))
+
     def test_there_is_ONE_threshold_and_a_second_would_be_unreachable(self):
         """An earlier version carried a minimum returned-count beside the distinct
         count, and no mutation of it could be caught: two distinct returns already
@@ -337,6 +359,27 @@ class Grouping(unittest.TestCase):
         scan = S.collect([write("def only(n):\n    return n * 3 + 1\n")])
         S.group(scan)
         self.assertEqual(scan.groups, [])
+
+    def test_a_file_that_does_not_parse_is_COUNTED_rather_than_vanishing(self):
+        """It was dropped before `files` was incremented and never reached `skipped`,
+        so a directory of broken files reported zero of everything — which reads
+        exactly like a clean sweep. "We found none" and "we never looked" are
+        different claims, and only one of them is evidence."""
+        path = write("def f(:\n    this does not parse\n")
+        scan = S.collect([path])
+        self.assertEqual(scan.functions, 0)
+        self.assertEqual(len(scan.skipped), 0)
+        self.assertEqual(len(scan.unloadable), 1)
+        self.assertEqual(scan.file_census(), [("could not parse", 1)])
+
+    def test_probed_plus_not_probed_equals_functions(self):
+        """The headline reads as an equation, so it has to be one. Files and functions
+        are different populations and a file holds an unknown number of functions —
+        not opening it is exactly why the number is unknown."""
+        path = write("def f(n):\n    return n * 3 + 1\n\ndef g():\n    return 1\n")
+        scan = S.collect([path])
+        self.assertEqual(scan.functions, len(scan.probed) + len(scan.skipped))
+        self.assertEqual(scan.functions, 2)
 
     def test_the_census_counts_every_reason_a_function_was_not_probed(self):
         """"We found none" and "we never looked" are different claims."""

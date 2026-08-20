@@ -17,17 +17,38 @@
  * what it never looked at reads exactly like a clean sweep.
  */
 
+import { writeSync } from 'node:fs';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { functionRefusal, outcomeOf } from './sameness.js';
+import { ANSWER_FD, functionRefusal, outcomeOf } from './sameness.js';
 
-/** Every exported function of a module, with its exported name. */
-export function exportedFunctions(namespace) {
+/**
+ * Every exported function of a module, with its exported name — each function ONCE.
+ *
+ * Deduping is BY IDENTITY, and the name is why it has to be. A CommonJS module whose
+ * export is a function arrives through the ESM bridge under two keys, `default` and
+ * `module.exports`, both pointing at the same object. Keyed by name they are two
+ * exports; they are one function, and reporting them as two made every
+ * `module.exports = fn` file in a tree duplicate ITSELF — eleven of fourteen findings
+ * on the first real project this was pointed at. A finding a person has to dismiss is
+ * the failure this tool is built to avoid, so it must not manufacture them.
+ *
+ * `inherited` carries the same rule ACROSS files. A barrel module that re-exports its
+ * helpers hands back the very objects its dependencies defined, so the helper is one
+ * function reachable by two paths — `registry.js::truncate` and `truncate.js::default`
+ * were reported as answering the same question, which is true and useless. Skipping
+ * them here names each function once, under the file that DEFINES it.
+ */
+export function exportedFunctions(namespace, inherited = new Set()) {
   const out = [];
-  for (const name of Object.keys(namespace).sort()) {
-    const value = namespace[name];
-    if (typeof value === 'function') out.push([name, value]);
-  }
+  const seen = new Set(inherited);
+  const add = (name, value) => {
+    if (typeof value !== 'function' || seen.has(value)) return;
+    seen.add(value);
+    out.push([name, value]);
+  };
+  for (const name of Object.keys(namespace).sort()) add(name, namespace[name]);
   // A CommonJS module loaded through the ESM bridge arrives under `default`, and its
   // functions are properties of that object. Missing this reports "0 functions" for
   // every CJS file in a project, which reads as nothing to find rather than as a
@@ -35,12 +56,23 @@ export function exportedFunctions(namespace) {
   const fallback = namespace.default;
   if (fallback && typeof fallback === 'object') {
     for (const name of Object.keys(fallback).sort()) {
-      if (typeof fallback[name] === 'function' && !out.some(([n]) => n === name)) {
-        out.push([name, fallback[name]]);
-      }
+      if (!out.some(([n]) => n === name)) add(name, fallback[name]);
     }
   }
   return out;
+}
+
+/**
+ * The answer, on its own descriptor.
+ *
+ * Not stdout: the module this process just loaded may have printed there, and an
+ * answer sharing a channel with arbitrary output is an answer that can be corrupted by
+ * it. `writeSync` loops because a pipe is free to accept a partial write.
+ */
+function answer(payload) {
+  const buf = Buffer.from(JSON.stringify(payload), 'utf8');
+  let off = 0;
+  while (off < buf.length) off += writeSync(ANSWER_FD, buf, off, buf.length - off);
 }
 
 export function probeFunction(fn, name, ladders) {
@@ -89,6 +121,50 @@ async function loadModule(file, source) {
   }
 }
 
+/** Relative specifiers this source imports or requires. Never bare package names. */
+export function relativeSpecifiers(source) {
+  const found = new Set();
+  const patterns = [
+    /\brequire\s*\(\s*['"](\.[^'"]*)['"]/g,
+    /\bfrom\s+['"](\.[^'"]*)['"]/g,
+    /\bimport\s*\(\s*['"](\.[^'"]*)['"]/g,
+  ];
+  for (const pattern of patterns) {
+    for (const m of source.matchAll(pattern)) found.add(m[1]);
+  }
+  return [...found];
+}
+
+/**
+ * Every function object this file's own dependencies export.
+ *
+ * They are already loaded — the module under probe pulled them in — so importing them
+ * again is a cache hit and runs no new top-level code. A specifier that will not
+ * resolve is skipped rather than reported: failing to spot a re-export costs one
+ * dismissible finding, and guessing at one would hide a real function.
+ */
+async function inheritedFunctions(file, source) {
+  const out = new Set();
+  const base = path.dirname(file);
+  for (const spec of relativeSpecifiers(source)) {
+    const target = path.resolve(base, spec);
+    const candidates = [target, `${target}.js`, `${target}.mjs`,
+      path.join(target, 'index.js')];
+    for (const candidate of candidates) {
+      let dep;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        dep = await import(pathToFileURL(candidate).href);
+      } catch {
+        continue;
+      }
+      for (const [, fn] of exportedFunctions(dep)) out.add(fn);
+      break;
+    }
+  }
+  return out;
+}
+
 async function main() {
   let raw = '';
   for await (const chunk of process.stdin) raw += chunk;
@@ -97,14 +173,18 @@ async function main() {
   try {
     namespace = await loadModule(request.file, request.source);
   } catch (err) {
-    process.stdout.write(JSON.stringify({
-      error: `could not load (${(err && err.message) || err})`.slice(0, 120),
-    }));
+    answer({ error: `could not load (${(err && err.message) || err})`.slice(0, 120) });
     return;
   }
-  const functions = exportedFunctions(namespace)
+  let inherited = new Set();
+  try {
+    inherited = await inheritedFunctions(request.file, request.source || '');
+  } catch {
+    inherited = new Set();
+  }
+  const functions = exportedFunctions(namespace, inherited)
     .map(([name, fn]) => probeFunction(fn, name, request.ladders));
-  process.stdout.write(JSON.stringify({ functions }));
+  answer({ functions });
 }
 
 // Only run when invoked as a program. Imported by the tests, which call the pieces

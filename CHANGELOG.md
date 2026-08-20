@@ -29,6 +29,43 @@ and use the `baseline` in `assay.json` to accept what you have read.
   submodule: the diff lists every file as deleted, and the audit had an opinion
   about each one.
 
+Six defects in the JavaScript half, all found by pointing `assay scan` at a real
+project for the first time. Five of them made the tool report or refuse the wrong
+thing quietly; none changed the CLI contract, the config format or the verdict names.
+
+**Findings it should never have made.** A CommonJS module whose export is a function
+arrives through the ESM bridge under two keys, `default` and `module.exports`, pointing
+at one object — reported as a pair, so every `module.exports = fn` file duplicated
+itself: eleven of fourteen findings on the first tree it was run against. A barrel
+module re-exporting its helpers was the same mistake one scope out. Both are now
+rejected by identity, which leaves a function genuinely copied into two files reported
+as the two implementations it is.
+
+**A whole directory it never opened.** The probe child wrote its answer to stdout,
+which it shared with whatever the loaded module printed at import time. A `dotenv`
+banner in front of the JSON broke the parse and replaced a diagnosis the child had
+already computed — `could not load (JWT_SECRET must be set...)` — with `probe failed
+(silent)`: 58 of 119 skips in one directory. The answer now travels on fd 3, and a
+failure quotes what the child actually said.
+
+**A census that did not add up.** `probed + not probed` never equalled `functions`,
+because refused FILES were counted among the skipped functions. Files and functions
+are now two populations with two counts, and the function line is an equation. The
+Python half had the mirror defect: a file that did not parse was dropped before
+`files` was incremented and appeared in no number at all.
+
+**Gates that read prose.** The purity patterns are regexes and matched inside comments
+and property names: the English word "this" in a comment refused a plain function as a
+method, and `perms.global.includes(...)` refused an entire file as touching the global
+object. Comments and string bodies are now blanked before matching — except for module
+specifiers, whose subject IS a string literal, and with any file the scanner cannot lex
+keeping its refusal rather than being cleared by a guess.
+
+**A vacuity guard with a gap.** `is_projection` rejected a function that returns one of
+its arguments but not one that merely copies it, so two unrelated object transforms
+whose vocabulary the ladder lacks both degraded to a shallow copy and were reported as
+the same function. Both halves now reject the copy alongside the identity.
+
 ## 0.1.0
 
 First release. Two halves that answer adjacent questions about work that already

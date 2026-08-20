@@ -47,6 +47,26 @@ def target(name):
 # (label, file, old, new)
 MUTATIONS = [
     # ---- the vacuous-probe guard ------------------------------------------- #
+    ("sameness: a shallow COPY stops counting as vacuous (a shipped defect)",
+     "sameness.py",
+     """    vacuous = (
+        lambda *a, _i=0: a[_i],
+        lambda *a, _i=0: dict(a[_i]),
+    )""",
+     """    vacuous = (
+        lambda *a, _i=0: a[_i],
+    )"""),
+    ("sameness: a file that does not parse vanishes again (a shipped defect)",
+     "sameness.py",
+     """        out.files += 1
+        mod = parse(path)
+        if mod is None:
+            out.unloadable[path] = "could not parse"
+            continue""",
+     """        mod = parse(path)
+        if mod is None:
+            continue
+        out.files += 1"""),
     ("sameness: distinct counted over OUTCOMES again (a shipped defect)",
      "sameness.py",
      '''    returned = [o for o in vector if not o.startswith("E:")]
