@@ -158,6 +158,27 @@ class TheTwoHalvesAgree(unittest.TestCase):
         js_exts = set("." + e for e in found.group(1).split("|"))
         self.assertEqual(js_exts, set(checks.SOURCE_SUFFIXES))
 
+    def test_both_halves_take_arity_from_the_DECLARED_parameter_list(self):
+        """The drift this caught, and it produced a wrong finding rather than silence.
+
+        `fn.length` stops counting at the first parameter with a default, so
+        `withDefault(a, b = 10)` reported 1. The JavaScript half then chose the
+        one-argument ladder, never passed a second argument, and reported the function
+        as answering the same question as a genuinely one-argument one —
+        `withDefault(1, 2)` is 3 and `plainOne(1)` is 11. Python reads the declared
+        list off the AST and probes at 2, where the first rung separates them, so one
+        file got two verdicts depending on which binary ran.
+
+        Pinned as TEXT, which is what this suite can do without a Node runtime. The
+        behaviour itself is held by `probeFunction chooses the ladder by the DECLARED
+        count` in the JavaScript suite and by the mutation that puts `fn.length` back.
+        """
+        probe = js("probe.js")
+        self.assertIn("declaredArity(source)", probe)
+        self.assertNotIn("const arity = fn.length", probe)
+        # The Python side reads the parameter list off the AST, defaults included.
+        self.assertIn("self.params = [a.arg for a in node.args.args]", py("sameness.py"))
+
     def test_the_verdict_names_are_identical(self):
         source = js("verdicts.js")
         for name, value in (("FINDING", FINDING), ("LOOK", LOOK), ("OK", OK)):

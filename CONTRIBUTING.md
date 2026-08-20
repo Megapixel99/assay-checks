@@ -3,9 +3,9 @@
 ## Running it
 
 ```bash
-python3 python/tests/run_tests.py          # 161 tests, ~19 s, no dependencies
-node --test js/test/*.test.js              # 141 tests, ~15 s
-python3 python/tests/mutations_assay.py    # 73 mutations, both halves
+python3 python/tests/run_tests.py          # 162 tests, ~19 s, no dependencies
+node --test js/test/*.test.js              # 152 tests, ~25 s
+python3 python/tests/mutations_assay.py    # 78 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master
 ```

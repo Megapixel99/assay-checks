@@ -21,7 +21,7 @@ import { writeSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { ANSWER_FD, functionRefusal, outcomeOf } from './sameness.js';
+import { ANSWER_FD, declaredArity, functionRefusal, outcomeOf } from './sameness.js';
 
 /**
  * Every exported function of a module, with its exported name — each function ONCE.
@@ -69,19 +69,44 @@ export function exportedFunctions(namespace, inherited = new Set()) {
  * answer sharing a channel with arbitrary output is an answer that can be corrupted by
  * it. `writeSync` loops because a pipe is free to accept a partial write.
  */
-function answer(payload) {
-  const buf = Buffer.from(JSON.stringify(payload), 'utf8');
+/**
+ * One NDJSON line on fd 3, written and flushed before the next one is computed.
+ *
+ * INCREMENTAL BECAUSE A KILL IS NOT AN ERROR PATH THE CHILD GETS TO HANDLE. A probed
+ * function may never return — a `while (true)` has no interrupt in synchronous
+ * JavaScript, which is why the parent bounds it with a wall clock and SIGKILL. A child
+ * that answers once at the end loses everything it had already computed when that
+ * happens: one non-terminating function turned a whole file into `probe failed`, and
+ * a file of twenty functions reported nothing about the nineteen that were fine.
+ *
+ * A line at a time, the kill costs only the function that hung. `writeSync` loops
+ * because a pipe is free to accept a partial write, and each line lands before the
+ * next function is even started.
+ */
+function say(payload) {
+  const buf = Buffer.from(`${JSON.stringify(payload)}\n`, 'utf8');
   let off = 0;
   while (off < buf.length) off += writeSync(ANSWER_FD, buf, off, buf.length - off);
 }
 
 export function probeFunction(fn, name, ladders) {
-  const arity = fn.length;
   let source = '';
   try {
     source = Function.prototype.toString.call(fn);
   } catch {
     return { name, skip: 'source unavailable' };
+  }
+  // THE DECLARED PARAMETER LIST, never `fn.length` — see `declaredArity`. Choosing the
+  // ladder by `fn.length` probes a two-parameter function as a one-parameter one and
+  // reports it as answering the same question as something that genuinely takes one.
+  const arity = declaredArity(source);
+  if (arity === null) return { name, skip: 'cannot read the parameter list' };
+  // CHECKED, NOT TRUSTED. `fn.length` counts parameters up to the first default or
+  // rest, so it is a LOWER BOUND on the declared count and can never exceed it. If the
+  // text parse comes back under that bound it misread the list, and a misread arity is
+  // the wrong answer this function exists to stop rather than a smaller one.
+  if (arity < fn.length) {
+    return { name, skip: `parameter list disagrees with fn.length (${arity} < ${fn.length})` };
   }
   const why = functionRefusal(source, arity);
   if (why) return { name, skip: why };
@@ -173,7 +198,7 @@ async function main() {
   try {
     namespace = await loadModule(request.file, request.source);
   } catch (err) {
-    answer({ error: `could not load (${(err && err.message) || err})`.slice(0, 120) });
+    say({ error: `could not load (${(err && err.message) || err})`.slice(0, 120) });
     return;
   }
   let inherited = new Set();
@@ -182,9 +207,14 @@ async function main() {
   } catch {
     inherited = new Set();
   }
-  const functions = exportedFunctions(namespace, inherited)
-    .map(([name, fn]) => probeFunction(fn, name, request.ladders));
-  answer({ functions });
+  const found = exportedFunctions(namespace, inherited);
+  // THE ROSTER FIRST, so a function that never answers can be told from one that was
+  // never there. Without it a killed probe and an empty module look identical, and
+  // "we found none" and "we never looked" are different claims.
+  say({ roster: found.map(([name]) => name) });
+  for (const [name, fn] of found) {
+    say({ entry: probeFunction(fn, name, request.ladders) });
+  }
 }
 
 // Only run when invoked as a program. Imported by the tests, which call the pieces
