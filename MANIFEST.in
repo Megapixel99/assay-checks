@@ -1,0 +1,37 @@
+# What must NOT reach the Python distributions — the sdist's version of .npmignore.
+#
+# `packages` in pyproject.toml decides the WHEEL, and it is an allowlist: only
+# `python/assay` is installed, whatever this file says. The SDIST is the loose one.
+# Its default is "the package, plus whatever setuptools recognises", which quietly
+# swept up a `tests/` directory before this file existed and would sweep up anything
+# else added beside the package later.
+#
+# The JavaScript half is pruned rather than left out by accident. One repository
+# publishes to two registries, and `pip install assay-checks` should not carry a copy
+# of `js/src` that nothing on the Python side can run — the npm package is where that
+# code is served from, and shipping it twice makes two things that must agree.
+#
+# Checked rather than trusted: the release workflow runs `twine check --strict` and
+# installs the wheel into a clean environment before anything is published.
+
+# --- shipped on purpose ------------------------------------------------------ #
+include LICENSE
+include CHANGELOG.md
+
+# --- the other half's registry ----------------------------------------------- #
+prune js
+exclude package.json
+exclude .npmignore
+
+# --- tests and development, none of which an installed package needs --------- #
+prune python/tests
+prune .github
+exclude CONTRIBUTING.md
+exclude Dockerfile
+exclude action.yml
+exclude .gitignore
+
+# --- build droppings --------------------------------------------------------- #
+global-exclude __pycache__/*
+global-exclude *.py[cod]
+global-exclude .DS_Store

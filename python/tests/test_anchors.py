@@ -31,7 +31,7 @@ class Parsing(unittest.TestCase):
         return os.path.join(project({"mutations_a.py": body}), "mutations_a.py")
 
     def test_an_assign_table_is_read(self):
-        found = anchors_of(self.runner_path(
+        found, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'))
         self.assertIn("    return x + 1", found)
 
@@ -39,24 +39,24 @@ class Parsing(unittest.TestCase):
         """`MUTATIONS += [...]` is an AugAssign, not an Assign. Reading only the
         latter silently skips every anchor added in a `+=` block, and the tell is a
         total that does not move when a mutation is added — which nobody watches."""
-        found = anchors_of(self.runner_path(
+        found, _ = anchors_of(self.runner_path(
             'MUTATIONS = []\n'
             'MUTATIONS += [("label", "    return x + 1", "    return x - 1")]\n'))
         self.assertIn("    return x + 1", found)
 
     def test_a_short_LABEL_is_not_mistaken_for_an_anchor(self):
-        found = anchors_of(self.runner_path(
+        found, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("lbl", "    return x + 1", "    return x - 1")]\n'))
         self.assertNotIn("lbl", found)
 
     def test_a_four_element_table_with_a_target_column_still_yields_the_anchor(self):
-        found = anchors_of(self.runner_path(
+        found, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("a label here", "target.py", "    return x + 1",'
             ' "    return x - 1")]\n'))
         self.assertIn("    return x + 1", found)
 
     def test_a_table_under_another_name_is_ignored(self):
-        found = anchors_of(self.runner_path(
+        found, _ = anchors_of(self.runner_path(
             'OTHER_LIST = [("label", "    return x + 1", "    return x - 1")]\n'))
         self.assertEqual(found, [])
 
@@ -106,15 +106,34 @@ class Auditing(unittest.TestCase):
                 'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'})
         self.assertEqual(rep.exit_code(), 0)
 
-    def test_an_UNMATCHED_anchor_is_counted_and_reported_not_failed(self):
-        """Zero matches usually means a label the parser could not tell from code, so
-        failing on it would be the crying-wolf failure. It is surfaced in the count."""
+    def test_an_anchor_matching_NOTHING_is_a_FINDING(self):
+        """The half of the rule that used to be counted and then reported as `ok`.
+
+        An anchor matching nothing means the code moved out from under it: loud if the
+        harness checks its target, and SILENTLY INERT if it does not — a guard nobody
+        is testing any more, inside a suite that still reports a pass. It was only ever
+        a number because the parser could not tell a label from an anchor and would
+        have failed on every label. It can now, so it says so.
+        """
         rep = self.audit({
             "a.py": TARGET,
             "mutations_a.py":
                 'MUTATIONS = [("label", "    nothing like this", "    or this")]\n'})
+        self.assertEqual(rep.exit_code(), 1)
+        self.assertIn("matches NOTHING", rep.findings[0].message)
+
+    def test_a_table_shape_it_cannot_read_is_a_LOOK_not_a_guess(self):
+        """A wrong conviction about a table this audit has never seen is worse than
+        saying it could not tell, so an entry carrying more strings than either
+        documented shape is offered to a person rather than scored."""
+        rep = self.audit({
+            "a.py": TARGET,
+            "mutations_a.py":
+                'MUTATIONS = [("label", "t.py", "    return x + 1",'
+                ' "    return x - 1", "a trailing note")]\n'})
         self.assertEqual(rep.exit_code(), 0)
-        self.assertTrue(any("1 unmatched" in i.message for i in rep.oks))
+        self.assertTrue(any("cannot tell which column" in i.message
+                            for i in rep.looks), [i.message for i in rep.looks])
 
     def test_an_exempt_runner_is_named_rather_than_skipped_silently(self):
         rep = self.audit(
@@ -136,14 +155,17 @@ class Auditing(unittest.TestCase):
         produces a confident finding about a file it has nothing to do with.
         """
         rep = self.audit({
-            "a.py": TARGET,
+            # Four distinct bodies, so every anchor below matches exactly once here
+            # and the only thing this test can fail on is the corpus rule.
+            "a.py": TARGET + '\n\ndef third(x):\n    return x * 2\n'
+                             '\n\ndef fourth(x):\n    return x * 3\n',
             "mutations_a.py":
                 'MUTATIONS = [("label", "    return x + 1", "    if False:")]\n',
             # A sibling harness whose own table is full of the same replacement.
             "mutations_b.py":
                 'MUTATIONS = [\n'
-                '    ("one", "    alpha here now", "    if False:"),\n'
-                '    ("two", "    beta here now", "    if False:"),\n'
+                '    ("one", "    return x * 2", "    if False:"),\n'
+                '    ("two", "    return x * 3", "    if False:"),\n'
                 ']\n'})
         self.assertEqual(rep.exit_code(), 0,
                          [i.message for i in rep.findings])
@@ -160,7 +182,7 @@ class Auditing(unittest.TestCase):
                 'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'})
         self.assertEqual(rep.exit_code(), 0)
         for item in rep.oks:
-            self.assertIn("0 unmatched", item.message)
+            self.assertIn("each matching exactly once", item.message)
 
     def test_a_runner_that_does_not_parse_is_a_finding(self):
         rep = self.audit({"mutations_a.py": "def broken(:\n"})
