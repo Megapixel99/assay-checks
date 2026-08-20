@@ -33,8 +33,10 @@ dependencies = []
 assay = "assay.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/Megapixel99/assay"
-Source = "https://github.com/Megapixel99/assay"
+Homepage = "https://github.com/Megapixel99/assay-checks"
+Source = "https://github.com/Megapixel99/assay-checks"
+Changelog = "https://github.com/Megapixel99/assay-checks/blob/master/CHANGELOG.md"
+Issues = "https://github.com/Megapixel99/assay-checks/issues"
 
 [tool.setuptools]
 packages = ["assay"]

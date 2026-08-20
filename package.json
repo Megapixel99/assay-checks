@@ -29,7 +29,8 @@
   "files": [
     "js/src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node --test js/test/*.test.js"
@@ -37,6 +38,10 @@
   "dependencies": {},
   "repository": {
     "type": "git",
-    "url": "https://github.com/Megapixel99/assay.git"
-  }
+    "url": "git+https://github.com/Megapixel99/assay-checks.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Megapixel99/assay-checks/issues"
+  },
+  "homepage": "https://github.com/Megapixel99/assay-checks#readme"
 }

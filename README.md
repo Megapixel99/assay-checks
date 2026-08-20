@@ -276,7 +276,7 @@ it is checked.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }   # `diff` needs a base ref; a shallow clone has none
-- uses: Megapixel99/assay@v0.1.0
+- uses: Megapixel99/assay-checks@v0.1.0
   with:
     command: all       # `all` is the run that can call a baseline entry stale
 ```
@@ -318,11 +318,16 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
 ## Development
 
 ```bash
-python3 tests/run_tests.py        # 148 tests
-npm test                          # 111 tests
-python3 tests/mutations_assay.py  # the guards, mutated
+python3 tests/run_tests.py        # 148 tests, ~15 s
+npm test                          # 111 tests, ~2 s
+python3 tests/mutations_assay.py  # 56 mutations, ~4 min
 python3 -m assay scan assay/      # the package, scanned by its own scanner
+python3 -m assay --root . all --base origin/master
 ```
+
+No install step, no virtualenv, no `npm install` — both halves are standard library
+only. See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules this code is built on and
+what happens when a mutation comes back `NOT DETECTED`.
 
 The mutation runner carries all six properties `assay runners` audits for, and several
 of its mutations are versions this tool actually shipped — kept as mutations rather than

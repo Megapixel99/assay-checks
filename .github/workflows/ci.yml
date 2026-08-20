@@ -1,0 +1,152 @@
+# A tool that audits other people's checks has to be able to answer for its own.
+#
+# Two gates here are not boilerplate; each is a failure this package's own detectors
+# exist to catch, pointed back at the package:
+#
+#   1. THE TREE MUST BE CLEAN AFTERWARDS. `tests/mutations_assay.py` rewrites source
+#      files and restores them in a `finally`. If a restore is ever skipped, the run
+#      still reports its tally and the damage shows up in the NEXT commit — which is
+#      exactly the `no-tree-writes` property `assay runners` audits for.
+#
+#   2. THE PACKAGE IS SCANNED BY ITS OWN SCANNER. Merging two tools is when
+#      duplication arrives, and a duplication detector that has never been pointed at
+#      itself is making a claim it has not checked.
+#
+# Action versions are pinned at v7 deliberately. Older majors still run, on a Node the
+# runner silently substitutes, and a pin that is wrong for its own runtime is invisible
+# in a pass/fail — you only see it in an annotation nobody reads.
+name: ci
+
+on:
+  push:
+    # `master` only. A branch with an open PR matches both triggers and every job runs
+    # twice, and a concurrency group does NOT fix it: the push event keys on
+    # `refs/heads/<branch>` while the pull_request event keys on `<branch>`, so they
+    # land in different groups.
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor is what `pyproject.toml` claims, and the claim is checked rather
+        # than trusted: `requires-python = ">=3.9"` is a promise, and a promise nothing
+        # runs is the stale-documentation defect in a metadata file.
+        python-version: ['3.9', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: no dependencies, and that is a design constraint
+        # A quality tool that drags in a dependency tree is one more thing that can
+        # break the build it was added to protect. Asserted, because `pyproject.toml`
+        # saying `dependencies = []` is a claim about the code, not a check of it.
+        run: |
+          if python3 -c "import assay.cli, assay.sameness, assay.checks, assay.anchors" 2>&1 \
+             | grep -q "ModuleNotFoundError"; then
+            echo "::error::assay imported something outside the standard library"
+            exit 1
+          fi
+          python3 -c "import assay; print('assay', assay.__version__)"
+
+      - name: the suites
+        run: python3 tests/run_tests.py
+
+  javascript:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # `package.json` says `>=18`, and `node:test` is what the suites use.
+        node-version: ['18', '22', '24']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: the suites
+        run: node --test js/test/*.test.js
+
+  itself:
+    # The package pointed at the package. Runs once; the matrices above cover portability.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `assay diff` compares against a base ref, and the default shallow fetch
+          # leaves that ref unresolvable — so this half of the audit would report
+          # "cannot diff" on every run and nothing would say otherwise.
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: the two implementations agree on one contract
+        # If the halves disagree about a property name or an exit code, one assay.json
+        # yields different verdicts depending on which binary CI invoked.
+        run: python3 -m unittest tests.test_parity -v
+
+      - name: no two functions here answer the same question
+        run: python3 -m assay scan assay/
+
+      - name: it audits itself
+        # `all` rather than the subcommands separately: a baseline entry is only called
+        # STALE by a run that performed every audit able to produce one.
+        run: python3 -m assay --root . all --base origin/master
+
+      - name: the JavaScript CLI answers, and refuses what it does not implement
+        run: |
+          node js/src/cli.js --version
+          node js/src/cli.js scan js/src
+          set +e
+          node js/src/cli.js anchors > /tmp/anchors.txt 2>&1
+          status=$?
+          set -e
+          cat /tmp/anchors.txt
+          if [ "$status" != "2" ]; then
+            echo "::error::`assay anchors` under Node must exit 2, not $status"
+            exit 1
+          fi
+          grep -q "Python" /tmp/anchors.txt || {
+            echo "::error::the refusal must name where the command does exist"; exit 1; }
+
+  mutations:
+    # ~4 minutes: every guard broken in turn, each declaring the test that must go red.
+    # Separate job so the fast feedback above is never held up behind it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: every guard, broken in turn
+        run: python3 tests/mutations_assay.py
+
+      - name: no target left mutated
+        # The runner restores in a `finally` and turns SIGTERM into an exception,
+        # because SIGTERM does not run `finally`. This is the check that says so.
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::a mutation was left applied — the restore did not run"
+            git status --porcelain
+            git diff | head -80
+            exit 1
+          fi
+          echo "every target restored"
