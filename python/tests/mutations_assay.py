@@ -252,7 +252,7 @@ MUTATIONS = [
      '''            per_file.setdefault("", []).append(line)'''),
     ("checks: uncommitted work is invisible to changed_files",
      "checks.py",
-     '''        if name.endswith((".py", ".js")) and name not in changed:
+     '''        if name.endswith(SOURCE_SUFFIXES) and name not in changed:
             changed.append(name)''',
      '''        if False:
             changed.append(name)'''),

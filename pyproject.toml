@@ -38,7 +38,13 @@ Source = "https://github.com/Megapixel99/assay-checks"
 Changelog = "https://github.com/Megapixel99/assay-checks/blob/master/CHANGELOG.md"
 Issues = "https://github.com/Megapixel99/assay-checks/issues"
 
+# The package LIVES in `python/` and is IMPORTED as `assay`, and those are two
+# different names on purpose. The directory sits beside `js/` so the two halves are
+# findable in the same shape; the import name is what `pip install assay-checks` has
+# already published, and renaming that would break `import assay`, `python3 -m assay`
+# and the `assay` console script for everyone who has it.
 [tool.setuptools]
+package-dir = { "" = "python" }
 packages = ["assay"]
 
 [tool.setuptools.package-data]

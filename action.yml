@@ -91,7 +91,7 @@ runs:
         if [ "${{ inputs.language }}" = "node" ]; then
           node "$ASSAY_HOME/js/src/cli.js" "${args[@]}" | tee assay-output.txt
         else
-          PYTHONPATH="$ASSAY_HOME" python3 -m assay "${args[@]}" | tee assay-output.txt
+          PYTHONPATH="$ASSAY_HOME/python" python3 -m assay "${args[@]}" | tee assay-output.txt
         fi
         # The exit code is the tool's verdict and `tee` would otherwise hide it behind
         # its own. 0 = nothing to read, 1 = findings, 2 = could not run.

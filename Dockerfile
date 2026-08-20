@@ -19,14 +19,16 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/assay
-COPY assay/ ./assay/
+COPY python/assay/ ./python/assay/
 COPY js/ ./js/
 COPY pyproject.toml README.md LICENSE ./
 
 # No install step and no dependency resolution: the package is stdlib-only in both
 # languages, so putting it on the path IS the installation. Nothing here can break
 # because an index was unreachable on the day the image was built.
-ENV PYTHONPATH=/opt/assay
+# `python/` rather than `/opt/assay`: the package lives beside `js/` and is imported
+# as `assay`, so the directory that goes on the path is its PARENT.
+ENV PYTHONPATH=/opt/assay/python
 RUN printf '#!/bin/sh\nexec python3 -m assay "$@"\n' > /usr/local/bin/assay \
     && printf '#!/bin/sh\nexec node /opt/assay/js/src/cli.js "$@"\n' > /usr/local/bin/assay-js \
     && chmod +x /usr/local/bin/assay /usr/local/bin/assay-js

@@ -3,7 +3,7 @@
 # Two gates here are not boilerplate; each is a failure this package's own detectors
 # exist to catch, pointed back at the package:
 #
-#   1. THE TREE MUST BE CLEAN AFTERWARDS. `tests/mutations_assay.py` rewrites source
+#   1. THE TREE MUST BE CLEAN AFTERWARDS. `python/tests/mutations_assay.py` rewrites
 #      files and restores them in a `finally`. If a restore is ever skipped, the run
 #      still reports its tally and the damage shows up in the NEXT commit — which is
 #      exactly the `no-tree-writes` property `assay runners` audits for.
@@ -30,6 +30,13 @@ on:
   # release gate that has drifted from the suite it claims to be is worse than no
   # gate, and a copy drifts the first time a job is added here.
   workflow_call:
+
+# The Python half lives in `python/` beside `js/`, and is still IMPORTED as `assay`.
+# Nothing here installs the package — a tool that audits your build should not need a
+# build of its own — so the interpreter is told where to find it once, here, instead of
+# every step carrying a prefix that one of them would eventually be missing.
+env:
+  PYTHONPATH: python
 
 concurrency:
   # `github.workflow` is part of the key because a version-bump push matches BOTH this
@@ -68,7 +75,7 @@ jobs:
           python3 -c "import assay; print('assay', assay.__version__)"
 
       - name: the suites
-        run: python3 tests/run_tests.py
+        run: python3 python/tests/run_tests.py
 
   javascript:
     runs-on: ubuntu-latest
@@ -106,10 +113,10 @@ jobs:
       - name: the two implementations agree on one contract
         # If the halves disagree about a property name or an exit code, one assay.json
         # yields different verdicts depending on which binary CI invoked.
-        run: python3 -m unittest tests.test_parity -v
+        run: python3 -m unittest python.tests.test_parity -v
 
       - name: no two functions here answer the same question
-        run: python3 -m assay scan assay/
+        run: python3 -m assay scan python/assay
 
       - name: it audits itself
         # `all` rather than the subcommands separately: a baseline entry is only called
@@ -144,7 +151,7 @@ jobs:
           python-version: '3.12'
 
       - name: every guard, broken in turn
-        run: python3 tests/mutations_assay.py
+        run: python3 python/tests/mutations_assay.py
 
       - name: no target left mutated
         # The runner restores in a `finally` and turns SIGTERM into an exception,

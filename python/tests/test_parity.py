@@ -19,14 +19,18 @@ import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
+# TWO roots, and conflating them is what broke this file when the package moved. The
+# Python half lives under `python/` beside `js/`, so the directory that makes `import
+# assay` work is NOT the directory the JavaScript half is found from.
+PY_ROOT = os.path.dirname(HERE)              # python/ — what `import assay` needs
+REPO = os.path.dirname(PY_ROOT)              # the repository, which holds both halves
+sys.path.insert(0, PY_ROOT)
 
 from assay import checks, sameness  # noqa: E402
 from assay.config import CONFIG_NAMES  # noqa: E402
 from assay.verdicts import FINDING, LOOK, OK  # noqa: E402
 
-JS_SRC = os.path.join(ROOT, "js", "src")
+JS_SRC = os.path.join(REPO, "js", "src")
 
 # Built from its code point rather than written literally: a test that looks for a
 # character it also CONTAINS matches itself and fails on a clean tree, which is the
@@ -40,14 +44,14 @@ def js(name):
 
 
 def py(name):
-    with open(os.path.join(ROOT, "assay", name), encoding="utf-8") as fh:
+    with open(os.path.join(PY_ROOT, "assay", name), encoding="utf-8") as fh:
         return fh.read()
 
 
 class SourceIsWhatItLooksLike(unittest.TestCase):
 
     def source_files(self):
-        for base, dirs, files in os.walk(ROOT):
+        for base, dirs, files in os.walk(REPO):
             dirs[:] = [d for d in dirs
                        if d not in ("node_modules", "__pycache__", ".git")]
             for name in sorted(files):
@@ -140,6 +144,19 @@ class TheTwoHalvesAgree(unittest.TestCase):
         BOTH say it rather than printing a zero that reads as `nothing is stale`."""
         for source in (py("cli.py"), js("cli.js")):
             self.assertIn("staleness needs", source)
+
+    def test_both_halves_call_the_same_EXTENSIONS_source(self):
+        """The drift this caught: the JavaScript half audited `.mjs` and `.cjs` and
+        this one did not, so `assay diff` over one commit produced two different file
+        lists depending on which binary CI invoked — and a file missing from the list
+        is not a finding, it is silence. `.js` was in the Python list all along, so
+        auditing JavaScript was never the disagreement; only which JavaScript."""
+        found = re.search(r"const changed = names\.split\([^)]*\)\s*"
+                          r"\.filter\(\(n\) => /\\\.\(([a-z|]+)\)\$/",
+                          js("checks.js"))
+        self.assertIsNotNone(found, "the JavaScript extension filter moved")
+        js_exts = set("." + e for e in found.group(1).split("|"))
+        self.assertEqual(js_exts, set(checks.SOURCE_SUFFIXES))
 
     def test_the_verdict_names_are_identical(self):
         source = js("verdicts.js")

@@ -255,6 +255,14 @@ LIMIT_RE = re.compile(r"def (test_\w*(?:no_|not_|cannot|unsupported|drops|"
                       r"falls_back|refus|reject)\w*)")
 
 
+# The extensions BOTH halves treat as source. `.mjs` and `.cjs` are here because the
+# JavaScript half already audited them and this one did not: the same commit, audited
+# by the two binaries, produced two different file lists and neither said so. `.js` was
+# always in this list, so auditing JavaScript was never the question — only which
+# JavaScript. Pinned against the JavaScript half in `test_parity.py`.
+SOURCE_SUFFIXES = (".py", ".js", ".mjs", ".cjs")
+
+
 def _git(root, *args):
     proc = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
     return proc.returncode, proc.stdout
@@ -294,11 +302,11 @@ def changed_files(root, base):
         rc, names = _git(root, "diff", "--name-only", base)
     if rc != 0:
         return [], "cannot diff against %s — is it a valid ref?" % base
-    changed = [n for n in names.split() if n.endswith((".py", ".js"))]
+    changed = [n for n in names.split() if n.endswith(SOURCE_SUFFIXES)]
     _rc, unstaged = _git(root, "status", "--porcelain")
     for line in unstaged.splitlines():
         name = line[3:].strip()
-        if name.endswith((".py", ".js")) and name not in changed:
+        if name.endswith(SOURCE_SUFFIXES) and name not in changed:
             changed.append(name)
     rc_top, top = _git(root, "rev-parse", "--show-toplevel")
     if rc_top == 0 and top.strip():
@@ -349,7 +357,7 @@ def audit_diff(root, base, config, report=None):
         rep.finding(error)
         return rep
     if not changed:
-        rep.note("\nCHANGE — no .py/.js files changed against %s" % base)
+        rep.note("\nCHANGE — no source files changed against %s" % base)
         return rep
 
     runners = {}

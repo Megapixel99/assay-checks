@@ -3,12 +3,18 @@
 ## Running it
 
 ```bash
-python3 tests/run_tests.py          # 148 tests, ~15 s, no dependencies
-node --test js/test/*.test.js       # 111 tests, ~2 s
-python3 tests/mutations_assay.py    # 56 mutations, ~4 min
-python3 -m assay scan assay/        # the package, scanned by its own scanner
-python3 -m assay --root . all --base origin/master
+python3 python/tests/run_tests.py          # 159 tests, ~19 s, no dependencies
+node --test js/test/*.test.js              # 141 tests, ~15 s
+python3 python/tests/mutations_assay.py    # 57 mutations, ~4 min
+PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
+PYTHONPATH=python python3 -m assay --root . all --base origin/master
 ```
+
+Each half lives in its own directory, laid out the same way: `python/assay` with
+`python/tests` beside it, `js/src` with `js/test`. **The folder is `python/`, the
+import is still `assay`** — the directory sits beside `js/` so the two halves are
+findable in the same shape, while the published import name does not move. Working
+from a checkout, `PYTHONPATH=python` is what an install would have done.
 
 No install step, no virtualenv, no `npm install`. Both halves are standard library
 only, and that is a constraint rather than a current state: **a quality tool that
@@ -53,7 +59,7 @@ from an oversight.
    it will happily fire on code that should pass, and that is the failure mode that
    gets an audit switched off. Every property in `checks.py` has a harness that must
    be flagged and one that must not.
-3. **Add a mutation to `tests/mutations_assay.py`** that puts the defect back — not
+3. **Add a mutation to `python/tests/mutations_assay.py`** that puts the defect back — not
    one that merely changes the code. Several entries there are versions this package
    actually shipped, kept as mutations rather than comments so a fix cannot come back
    quietly.
@@ -68,7 +74,7 @@ repetitive the count was ambiguous.
 
 ## Changing anything shared between the two halves
 
-`tests/test_parity.py` pins property names, verdict names, config keys, ladder
+`python/tests/test_parity.py` pins property names, verdict names, config keys, ladder
 version, thresholds and the documented exit codes across Python and JavaScript. One
 `assay.json` is meant to serve a polyglot repository: **if the halves disagree, the
 same config yields different verdicts depending on which binary CI invoked, and

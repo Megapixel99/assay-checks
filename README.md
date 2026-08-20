@@ -152,16 +152,30 @@ find.
 {
   "runner_exempt": [
     {"path": "test/mutate_api.py", "property": "sigterm",
-     "reason": "writes only under a tempdir, so a kill leaves nothing mutated"}
+     "reason": "writes only under a tempdir, so a kill leaves nothing mutated"},
+    {"path": "test/mutations-http.js", "property": "parses-mutant",
+     "reason": "every mutant goes through the bundler first, which rejects one that does not parse"}
   ],
   "anchor_exempt": [
     {"path": "test/mutate_api.py", "reason": "anchors into generated source"}
   ],
   "baseline": [
-    "src/thing.py has NO mutation runner naming it"
+    "test/mutate_legacy.py: no `evidence` (no failures reported and no test executed look identical)",
+    "same answer (arity1/v2): src/slug.js::slugify, src/url.js::toSlug"
   ]
 }
 ```
+
+Paths are relative to `--root`, and **the language of the path is not a category** —
+`runner_exempt` and `baseline` take Python and JavaScript entries side by side,
+because a polyglot repository has one root and the audit that reads this file may be
+either binary. `anchor_exempt` is the one exception: it only affects `assay anchors`,
+which is Python-only, so a JavaScript-only project never needs an entry there.
+
+**A `baseline` line is the exact text of a `finding`, and only a `finding`.** It is
+matched whole, never as a prefix, so the line above is what `assay` printed rather
+than a description of it. A `look` cannot be baselined and does not need to be: it
+never fails the run, so there is nothing to accept.
 
 **Every table is read in both directions.** An exemption naming a file that no longer
 exists is a finding. A property name that does not exist is a finding. A baseline line
@@ -191,6 +205,13 @@ one (add `--scan PATH` to fold the sameness half in). Every command still *suppr
 accepted findings, because that direction is safe from any command: a line that fires
 is a line that fires. **Run `assay all` in CI**, not the subcommands separately, or an
 accepted finding can be fixed and its record left behind forever.
+
+**Under Node, no command calls a line stale**, and the run says so instead of printing
+a zero. `assay anchors` is Python-only, so no JavaScript run performs every audit that
+can produce a baseline line, and claiming completeness there would flag every anchor
+line as fixed. A polyglot project should point the **Python** `assay all` at the root
+for that one job; the JavaScript half still suppresses accepted findings exactly as
+the Python half does.
 
 ## What `same` is worth
 
@@ -288,7 +309,7 @@ The JS `dead-vs-real` detector is textual where Python's reads an AST. The conse
 one-directional and worth knowing: it will not produce a false FINDING, it will miss a
 real one. If your harnesses are Python, run the Python half over them.
 
-`tests/test_parity.py` asserts the contract rather than trusting it — same property
+`python/tests/test_parity.py` asserts the contract rather than trusting it — same property
 names, same verdict names, same config keys, same ladder version, same thresholds. Two
 implementations of one contract is exactly the duplication this tool exists to find, so
 it is checked.
@@ -348,17 +369,35 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
 
 ## Development
 
+Each half lives in its own directory, and the two are laid out the same way:
+
+```
+python/assay/     the Python package — imported as `assay`, published as assay-checks
+python/tests/     its suites, and the mutation runner that audits them
+js/src/           the JavaScript half — published as assay-checks on npm
+js/test/          its suites
+```
+
+**The folder is `python/`, the import is still `assay`.** They are different names
+deliberately: the directory sits beside `js/` so the two halves are findable in the
+same shape, while `import assay`, `python3 -m assay` and the `assay` console script
+are what is already published and do not change. `pyproject.toml` bridges the two with
+`package-dir`, so an installed wheel puts `assay` at the top level exactly as before.
+
+Working from a checkout rather than an install, `python/` is what goes on the path:
+
 ```bash
-python3 tests/run_tests.py        # 151 tests, ~15 s
-npm test                          # 111 tests, ~2 s
-python3 tests/mutations_assay.py  # 57 mutations, ~4 min
-python3 -m assay scan assay/      # the package, scanned by its own scanner
-python3 -m assay --root . all --base origin/master
+python3 python/tests/run_tests.py        # 159 tests, ~19 s
+npm test                                 # 141 tests, ~15 s
+python3 python/tests/mutations_assay.py  # 57 mutations, ~4 min
+PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
+PYTHONPATH=python python3 -m assay --root . all --base origin/master
 ```
 
 No install step, no virtualenv, no `npm install` — both halves are standard library
-only. See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules this code is built on and
-what happens when a mutation comes back `NOT DETECTED`.
+only, and `PYTHONPATH=python` is the whole of what an install would have done. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the rules this code is built on and what
+happens when a mutation comes back `NOT DETECTED`.
 
 The mutation runner carries all six properties `assay runners` audits for, and several
 of its mutations are versions this tool actually shipped — kept as mutations rather than
