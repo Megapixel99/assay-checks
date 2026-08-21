@@ -21,7 +21,7 @@ import { writeSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { ANSWER_FD, declaredArity, functionRefusal, outcomeOf } from './sameness.js';
+import { ANSWER_FD, declaredArity, functionRefusal, probeOutcome } from './sameness.js';
 
 /**
  * Every exported function of a module, with its exported name — each function ONCE.
@@ -89,7 +89,7 @@ function say(payload) {
   while (off < buf.length) off += writeSync(ANSWER_FD, buf, off, buf.length - off);
 }
 
-export function probeFunction(fn, name, ladders) {
+export async function probeFunction(fn, name, ladders) {
   let source = '';
   try {
     source = Function.prototype.toString.call(fn);
@@ -112,7 +112,15 @@ export function probeFunction(fn, name, ladders) {
   if (why) return { name, skip: why };
   const inputs = ladders[String(arity)];
   if (!inputs) return { name, skip: `no ladder for arity ${arity}` };
-  const vector = inputs.map((src) => outcomeOf(fn, JSON.parse(src)));
+  // ONE RUNG AT A TIME, never `Promise.all`. The ladder is a fixed sequence and the
+  // vector has to come back in it; running the rungs concurrently would also let one
+  // function's pending work overlap the next rung's, so a probe that hangs would take
+  // an unrelated rung's answer down with it.
+  const vector = [];
+  for (const src of inputs) {
+    // eslint-disable-next-line no-await-in-loop
+    vector.push(await probeOutcome(fn, JSON.parse(src)));
+  }
   return { name, arity, vector };
 }
 
@@ -213,7 +221,8 @@ async function main() {
   // "we found none" and "we never looked" are different claims.
   say({ roster: found.map(([name]) => name) });
   for (const [name, fn] of found) {
-    say({ entry: probeFunction(fn, name, request.ladders) });
+    // eslint-disable-next-line no-await-in-loop
+    say({ entry: await probeFunction(fn, name, request.ladders) });
   }
 }
 

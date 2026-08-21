@@ -135,25 +135,25 @@ test('pair exits 2 on a reference it cannot resolve', async () => {
 
 test('a function that CANNOT be probed is a look, not a failed run', async () => {
   // 2 must mean "the tool could not run" and never "the tool found nothing". A
-  // function that exists and is refused — async here — is a `look`: the tool ran and
-  // cannot decide. Collapsing that into 2 is how a broken invocation and an
+  // function that exists and is refused — a generator here — is a `look`: the tool ran
+  // and cannot decide. Collapsing that into 2 is how a broken invocation and an
   // undecidable one become indistinguishable to a script. The Python half splits them
   // the same way, and the exit codes are the contract both halves publish.
   const root = tree({
-    'm.js': 'export async function a(n) { return n * 2; }\n'
+    'm.js': 'export function* a(n) { yield n * 2; }\n'
       + 'export function b(n) { return n * 2; }\n',
   });
   const file = path.join(root, 'm.js');
   const { code, text } = await cli('pair', `${file}::a`, `${file}::b`);
   assert.equal(code, 0, text);
   assert.match(text, /look/);
-  assert.match(text, /async/);
+  assert.match(text, /generator/);
 });
 
 test('search says the tree was NOT searched when the query cannot be probed', async () => {
   // "Nothing answers this" and "we never asked" are different claims, and only the
   // second one is true here.
-  const root = tree({ 'm.js': 'export async function a(n) { return n * 2; }\n' });
+  const root = tree({ 'm.js': 'export function* a(n) { yield n * 2; }\n' });
   const { code, text } = await cli('search', `${path.join(root, 'm.js')}::a`,
     '--in', root);
   assert.equal(code, 0, text);

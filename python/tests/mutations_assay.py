@@ -210,6 +210,18 @@ MUTATIONS = [
      '''        if False:
             return True'''),
 
+    # ---- coroutines ---------------------------------------------------------- #
+    ("sameness: an `async def` becomes invisible again, in no count at all",
+     "sameness.py",
+     """            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):""",
+     """            elif isinstance(node, ast.FunctionDef):"""),
+    ("sameness: a coroutine is read as an object rather than run",
+     "sameness.py",
+     """        if inspect.iscoroutine(value):
+            value = asyncio.run(value)""",
+     """        if False:
+            value = asyncio.run(value)"""),
+
     # ---- comparison, and the wrong-baseline defect -------------------------- #
     ("sameness: two different ladders are zipped together",
      "sameness.py",
@@ -614,14 +626,43 @@ MUTATIONS += [
     ("js probe: the child answers once at the end, so a kill loses everything",
      "probe.js",
      """  for (const [name, fn] of found) {
-    say({ entry: probeFunction(fn, name, request.ladders) });
+    // eslint-disable-next-line no-await-in-loop
+    say({ entry: await probeFunction(fn, name, request.ladders) });
   }""",
-     """  const all = found.map(([name, fn]) => probeFunction(fn, name, request.ladders));
+     """  const all = [];
+  for (const [name, fn] of found) {
+    // eslint-disable-next-line no-await-in-loop
+    all.push(await probeFunction(fn, name, request.ladders));
+  }
   for (const entry of all) say({ entry });"""),
     ("js sameness: a function that never answered is dropped rather than reported",
      "sameness.js",
      """      const functions = roster.roster.map((name) => answered.get(name) || {""",
      """      const functions = [...answered.values()].map((e) => e || {"""),
+
+    # ---- coroutines ---------------------------------------------------------- #
+    ("js sameness: a promise is read as an object rather than awaited",
+     "sameness.js",
+     """    if (value && typeof value.then === 'function') value = await value;""",
+     """    if (false) value = await value;"""),
+    ("js sameness: a rejection stops being an outcome and escapes the probe",
+     "sameness.js",
+     """export async function probeOutcome(fn, args) {
+  let value;
+  try {
+    value = fn(...args);
+    if (value && typeof value.then === 'function') value = await value;
+  } catch (err) {
+    return threw(err);
+  }""",
+     """export async function probeOutcome(fn, args) {
+  let value;
+  try {
+    value = fn(...args);
+  } catch (err) {
+    return threw(err);
+  }
+  if (value && typeof value.then === 'function') value = await value;"""),
 
     # ---- the config is judgment, and it is validated -------------------------- #
     ("js config: an exemption without a REASON is accepted",

@@ -16,7 +16,7 @@ import test from 'node:test';
 import {
   canon, collect, compare, declaredArity, discriminating, fileRefusal,
   functionRefusal, group, isProjection, ladder, ladderKey, MIN_DISTINCT, outcomeOf,
-  probeFile, stripNonCode,
+  probeFile, probeOutcome, stripNonCode,
 } from '../src/sameness.js';
 import { exportedFunctions, probeFunction } from '../src/probe.js';
 
@@ -249,8 +249,12 @@ test('an arity above the ladder is refused with the number named', () => {
   assert.match(functionRefusal('function f(a,b,c,d) {}', 4), /arity 4/);
 });
 
-test('async, generators and methods are each refused', () => {
-  assert.match(functionRefusal('async function f(a) { return a; }', 1), /async/);
+test('generators and methods are refused, and async no longer is', () => {
+  // `async` used to be a refusal, which put a modern service layer permanently out of
+  // reach: 73 refusals on the first real tree, 34 of them in `services/`. What made it
+  // one was reading the promise instead of the value it settles on, and the probe
+  // awaits now.
+  assert.equal(functionRefusal('async function f(a) { return a * 2; }', 1), null);
   assert.match(functionRefusal('function* f(a) { yield a; }', 1), /generator/);
   assert.match(functionRefusal('function f(a) { return this.x + a; }', 1), /method/);
 });
@@ -300,9 +304,9 @@ test('a list that cannot be read is REFUSED, never guessed from fn.length', () =
   assert.equal(declaredArity("function f(a = ') {}"), null);
 });
 
-test('probeFunction chooses the ladder by the DECLARED count', () => {
+test('probeFunction chooses the ladder by the DECLARED count', async () => {
   const withDefault = (a, b = 10) => a + b;
-  const result = probeFunction(withDefault, 'withDefault',
+  const result = await probeFunction(withDefault, 'withDefault',
     { 1: ladder(1), 2: ladder(2), 3: ladder(3) });
   assert.equal(result.arity, 2, result.skip);
   assert.equal(result.vector.length, ladder(2).length);
@@ -332,9 +336,9 @@ test('a CommonJS default export is unwrapped rather than reported as empty', () 
   assert.deepEqual(found.map(([n]) => n), ['helper']);
 });
 
-test('probeFunction returns a reason rather than throwing on a refusal', () => {
-  const result = probeFunction(async (a) => a, 'f', { 1: ladder(1) });
-  assert.match(result.skip, /async/);
+test('probeFunction returns a reason rather than throwing on a refusal', async () => {
+  const result = await probeFunction(function* (a) { yield a; }, 'f', { 1: ladder(1) });
+  assert.match(result.skip, /generator/);
 });
 
 test('two implementations of one function are grouped', async () => {
@@ -450,6 +454,75 @@ test('a function COPIED into two files is still two implementations', async () =
 // --------------------------------------------------------------------------- //
 // The child's answer travels on its own channel.
 // --------------------------------------------------------------------------- //
+
+// --------------------------------------------------------------------------- //
+// A promise is compared on the value it settles on
+// --------------------------------------------------------------------------- //
+
+test('an async function and its synchronous twin are the same function', async () => {
+  // They answer the same question, and reading the promise object instead of the value
+  // it settles on meant the first was never probed and the second scored `E:AsyncResult`
+  // on every rung — so the pair either never met or was reported as differing with a
+  // witness that said nothing about either one.
+  const scan = await collect([write(
+    'export async function doubled(a) {\n  return a * 2;\n}\n'
+    + 'export function alsoDoubled(a) {\n  return a * 2;\n}\n'
+    + 'export function viaPromise(a) {\n  return Promise.resolve(a * 2);\n}\n',
+  )]);
+  group(scan);
+  assert.equal(scan.groups.length, 1, JSON.stringify([...scan.skipped]));
+  assert.deepEqual(scan.groups[0].map((r) => r.split('::')[1]).sort(),
+    ['alsoDoubled', 'doubled', 'viaPromise']);
+});
+
+test('a rejection is the SAME outcome as a synchronous throw', async () => {
+  // By type and never by message, for the reason every other outcome here is: a message
+  // carries the function's own name, so comparing them makes honest pairs differ.
+  const bad = (a) => { if (typeof a !== 'string') throw new TypeError('str'); return a; };
+  const rejecting = async (a) => {
+    if (typeof a !== 'string') throw new TypeError('str');
+    return a;
+  };
+  assert.equal(await probeOutcome(rejecting, [1]), await probeOutcome(bad, [1]));
+  assert.equal(await probeOutcome(rejecting, [1]), 'E:TypeError');
+});
+
+test('a rejection that is not an Error still names an outcome', async () => {
+  assert.equal(await probeOutcome(async () => { throw 'a string'; }, [1]), 'E:Error');
+});
+
+test('an awaited value is rendered exactly as a returned one', async () => {
+  assert.equal(await probeOutcome(async (a) => a * 2, [21]),
+    await probeOutcome((a) => a * 2, [21]));
+});
+
+test('the vector is deterministic across runs of an async function', async () => {
+  // Awaited rungs must land in ladder order. Running them concurrently would let one
+  // rung's pending work overlap another's and the vector would stop being a function
+  // of the ladder.
+  const fn = async (a) => (a === 0 ? 'zero' : typeof a);
+  const inputs = ladder(1);
+  const once = [];
+  const twice = [];
+  for (const src of inputs) once.push(await probeOutcome(fn, JSON.parse(src)));
+  for (const src of inputs) twice.push(await probeOutcome(fn, JSON.parse(src)));
+  assert.deepEqual(once, twice);
+});
+
+test('a promise that never settles costs that function alone', async () => {
+  // The blocker that kept async out: an unsettled promise is a hang. Per-function
+  // answers are what make it cost one function rather than the file.
+  const file = write(
+    'export async function fine(a) {\n  return a === 0 ? 0 : String(a).length;\n}\n'
+    + 'export async function pending(a) {\n'
+    + '  await new Promise(() => {});\n  return a;\n}\n',
+  );
+  const result = await probeFile(file, 2500);
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
+  assert.ok(byName.fine.vector, 'the function that settled keeps its vector');
+  assert.match(byName.pending.skip, /did not answer/);
+});
 
 // --------------------------------------------------------------------------- //
 // A hang costs the function that hung, not the file

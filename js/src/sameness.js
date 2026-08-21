@@ -49,7 +49,7 @@ export const MAX_ARITY = 3;
 export const MIN_DISTINCT = 2;
 export const REPR_INLINE = 200;
 export const PROBE_TIMEOUT_MS = 20000;
-export const LADDER_VERSION = 'v2';
+export const LADDER_VERSION = 'v3';
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', 'vendor',
@@ -90,7 +90,6 @@ const IMPURE_SOURCE = [
 
 const IMPURE_FUNCTION = [
   ...IMPURE_SOURCE,
-  [/^\s*async\b|\bawait\b/, 'async'],
   [/^\s*(?:async\s+)?function\s*\*/, 'generator'],
   [/\bthis\b/, 'uses `this`, so it is a method'],
   [/\.\.\.\w+\s*[,)]/, 'rest parameters'],
@@ -461,19 +460,64 @@ export function canon(value, depth = 0) {
  * they carry the function's own name — so comparing them would make every pair
  * `differs` and the tool useless, in the way that looks most like working correctly.
  */
-export function outcomeOf(fn, args) {
-  let value;
-  try {
-    value = fn(...args);
-  } catch (err) {
-    return `E:${(err && err.name) || 'Error'}`;
-  }
-  if (value && typeof value.then === 'function') return 'E:AsyncResult';
+/** One settled value, rendered. The tail both callers below share. */
+function outcomeOfValue(value) {
   const text = canon(value);
   if (text.length > REPR_INLINE) {
     return `V#${createHash('sha1').update(text).digest('hex')}`;
   }
   return `V:${text}`;
+}
+
+const threw = (err) => `E:${(err && err.name) || 'Error'}`;
+
+/**
+ * SYNCHRONOUS, and used only where the callee is known to be synchronous — the vacuous
+ * functions in `projections`, which this module writes itself.
+ *
+ * It stays sync because `discriminating` and `compare` are sync and are called from
+ * the reporting path. Making this await would turn both of them into promises and the
+ * whole verdict path with them, for callees that cannot return one.
+ */
+export function outcomeOf(fn, args) {
+  let value;
+  try {
+    value = fn(...args);
+  } catch (err) {
+    return threw(err);
+  }
+  if (value && typeof value.then === 'function') return 'E:AsyncResult';
+  return outcomeOfValue(value);
+}
+
+/**
+ * The outcome of a PROBED function, with a promise awaited to the value it settles on.
+ *
+ * WHY AWAIT AT ALL. `async function a(x) { return x * 2; }` and
+ * `function b(x) { return Promise.resolve(x * 2); }` answer the same question. Reading
+ * the promise object instead of the value it settles on made the first unprobeable and
+ * gave the second `E:AsyncResult` on every rung — so a pair that IS the same function
+ * either never met or was reported as differing, with a witness that says nothing about
+ * either one. Awaiting is what makes the two comparable at all.
+ *
+ * A REJECTION IS THE SAME OUTCOME AS A THROW, by name and never by message, for the
+ * reason messages are never compared anywhere else here: they carry the function's own
+ * name, so comparing them would make every honest pair `differs`.
+ *
+ * A promise that never settles is a hang, and it is bounded the way every other hang
+ * in this half is — by the parent's wall clock, costing the one function that hung.
+ * There is no interrupt to deliver from inside the process, which is why this is the
+ * one half where a timeout is a `look` rather than an outcome.
+ */
+export async function probeOutcome(fn, args) {
+  let value;
+  try {
+    value = fn(...args);
+    if (value && typeof value.then === 'function') value = await value;
+  } catch (err) {
+    return threw(err);
+  }
+  return outcomeOfValue(value);
 }
 
 // --------------------------------------------------------------------------- //

@@ -12,6 +12,41 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### ⚠ The ladder changed: `LADDER_VERSION` is now `v3`
+
+**Every `same answer` line in an existing `assay.json` baseline stops matching**, because
+the ladder key is part of the finding text. Re-run `assay all`, read the findings again,
+and accept the ones you accept. Vectors from `v2` and `v3` are never compared — that is
+what the key is for — so nothing silently gets the wrong answer; the lines simply have
+to be re-accepted.
+
+**An `async` function is probed on the value it settles on.** It used to be refused
+outright: 73 refusals on the first real tree, 34 of them in `services/` and 24 in
+`controllers/`, which put a modern Node service layer permanently out of reach. What
+made `async` a refusal was reading the promise object instead of the value it resolves
+to, so `async function f(x) { return x * 2 }` was unprobeable while
+`function h(x) { return Promise.resolve(x * 2) }` scored `E:AsyncResult` on every rung —
+two functions that answer the same question, one never probed and the other never
+comparable to anything. Both are now compared with the plain `function g(x) { return x
+* 2 }` beside them, and all three group. A rejection is the same outcome as a throw, by
+type and never by message.
+
+The Python half had the same gap and a worse symptom: `ast.AsyncFunctionDef` is not a
+subclass of `ast.FunctionDef`, so an `async def` was not refused, it was **never seen**.
+It appeared in no count at all — not probed, not skipped, not in the census — and a file
+of `async def` reported zero of everything, which reads as a clean sweep.
+
+`async for` and `async with` are still refused, because both drive an object's protocol
+methods and the ladder cannot supply one. The two halves diverge in mechanism and not in
+verdict: `asyncio.run` is callable from synchronous code, so Python needs one entry
+point, while JavaScript has no synchronous await and so keeps a separate `probeOutcome`
+for probing — the sync `outcomeOf` stays for the projection vectors, which the module
+generates itself and which can never be promises.
+
+**This widens what gets executed**, and the README says so in Limits. A service function
+that awaits a database is a function this tool will now call. Loading a module already
+ran its top-level code, so the hazard is not new — but there is more of it.
+
 **The JavaScript half chose the ladder by `fn.length`, and reported a wrong finding
 for it.** `fn.length` stops counting at the first parameter with a default, so
 `withDefault(a, b = 10)` came back as arity 1: probed on the one-argument ladder,

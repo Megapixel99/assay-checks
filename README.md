@@ -17,7 +17,7 @@ npm install -g assay-checks   # the CLI: assay (JavaScript projects)
 ```
 $ assay scan src/
 FINDINGS — 1, each checked rather than guessed:
-  finding  same answer (arity1/v2): src/format.py::humanize, src/report.py::pretty
+  finding  same answer (arity1/v3): src/format.py::humanize, src/report.py::pretty
            no input in the ladder told them apart — READ them; only a person decides
            whether the duplication is a defect
 ```
@@ -161,7 +161,7 @@ find.
   ],
   "baseline": [
     "test/mutate_legacy.py: no `evidence` (no failures reported and no test executed look identical)",
-    "same answer (arity1/v2): src/slug.js::slugify, src/url.js::toSlug"
+    "same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug"
   ]
 }
 ```
@@ -358,6 +358,16 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
   coverage on two runners. Ordinary projects declare `"type"` and are unaffected; a
   loose directory of ESM `.js` files is not, and shows up as `could not load` in the
   census rather than as a wrong answer.
+- **An `async` function is probed on the value it settles on.** `async function f(x)
+  { return x * 2; }`, `function g(x) { return x * 2; }` and `function h(x) { return
+  Promise.resolve(x * 2); }` all answer the same question, and all three are compared
+  as one. A rejection is the same outcome as a throw, by type. **`async` widens what
+  gets executed**, and that is worth saying plainly: a service-layer function that
+  awaits a database is a function this tool will call. It was already true that loading
+  a module runs its top-level code, so this is more of the same hazard rather than a new
+  one — but it is more of it, and the answer is unchanged: point the tool at the files
+  you trust. `async for` and `async with` are still refused, because both drive an
+  object's protocol methods and the ladder cannot supply one.
 - **A timeout is an outcome in Python, and a `look` in JavaScript.** Python gets a
   per-input `SIGALRM`, so a non-terminating input lands in the vector as a raise and a
   function that spins on *some* inputs is still compared on the strength of the ones it
@@ -398,9 +408,9 @@ are what is already published and do not change. `pyproject.toml` bridges the tw
 Working from a checkout rather than an install, `python/` is what goes on the path:
 
 ```bash
-python3 python/tests/run_tests.py        # 162 tests, ~19 s
-npm test                                 # 152 tests, ~25 s
-python3 python/tests/mutations_assay.py  # 78 mutations, both halves
+python3 python/tests/run_tests.py        # 167 tests, ~21 s
+npm test                                 # 158 tests, ~30 s
+python3 python/tests/mutations_assay.py  # 82 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master
 ```
