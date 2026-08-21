@@ -48,6 +48,33 @@ def py(name):
         return fh.read()
 
 
+def pyproject_version():
+    """The `[project]` version, read WITHOUT `tomllib`.
+
+    `tomllib` arrived in 3.11 and `requires-python` here says `>=3.9`, so a test that
+    reaches for it fails on the floor this package claims to support — which is exactly
+    what the 3.9 job in CI exists to catch, and did.
+
+    Skipping on old interpreters was the other option and is worse: a suite that
+    silently skips when something is missing reports a pass for a check that never ran.
+
+    It tracks which TABLE it is inside rather than taking the first `version =` it
+    sees, because that line also appears under `[build-system]` and in dependency pins
+    — the same wrong-line hazard `release.yml` names in its own comment.
+    """
+    table = None
+    with open(os.path.join(REPO, "pyproject.toml"), encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                table = stripped[1:-1]
+            elif table == "project":
+                found = re.match(r'version\s*=\s*"([^"]+)"', stripped)
+                if found:
+                    return found.group(1)
+    return None
+
+
 class SourceIsWhatItLooksLike(unittest.TestCase):
 
     def source_files(self):
@@ -178,6 +205,36 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertNotIn("const arity = fn.length", probe)
         # The Python side reads the parameter list off the AST, defaults included.
         self.assertIn("self.params = [a.arg for a in node.args.args]", py("sameness.py"))
+
+    def test_ONE_version_in_every_place_that_states_it(self):
+        """Four places carry it, and the release only ever compared two of them.
+
+        `pyproject.toml` and `package.json` are each a registry's source of truth, and
+        `release.yml` refuses to publish if they disagree. But `assay.__version__` and
+        the string the JavaScript CLI prints are separate literals, so a bump that
+        touched the two manifests and missed these would publish a package whose
+        `--version` names the release before it. That is not a broken build — it is a
+        tool lying about which build you are running, which is worse, because the
+        number is what you would quote in a bug report.
+
+        Kept as literals rather than read at runtime on purpose: `importlib.metadata`
+        needs the package installed, and this one is meant to run from a checkout with
+        nothing but `PYTHONPATH`. So the duplication stays and is CHECKED, which is the
+        same bargain every other table in this package makes.
+        """
+        import json                                          # noqa: PLC0415
+
+        pyproject = pyproject_version()
+        self.assertIsNotNone(pyproject, "no [project] version in pyproject.toml")
+        with open(os.path.join(REPO, "package.json"), encoding="utf-8") as fh:
+            package_json = json.load(fh)["version"]
+        module = re.search(r'__version__ = "([^"]+)"', py("__init__.py")).group(1)
+        printed = re.search(r"write\('assay ([0-9][^\\']*)\\n'\)",
+                            js("cli.js")).group(1)
+
+        self.assertEqual({pyproject, package_json, module, printed}, {pyproject},
+                         "pyproject=%s package.json=%s assay.__version__=%s "
+                         "js --version=%s" % (pyproject, package_json, module, printed))
 
     def test_the_verdict_names_are_identical(self):
         source = js("verdicts.js")

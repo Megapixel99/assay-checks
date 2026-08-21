@@ -10,7 +10,14 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
-## Unreleased
+## 0.2.0
+
+A MINOR bump by the contract at the top of this file, and it earns it twice over: the
+ladder key changed, and `async` functions are probed where they used to be refused. Both
+can turn a build red that was green on `0.1.0` — the first by invalidating baseline
+lines, the second by finding duplication it could not previously reach. Neither is a
+break in the CLI contract, the `assay.json` format or the verdict vocabulary, which are
+the parts the version is about.
 
 ### ⚠ The ladder changed: `LADDER_VERSION` is now `v3`
 
