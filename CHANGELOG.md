@@ -10,6 +10,31 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## 0.2.1
+
+**The installed `assay` command did nothing and exited 0.** `npm` puts a `bin` on the
+path as a SYMLINK — `node_modules/.bin/assay` pointing at
+`node_modules/assay-checks/js/src/cli.js` — so `process.argv[1]` is the link while
+`import.meta.url` is its target. The check for "was I run as a program" compared the two
+with `path.resolve`, which makes a path absolute and leaves symlinks alone, so it never
+matched: the CLI printed nothing, ran nothing, and exited **0** — the code that means
+*the tool ran and there is nothing to read*. A published auditing tool reported a clean
+tree by never having run, which is the exact failure this package exists to find.
+
+It affects **0.1.0 and 0.2.0**, on every install where the command is reached through
+`npx assay`, `node_modules/.bin/assay`, or a global install. Running the file by path —
+`node node_modules/assay-checks/js/src/cli.js` — was never affected, which is why the
+repository's own suite and CI never saw it: both invoke it by path.
+
+Both sides are now realpath'd, which also drops a hand-built `file://` URL that mangled
+any directory containing a space or a `#`. The test creates the symlink itself rather
+than relying on the platform having one — the same lesson the symlink guard in
+`changed_files` learned — and asserts both that the linked command prints and that a
+run with findings still exits 1, since exiting 0 in silence was the whole defect.
+
+Python was never affected: its console script calls `main()` directly and never
+compares `argv[0]` to anything.
+
 ## 0.2.0
 
 A MINOR bump by the contract at the top of this file, and it earns it twice over: the

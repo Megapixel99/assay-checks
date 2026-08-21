@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -296,6 +296,37 @@ test('it runs as a program from an UNRELATED cwd', () => {
     status = err.status;
   }
   assert.equal(status, 1);
+});
+
+test('it runs through a SYMLINK, which is how npm installs the command', () => {
+  // THE SYMLINK IS CREATED HERE rather than assumed, for the reason the symlink guard
+  // in `changedFiles` learned the same way: a test that relies on the platform having
+  // one is exercised by accident on some machines and not at all on others.
+  //
+  // `npm` installs a `bin` as a link — `node_modules/.bin/assay` pointing at
+  // `node_modules/assay-checks/js/src/cli.js` — so `process.argv[1]` is the link and
+  // `import.meta.url` is its target. Comparing them unresolved made the published
+  // command do nothing, print nothing and exit 0: "the tool ran and found nothing",
+  // from a tool that never ran. Both 0.1.0 and 0.2.0 shipped that way.
+  const dir = mkdtempSync(path.join(tmpdir(), 'assay-bin-'));
+  const link = path.join(dir, 'assay');
+  symlinkSync(CLI, link);
+
+  const printed = execFileSync(process.execPath, [link, '--version'],
+    { encoding: 'utf8' });
+  assert.match(printed, /^assay \d+\.\d+\.\d+/,
+    'the linked command printed nothing, so it never ran');
+
+  // And it still REPORTS through the link: exiting 0 in silence was the whole defect,
+  // so a version string alone would not tell the two apart.
+  const root = tree({ 'm.js': TWINS });
+  let status = 0;
+  try {
+    execFileSync(process.execPath, [link, 'scan', root], { encoding: 'utf8' });
+  } catch (err) {
+    status = err.status;
+  }
+  assert.equal(status, 1, 'a findings run through the link must still exit 1');
 });
 
 test('the package scans ITSELF clean', async () => {

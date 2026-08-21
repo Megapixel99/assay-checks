@@ -325,7 +325,7 @@ it is checked.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }   # `diff` needs a base ref; a shallow clone has none
-- uses: Megapixel99/assay-checks@v0.2.0
+- uses: Megapixel99/assay-checks@v0.2.1
   with:
     command: all       # `all` is the run that can call a baseline entry stale
 ```

@@ -22,8 +22,10 @@
  * confident nonsense about which strings are anchors would be worse than the gap.
  */
 
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 import { auditDiff, auditRunners, checkExemptions } from './checks.js';
 import { applyBaseline, ConfigError, load } from './config.js';
@@ -142,7 +144,7 @@ async function probeRef(ref) {
 
 export async function run(argv, write = (s) => process.stdout.write(s)) {
   const opts = parseArgs(argv);
-  if (opts.version) { write('assay 0.2.0\n'); return 0; }
+  if (opts.version) { write('assay 0.2.1\n'); return 0; }
   if (opts.help || !opts.cmd) { write(USAGE); return 2; }
 
   let config;
@@ -262,10 +264,34 @@ export async function run(argv, write = (s) => process.stdout.write(s)) {
   }
 }
 
-const invokedDirectly = process.argv[1]
-  && import.meta.url === new URL(`file://${path.resolve(process.argv[1])}`).href;
+/**
+ * Was this file run as a program, or imported by something else?
+ *
+ * BOTH SIDES ARE REALPATH'D, and that is the entire point of the function. `npm`
+ * installs a `bin` as a SYMLINK: `node_modules/.bin/assay` points at
+ * `node_modules/assay-checks/js/src/cli.js`, so `process.argv[1]` is the LINK while
+ * `import.meta.url` is its TARGET. Comparing them without resolving made every
+ * invocation of the installed command do nothing, print nothing, and exit 0 — the code
+ * that means "the tool ran and there is nothing to read". The published CLI reported a
+ * clean tree by never having run, which is the exact failure this package exists to
+ * report, shipped inside the package that reports it.
+ *
+ * `path.resolve` was never enough: it makes a path absolute and leaves symlinks alone.
+ * Comparing resolved PATHS also drops the hand-built `file://` URL, which mangled any
+ * directory containing a space or a `#`.
+ */
+function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1])
+      === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // A path that cannot be resolved is not this file being run as a program.
+    return false;
+  }
+}
 
-if (invokedDirectly) {
+if (invokedDirectly()) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; });
 }
 

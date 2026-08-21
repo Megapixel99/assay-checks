@@ -662,6 +662,13 @@ MUTATIONS += [
      """  main().then(
     () => {},"""),
 
+    # ---- the installed command actually runs ---------------------------------- #
+    ("js cli: the entry-point check stops resolving symlinks (a shipped defect)",
+     "cli.js",
+     """    return realpathSync(process.argv[1])
+      === realpathSync(fileURLToPath(import.meta.url));""",
+     """    return process.argv[1] === fileURLToPath(import.meta.url);"""),
+
     # ---- the config is judgment, and it is validated -------------------------- #
     ("js config: an exemption without a REASON is accepted",
      "config.js",
