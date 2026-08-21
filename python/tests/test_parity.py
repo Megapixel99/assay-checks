@@ -48,6 +48,33 @@ def py(name):
         return fh.read()
 
 
+def pyproject_version():
+    """The `[project]` version, read WITHOUT `tomllib`.
+
+    `tomllib` arrived in 3.11 and `requires-python` here says `>=3.9`, so a test that
+    reaches for it fails on the floor this package claims to support — which is exactly
+    what the 3.9 job in CI exists to catch, and did.
+
+    Skipping on old interpreters was the other option and is worse: a suite that
+    silently skips when something is missing reports a pass for a check that never ran.
+
+    It tracks which TABLE it is inside rather than taking the first `version =` it
+    sees, because that line also appears under `[build-system]` and in dependency pins
+    — the same wrong-line hazard `release.yml` names in its own comment.
+    """
+    table = None
+    with open(os.path.join(REPO, "pyproject.toml"), encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                table = stripped[1:-1]
+            elif table == "project":
+                found = re.match(r'version\s*=\s*"([^"]+)"', stripped)
+                if found:
+                    return found.group(1)
+    return None
+
+
 class SourceIsWhatItLooksLike(unittest.TestCase):
 
     def source_files(self):
@@ -196,10 +223,9 @@ class TheTwoHalvesAgree(unittest.TestCase):
         same bargain every other table in this package makes.
         """
         import json                                          # noqa: PLC0415
-        import tomllib                                       # noqa: PLC0415
 
-        with open(os.path.join(REPO, "pyproject.toml"), "rb") as fh:
-            pyproject = tomllib.load(fh)["project"]["version"]
+        pyproject = pyproject_version()
+        self.assertIsNotNone(pyproject, "no [project] version in pyproject.toml")
         with open(os.path.join(REPO, "package.json"), encoding="utf-8") as fh:
             package_json = json.load(fh)["version"]
         module = re.search(r'__version__ = "([^"]+)"', py("__init__.py")).group(1)
