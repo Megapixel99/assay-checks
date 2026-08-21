@@ -14,6 +14,6 @@ Three verdicts, never mixed. `finding` fails, `look` never does, `ok` is printed
 because "we found none" and "we never looked" are different claims.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["__version__"]

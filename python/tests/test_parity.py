@@ -179,6 +179,37 @@ class TheTwoHalvesAgree(unittest.TestCase):
         # The Python side reads the parameter list off the AST, defaults included.
         self.assertIn("self.params = [a.arg for a in node.args.args]", py("sameness.py"))
 
+    def test_ONE_version_in_every_place_that_states_it(self):
+        """Four places carry it, and the release only ever compared two of them.
+
+        `pyproject.toml` and `package.json` are each a registry's source of truth, and
+        `release.yml` refuses to publish if they disagree. But `assay.__version__` and
+        the string the JavaScript CLI prints are separate literals, so a bump that
+        touched the two manifests and missed these would publish a package whose
+        `--version` names the release before it. That is not a broken build — it is a
+        tool lying about which build you are running, which is worse, because the
+        number is what you would quote in a bug report.
+
+        Kept as literals rather than read at runtime on purpose: `importlib.metadata`
+        needs the package installed, and this one is meant to run from a checkout with
+        nothing but `PYTHONPATH`. So the duplication stays and is CHECKED, which is the
+        same bargain every other table in this package makes.
+        """
+        import json                                          # noqa: PLC0415
+        import tomllib                                       # noqa: PLC0415
+
+        with open(os.path.join(REPO, "pyproject.toml"), "rb") as fh:
+            pyproject = tomllib.load(fh)["project"]["version"]
+        with open(os.path.join(REPO, "package.json"), encoding="utf-8") as fh:
+            package_json = json.load(fh)["version"]
+        module = re.search(r'__version__ = "([^"]+)"', py("__init__.py")).group(1)
+        printed = re.search(r"write\('assay ([0-9][^\\']*)\\n'\)",
+                            js("cli.js")).group(1)
+
+        self.assertEqual({pyproject, package_json, module, printed}, {pyproject},
+                         "pyproject=%s package.json=%s assay.__version__=%s "
+                         "js --version=%s" % (pyproject, package_json, module, printed))
+
     def test_the_verdict_names_are_identical(self):
         source = js("verdicts.js")
         for name, value in (("FINDING", FINDING), ("LOOK", LOOK), ("OK", OK)):
