@@ -21,7 +21,7 @@ import { writeSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { ANSWER_FD, declaredArity, functionRefusal, outcomeOf } from './sameness.js';
+import { ANSWER_FD, declaredArity, functionRefusal, probeOutcome } from './sameness.js';
 
 /**
  * Every exported function of a module, with its exported name — each function ONCE.
@@ -89,7 +89,7 @@ function say(payload) {
   while (off < buf.length) off += writeSync(ANSWER_FD, buf, off, buf.length - off);
 }
 
-export function probeFunction(fn, name, ladders) {
+export async function probeFunction(fn, name, ladders) {
   let source = '';
   try {
     source = Function.prototype.toString.call(fn);
@@ -112,7 +112,15 @@ export function probeFunction(fn, name, ladders) {
   if (why) return { name, skip: why };
   const inputs = ladders[String(arity)];
   if (!inputs) return { name, skip: `no ladder for arity ${arity}` };
-  const vector = inputs.map((src) => outcomeOf(fn, JSON.parse(src)));
+  // ONE RUNG AT A TIME, never `Promise.all`. The ladder is a fixed sequence and the
+  // vector has to come back in it; running the rungs concurrently would also let one
+  // function's pending work overlap the next rung's, so a probe that hangs would take
+  // an unrelated rung's answer down with it.
+  const vector = [];
+  for (const src of inputs) {
+    // eslint-disable-next-line no-await-in-loop
+    vector.push(await probeOutcome(fn, JSON.parse(src)));
+  }
   return { name, arity, vector };
 }
 
@@ -213,12 +221,33 @@ async function main() {
   // "we found none" and "we never looked" are different claims.
   say({ roster: found.map(([name]) => name) });
   for (const [name, fn] of found) {
-    say({ entry: probeFunction(fn, name, request.ladders) });
+    // eslint-disable-next-line no-await-in-loop
+    say({ entry: await probeFunction(fn, name, request.ladders) });
   }
 }
 
 // Only run when invoked as a program. Imported by the tests, which call the pieces
 // directly rather than through a pipe.
+//
+// IT EXITS RATHER THAN WAITING FOR THE EVENT LOOP TO DRAIN, and that is the larger
+// half of what made probing cost what it did. Node keeps a process alive while any
+// handle is open, and the handles here belong to the code under test: a module that
+// opens a pool, a socket or an interval AT IMPORT TIME keeps this child alive long
+// after it has written its last answer. Every such file then cost the full wall
+// timeout — twenty seconds of idle waiting for work that had finished in a fraction
+// of a second, and on one real tree seventeen minutes over a directory of controllers.
+//
+// This is not an async problem and never was: a file of ordinary synchronous functions
+// pays it too, as long as its module opened something on the way in. Answers travel by
+// `writeSync`, so they are on the wire before this runs and nothing is truncated.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  main().then(
+    () => process.exit(0),
+    (err) => {
+      // A failure here is the probe's own, not the probed code's, and saying nothing
+      // would reach the parent as `silent` — a reason that names nothing.
+      say({ error: `probe crashed (${(err && err.message) || err})`.slice(0, 120) });
+      process.exit(0);
+    },
+  );
 }

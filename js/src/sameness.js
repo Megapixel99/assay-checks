@@ -49,7 +49,21 @@ export const MAX_ARITY = 3;
 export const MIN_DISTINCT = 2;
 export const REPR_INLINE = 200;
 export const PROBE_TIMEOUT_MS = 20000;
-export const LADDER_VERSION = 'v2';
+/**
+ * The bound on ONE awaited rung, and it is deliberately not the Python half's number.
+ *
+ * Python spends a whole child on one FUNCTION, so a per-input second is affordable
+ * there. This half spends one child on a whole FILE, so a per-input bound has to be
+ * small enough that a single function cannot eat the file's entire budget.
+ *
+ * It is safe to make it this small because it bounds only a PENDING PROMISE. A
+ * synchronous loop never yields, so this can never fire on one — that case is still
+ * the wall clock's. And a pure function that legitimately needs a quarter of a second
+ * of WAITING is a function that is waiting on something outside its arguments, which
+ * the clock and network gates already refuse.
+ */
+export const PER_INPUT_MS = 250;
+export const LADDER_VERSION = 'v3';
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', 'vendor',
@@ -90,7 +104,6 @@ const IMPURE_SOURCE = [
 
 const IMPURE_FUNCTION = [
   ...IMPURE_SOURCE,
-  [/^\s*async\b|\bawait\b/, 'async'],
   [/^\s*(?:async\s+)?function\s*\*/, 'generator'],
   [/\bthis\b/, 'uses `this`, so it is a method'],
   [/\.\.\.\w+\s*[,)]/, 'rest parameters'],
@@ -461,19 +474,87 @@ export function canon(value, depth = 0) {
  * they carry the function's own name — so comparing them would make every pair
  * `differs` and the tool useless, in the way that looks most like working correctly.
  */
-export function outcomeOf(fn, args) {
-  let value;
-  try {
-    value = fn(...args);
-  } catch (err) {
-    return `E:${(err && err.name) || 'Error'}`;
-  }
-  if (value && typeof value.then === 'function') return 'E:AsyncResult';
+/** One settled value, rendered. The tail both callers below share. */
+function outcomeOfValue(value) {
   const text = canon(value);
   if (text.length > REPR_INLINE) {
     return `V#${createHash('sha1').update(text).digest('hex')}`;
   }
   return `V:${text}`;
+}
+
+const threw = (err) => `E:${(err && err.name) || 'Error'}`;
+
+/**
+ * SYNCHRONOUS, and used only where the callee is known to be synchronous — the vacuous
+ * functions in `projections`, which this module writes itself.
+ *
+ * It stays sync because `discriminating` and `compare` are sync and are called from
+ * the reporting path. Making this await would turn both of them into promises and the
+ * whole verdict path with them, for callees that cannot return one.
+ */
+export function outcomeOf(fn, args) {
+  let value;
+  try {
+    value = fn(...args);
+  } catch (err) {
+    return threw(err);
+  }
+  if (value && typeof value.then === 'function') return 'E:AsyncResult';
+  return outcomeOfValue(value);
+}
+
+/**
+ * The outcome of a PROBED function, with a promise awaited to the value it settles on.
+ *
+ * WHY AWAIT AT ALL. `async function a(x) { return x * 2; }` and
+ * `function b(x) { return Promise.resolve(x * 2); }` answer the same question. Reading
+ * the promise object instead of the value it settles on made the first unprobeable and
+ * gave the second `E:AsyncResult` on every rung — so a pair that IS the same function
+ * either never met or was reported as differing, with a witness that says nothing about
+ * either one. Awaiting is what makes the two comparable at all.
+ *
+ * A REJECTION IS THE SAME OUTCOME AS A THROW, by name and never by message, for the
+ * reason messages are never compared anywhere else here: they carry the function's own
+ * name, so comparing them would make every honest pair `differs`.
+ *
+ * A PROMISE THAT NEVER SETTLES IS BOUNDED PER RUNG, and an earlier version of this
+ * comment was wrong about why it could not be. "There is no interrupt to deliver from
+ * inside the process" is true of a synchronous loop, which never yields — and false of
+ * a pending promise, where the event loop is free and a timer racing it is precisely
+ * that interrupt. The rung becomes `E:TimeoutError`, an OUTCOME, the same one the
+ * Python half's per-input `SIGALRM` produces. A synchronous hang is still the wall
+ * clock's, and still a `look`, because there really is nothing to interrupt it with.
+ */
+export async function probeOutcome(fn, args, perInput = PER_INPUT_MS) {
+  let value;
+  let timer;
+  try {
+    value = fn(...args);
+    if (value && typeof value.then === 'function') {
+      // THE INTERRUPT THAT DOES EXIST. An earlier version of this comment claimed
+      // there was none to deliver from inside the process. That is true of a
+      // synchronous loop, which never yields, and false of a pending promise — the
+      // event loop is free, so a timer racing it is exactly the interrupt. Without
+      // this, one promise that never settles held a whole file to the wall clock.
+      value = await Promise.race([value, new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          const late = new Error('per-input limit');
+          // Named to match what the Python half's SIGALRM raises, so one unsettled
+          // rung reads the same in a vector whichever binary produced it.
+          late.name = 'TimeoutError';
+          reject(late);
+        }, perInput);
+      })]);
+    }
+  } catch (err) {
+    return threw(err);
+  } finally {
+    // The loser of the race is not cancellable, but this timer is ours — leaving it
+    // pending would keep the event loop alive on our own account.
+    clearTimeout(timer);
+  }
+  return outcomeOfValue(value);
 }
 
 // --------------------------------------------------------------------------- //

@@ -62,9 +62,11 @@ and counted, because "we found none" and "we never looked" are different claims.
 """
 
 import ast
+import asyncio
 import functools
 import builtins
 import hashlib
+import inspect
 import json
 import os
 import subprocess
@@ -79,7 +81,7 @@ REPR_INLINE = 200             # longer values are compared by hash, never trunca
 PROBE_TIMEOUT = 20            # seconds for one function's whole ladder
 PER_INPUT_SECONDS = 1         # SIGALRM inside the worker, where available
 HELPER_DEPTH = 3              # how far a free name may resolve into sibling functions
-LADDER_VERSION = "v2"
+LADDER_VERSION = "v3"
 
 # IMPORTS WITH NO SIDE EFFECT AND NO AMBIENT STATE. `random` and `time` are absent on
 # purpose: both import cleanly and both make a function's outcome depend on something
@@ -162,7 +164,11 @@ class Module:
                     continue
                 name = node.targets[0].id
                 self.constants[name] = "%s = %s" % (name, ast.unparse(node.value))
-            elif isinstance(node, ast.FunctionDef):
+            # BOTH forms, and an `async def` is NOT a subclass of the sync one. Missing
+            # it did not refuse those functions, it never saw them: they appeared in no
+            # count at all — not probed, not skipped, not in the census — so a file of
+            # `async def` reported zero of everything, which reads as a clean sweep.
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self.funcs[node.name] = Func(path, node, self)
 
 
@@ -236,8 +242,6 @@ def purity(func):
     node = func.node
     if node.decorator_list:
         return "decorated"
-    if isinstance(node, ast.AsyncFunctionDef):
-        return "async"
     if node.args.vararg or node.args.kwarg or node.args.kwonlyargs:
         return "star or keyword-only args"
     if func.params and func.params[0] in ("self", "cls"):
@@ -251,8 +255,12 @@ def purity(func):
             return "mutates module state"
         if isinstance(sub, (ast.Yield, ast.YieldFrom)):
             return "generator"
-        if isinstance(sub, (ast.Await, ast.AsyncFor, ast.AsyncWith)):
-            return "async"
+        # `await` is sequencing, not reach: an `async def` that only computes is as
+        # pure as the `def` beside it, and `outcome_of` runs it to the value it settles
+        # on. `async for` and `async with` are a different matter — both drive an
+        # object's protocol methods, which is behaviour the ladder cannot supply.
+        if isinstance(sub, (ast.AsyncFor, ast.AsyncWith)):
+            return "async iteration"
         if isinstance(sub, ast.Name) and sub.id in IMPURE_NAMES:
             return "calls %s()" % sub.id
         if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name):
@@ -418,9 +426,22 @@ def outcome_of(fn, args):
     Messages legitimately differ between two correct implementations of one function —
     they carry the function's own name — so comparing them would make every pair
     `differs` and the tool useless, in the way that looks most like working correctly.
+
+    A COROUTINE IS RUN TO THE VALUE IT SETTLES ON. `async def f(x): return x * 2` and
+    `def g(x): return x * 2` answer the same question, and reading the coroutine object
+    instead of its result makes the first unprobeable — which put every `async def` in a
+    modern codebase permanently out of reach. A raise inside the coroutine is the same
+    outcome as a raise outside one, by type and never by message, for the same reason
+    every other outcome here is.
+
+    Unlike the JavaScript half, this needs no second entry point: `asyncio.run` is
+    callable from synchronous code, so awaiting does not turn every caller into a
+    coroutine the way `await` would there.
     """
     try:
         value = fn(*args)
+        if inspect.iscoroutine(value):
+            value = asyncio.run(value)
     except BaseException as exc:                              # noqa: BLE001
         return "E:%s" % type(exc).__name__
     text = canon(value)

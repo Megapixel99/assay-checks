@@ -210,6 +210,18 @@ MUTATIONS = [
      '''        if False:
             return True'''),
 
+    # ---- coroutines ---------------------------------------------------------- #
+    ("sameness: an `async def` becomes invisible again, in no count at all",
+     "sameness.py",
+     """            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):""",
+     """            elif isinstance(node, ast.FunctionDef):"""),
+    ("sameness: a coroutine is read as an object rather than run",
+     "sameness.py",
+     """        if inspect.iscoroutine(value):
+            value = asyncio.run(value)""",
+     """        if False:
+            value = asyncio.run(value)"""),
+
     # ---- comparison, and the wrong-baseline defect -------------------------- #
     ("sameness: two different ladders are zipped together",
      "sameness.py",
@@ -614,14 +626,41 @@ MUTATIONS += [
     ("js probe: the child answers once at the end, so a kill loses everything",
      "probe.js",
      """  for (const [name, fn] of found) {
-    say({ entry: probeFunction(fn, name, request.ladders) });
+    // eslint-disable-next-line no-await-in-loop
+    say({ entry: await probeFunction(fn, name, request.ladders) });
   }""",
-     """  const all = found.map(([name, fn]) => probeFunction(fn, name, request.ladders));
+     """  const all = [];
+  for (const [name, fn] of found) {
+    // eslint-disable-next-line no-await-in-loop
+    all.push(await probeFunction(fn, name, request.ladders));
+  }
   for (const entry of all) say({ entry });"""),
     ("js sameness: a function that never answered is dropped rather than reported",
      "sameness.js",
      """      const functions = roster.roster.map((name) => answered.get(name) || {""",
      """      const functions = [...answered.values()].map((e) => e || {"""),
+
+    # ---- coroutines ---------------------------------------------------------- #
+    ("js sameness: a promise is read as an object rather than awaited",
+     "sameness.js",
+     """    if (value && typeof value.then === 'function') {""",
+     """    if (false) {"""),
+    ("js sameness: a rejection resolves to its error rather than being an outcome",
+     "sameness.js",
+     """      value = await Promise.race([value, new Promise((_resolve, reject) => {""",
+     """      value = await Promise.race([value.catch((e) => e), new Promise((_resolve, reject) => {"""),
+
+    # ---- what a pending promise costs ----------------------------------------- #
+    ("js sameness: a per-input timeout becomes a VALUE rather than an outcome",
+     "sameness.js",
+     """          reject(late);""",
+     """          _resolve(late);"""),
+    ("js probe: the child waits for the event loop to drain again",
+     "probe.js",
+     """  main().then(
+    () => process.exit(0),""",
+     """  main().then(
+    () => {},"""),
 
     # ---- the config is judgment, and it is validated -------------------------- #
     ("js config: an exemption without a REASON is accepted",
@@ -642,9 +681,27 @@ MUTATIONS += [
 ]
 
 
+SUITE_TIMEOUT = 1800
+
+
 def run_suite(lang):
-    """(ran, failures). Positive evidence required, per the property this audits for."""
-    proc = subprocess.run(lang["suite"], capture_output=True, text=True, timeout=1800)
+    """(ran, failures). Positive evidence required, per the property this audits for.
+
+    A SUITE THAT HANGS IS A DID-NOT-RUN, not a crash of this runner. A mutation can
+    turn a guard into a wedge rather than a failure — remove the bound on an awaited
+    rung and `node --test`, which carries no timeout of its own, waits forever. Letting
+    `TimeoutExpired` propagate ends the whole run on the spot, which loses every
+    mutation after it AND skips the restore's chance to report; scoring it as a
+    detection would be worse still, since a wedged suite is the weakest possible
+    evidence and would read as the strongest. It is reported the way every other
+    absence of evidence here is.
+    """
+    try:
+        proc = subprocess.run(lang["suite"], capture_output=True, text=True,
+                              timeout=SUITE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, ["DID NOT RUN (the %s suite hung for %ds)"
+                       % (lang["name"], SUITE_TIMEOUT)]
     out = proc.stdout + proc.stderr
     if not lang["evidence"].search(out):
         return False, ["DID NOT RUN (%s)"

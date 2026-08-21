@@ -335,6 +335,50 @@ class Probing(unittest.TestCase):
         self.assertIsNone(S.discriminating(vector, S.ladder(1)))
 
 
+class Coroutines(unittest.TestCase):
+    """An `async def` that only computes is as pure as the `def` beside it."""
+
+    def test_an_async_def_is_COLLECTED_rather_than_invisible(self):
+        """It appeared in NO count at all — not probed, not skipped, not in the census.
+
+        `ast.AsyncFunctionDef` is not a subclass of `ast.FunctionDef`, so the module
+        reader walked straight past it. That is worse than a refusal: a file of
+        `async def` reported zero of everything, which reads as a clean sweep.
+        """
+        mod = S.parse(write("async def f(a):\n    return a * 2\n"))
+        self.assertIn("f", mod.funcs)
+
+    def test_a_coroutine_is_run_to_the_value_it_settles_on(self):
+        async def doubled(a):
+            return a * 2
+
+        self.assertEqual(S.outcome_of(doubled, (21,)), S.outcome_of(lambda a: a * 2, (21,)))
+
+    def test_a_raise_inside_a_coroutine_is_the_same_outcome_as_one_outside(self):
+        async def bad(a):
+            raise TypeError("nope")
+
+        def also_bad(a):
+            raise TypeError("different words entirely")
+
+        self.assertEqual(S.outcome_of(bad, (1,)), S.outcome_of(also_bad, (1,)))
+        self.assertEqual(S.outcome_of(bad, (1,)), "E:TypeError")
+
+    def test_an_async_def_and_its_sync_twin_are_the_same_function(self):
+        scan = S.collect([write("async def doubled(a):\n    return a * 2\n"
+                                "\n\ndef also_doubled(a):\n    return a * 2\n")])
+        S.group(scan)
+        self.assertEqual(len(scan.groups), 1, dict(scan.skipped))
+        self.assertEqual(sorted(r.split("::")[1] for r in scan.groups[0]),
+                         ["also_doubled", "doubled"])
+
+    def test_async_ITERATION_is_still_refused(self):
+        """`await` is sequencing; `async for` and `async with` drive an object's
+        protocol methods, which is behaviour the ladder cannot supply."""
+        func = S.parse(write("async def f(a):\n    async with a:\n        return 1\n")).funcs["f"]
+        self.assertIn("async iteration", S.purity(func))
+
+
 class Grouping(unittest.TestCase):
 
     def test_two_implementations_of_one_function_are_grouped(self):
