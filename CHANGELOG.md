@@ -43,6 +43,32 @@ point, while JavaScript has no synchronous await and so keeps a separate `probeO
 for probing — the sync `outcomeOf` stays for the projection vectors, which the module
 generates itself and which can never be promises.
 
+**Probing no longer waits for the event loop to drain**, and that was the larger half
+of what it cost. Node keeps a process alive while any handle is open, and the handles
+belong to the code under test: a module that opens a pool, a socket or an interval AT
+IMPORT TIME keeps the probe child alive long after its last answer is written, so every
+such file paid the full twenty-second wall timeout for work that finished in a fraction
+of a second — measured at seventeen and a half minutes over one directory of
+controllers. The child now exits when it has answered. **This was never an async
+problem**: a file of ordinary synchronous functions pays it too, as long as its module
+opened something on the way in, and it did so on `v2` exactly as on `v3`.
+
+**An awaited rung is bounded by a timer racing the promise**, and it becomes
+`E:TimeoutError` — the same outcome, by the same name, that the Python half's per-input
+`SIGALRM` produces. The claim that there was no interrupt to deliver from inside the
+process was wrong: it is true of a synchronous loop, which never yields, and false of a
+pending promise, where the event loop is free. A synchronous hang is still the wall
+clock's and still a `look`, because there really is nothing to interrupt it with. The
+bound is 250ms rather than the Python half's second, because this half spends one child
+on a whole FILE while Python spends one on a single function — and it is safe to make it
+that small because it can only ever fire on a promise, never on a computation.
+
+**The mutation runner survives a suite that hangs rather than one that fails.** A
+mutation can wedge `node --test`, which carries no timeout of its own; letting the
+subprocess timeout propagate ended the whole run and lost every mutation after it.
+A hung suite is now a DID-NOT-RUN, which is how every other absence of evidence here is
+reported, and never a detection.
+
 **This widens what gets executed**, and the README says so in Limits. A service function
 that awaits a database is a function this tool will now call. Loading a module already
 ran its top-level code, so the hazard is not new — but there is more of it.

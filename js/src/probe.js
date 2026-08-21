@@ -228,6 +228,26 @@ async function main() {
 
 // Only run when invoked as a program. Imported by the tests, which call the pieces
 // directly rather than through a pipe.
+//
+// IT EXITS RATHER THAN WAITING FOR THE EVENT LOOP TO DRAIN, and that is the larger
+// half of what made probing cost what it did. Node keeps a process alive while any
+// handle is open, and the handles here belong to the code under test: a module that
+// opens a pool, a socket or an interval AT IMPORT TIME keeps this child alive long
+// after it has written its last answer. Every such file then cost the full wall
+// timeout — twenty seconds of idle waiting for work that had finished in a fraction
+// of a second, and on one real tree seventeen minutes over a directory of controllers.
+//
+// This is not an async problem and never was: a file of ordinary synchronous functions
+// pays it too, as long as its module opened something on the way in. Answers travel by
+// `writeSync`, so they are on the wire before this runs and nothing is truncated.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  main().then(
+    () => process.exit(0),
+    (err) => {
+      // A failure here is the probe's own, not the probed code's, and saying nothing
+      // would reach the parent as `silent` — a reason that names nothing.
+      say({ error: `probe crashed (${(err && err.message) || err})`.slice(0, 120) });
+      process.exit(0);
+    },
+  );
 }

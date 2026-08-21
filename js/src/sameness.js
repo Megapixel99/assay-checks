@@ -49,6 +49,20 @@ export const MAX_ARITY = 3;
 export const MIN_DISTINCT = 2;
 export const REPR_INLINE = 200;
 export const PROBE_TIMEOUT_MS = 20000;
+/**
+ * The bound on ONE awaited rung, and it is deliberately not the Python half's number.
+ *
+ * Python spends a whole child on one FUNCTION, so a per-input second is affordable
+ * there. This half spends one child on a whole FILE, so a per-input bound has to be
+ * small enough that a single function cannot eat the file's entire budget.
+ *
+ * It is safe to make it this small because it bounds only a PENDING PROMISE. A
+ * synchronous loop never yields, so this can never fire on one — that case is still
+ * the wall clock's. And a pure function that legitimately needs a quarter of a second
+ * of WAITING is a function that is waiting on something outside its arguments, which
+ * the clock and network gates already refuse.
+ */
+export const PER_INPUT_MS = 250;
 export const LADDER_VERSION = 'v3';
 
 const SKIP_DIRS = new Set([
@@ -504,18 +518,41 @@ export function outcomeOf(fn, args) {
  * reason messages are never compared anywhere else here: they carry the function's own
  * name, so comparing them would make every honest pair `differs`.
  *
- * A promise that never settles is a hang, and it is bounded the way every other hang
- * in this half is — by the parent's wall clock, costing the one function that hung.
- * There is no interrupt to deliver from inside the process, which is why this is the
- * one half where a timeout is a `look` rather than an outcome.
+ * A PROMISE THAT NEVER SETTLES IS BOUNDED PER RUNG, and an earlier version of this
+ * comment was wrong about why it could not be. "There is no interrupt to deliver from
+ * inside the process" is true of a synchronous loop, which never yields — and false of
+ * a pending promise, where the event loop is free and a timer racing it is precisely
+ * that interrupt. The rung becomes `E:TimeoutError`, an OUTCOME, the same one the
+ * Python half's per-input `SIGALRM` produces. A synchronous hang is still the wall
+ * clock's, and still a `look`, because there really is nothing to interrupt it with.
  */
-export async function probeOutcome(fn, args) {
+export async function probeOutcome(fn, args, perInput = PER_INPUT_MS) {
   let value;
+  let timer;
   try {
     value = fn(...args);
-    if (value && typeof value.then === 'function') value = await value;
+    if (value && typeof value.then === 'function') {
+      // THE INTERRUPT THAT DOES EXIST. An earlier version of this comment claimed
+      // there was none to deliver from inside the process. That is true of a
+      // synchronous loop, which never yields, and false of a pending promise — the
+      // event loop is free, so a timer racing it is exactly the interrupt. Without
+      // this, one promise that never settles held a whole file to the wall clock.
+      value = await Promise.race([value, new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          const late = new Error('per-input limit');
+          // Named to match what the Python half's SIGALRM raises, so one unsettled
+          // rung reads the same in a vector whichever binary produced it.
+          late.name = 'TimeoutError';
+          reject(late);
+        }, perInput);
+      })]);
+    }
   } catch (err) {
     return threw(err);
+  } finally {
+    // The loser of the race is not cancellable, but this timer is ours — leaving it
+    // pending would keep the event loop alive on our own account.
+    clearTimeout(timer);
   }
   return outcomeOfValue(value);
 }

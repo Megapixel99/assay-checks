@@ -509,19 +509,47 @@ test('the vector is deterministic across runs of an async function', async () =>
   assert.deepEqual(once, twice);
 });
 
-test('a promise that never settles costs that function alone', async () => {
-  // The blocker that kept async out: an unsettled promise is a hang. Per-function
-  // answers are what make it cost one function rather than the file.
+test('an awaited rung that never settles is an OUTCOME, not a lost function', async () => {
+  // The interrupt that does exist. A pending promise leaves the event loop free, so a
+  // timer racing it bounds the rung — the claim that nothing can be delivered from
+  // inside the process is true only of a synchronous loop, which never yields.
+  assert.equal(await probeOutcome(async () => new Promise(() => {}), [1]),
+    'E:TimeoutError');
+});
+
+test('a function that never settles is PROBED, and then not discriminated', async () => {
+  // Every rung times out, so the vector holds no returned value at all and the ladder
+  // cannot tell it from a constant. That is a `look` reached by probing, which is a
+  // different claim from the function having been lost.
   const file = write(
     'export async function fine(a) {\n  return a === 0 ? 0 : String(a).length;\n}\n'
     + 'export async function pending(a) {\n'
     + '  await new Promise(() => {});\n  return a;\n}\n',
   );
-  const result = await probeFile(file, 2500);
+  const result = await probeFile(file);
   assert.equal(result.error, undefined, JSON.stringify(result));
   const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
   assert.ok(byName.fine.vector, 'the function that settled keeps its vector');
-  assert.match(byName.pending.skip, /did not answer/);
+  assert.ok(byName.pending.vector, byName.pending.skip);
+  assert.equal(discriminating(byName.pending.vector, ladder(1)), null);
+});
+
+test('a module holding a handle open does not cost the wall timeout', async () => {
+  // The larger half of what probing used to cost, and it was never an async problem:
+  // Node keeps a process alive while any handle is open, and an interval or a pool
+  // opened AT IMPORT TIME is the probed code's handle, not ours. Every such file paid
+  // the full wall clock for work that had finished in a fraction of a second —
+  // seventeen minutes over one real directory of controllers.
+  const file = write(
+    'const keepAlive = setInterval(() => {}, 1000);\n'
+    + 'export function quick(a) {\n  return a === 0 ? 0 : String(a).length;\n}\n',
+  );
+  const started = Date.now();
+  const result = await probeFile(file);
+  const elapsed = Date.now() - started;
+  assert.ok(result.functions[0].vector, JSON.stringify(result));
+  // Generous against a loaded machine, and still far under the 20s wall it used to pay.
+  assert.ok(elapsed < 5000, `took ${elapsed}ms, so it waited for the loop to drain`);
 });
 
 // --------------------------------------------------------------------------- //

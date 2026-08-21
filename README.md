@@ -368,16 +368,22 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
   one — but it is more of it, and the answer is unchanged: point the tool at the files
   you trust. `async for` and `async with` are still refused, because both drive an
   object's protocol methods and the ladder cannot supply one.
-- **A timeout is an outcome in Python, and a `look` in JavaScript.** Python gets a
-  per-input `SIGALRM`, so a non-terminating input lands in the vector as a raise and a
-  function that spins on *some* inputs is still compared on the strength of the ones it
-  answered. **Synchronous JavaScript has no equivalent interrupt** — there is nothing to
-  deliver to a spinning loop from inside its own process — so the JS half bounds the
-  whole probe with a wall clock and a kill. A function that hangs is therefore a `look`
-  there, never a vector. It costs only itself: the child answers one function at a time,
-  so the kill loses the function that hung and, after it, the ones never started — each
-  named as such in the census — while every function that had already answered keeps
-  its vector.
+- **A timeout is an outcome; only a *synchronous* hang is a `look`.** Python bounds
+  every input with `SIGALRM`, so a non-terminating input lands in the vector as a raise.
+  JavaScript bounds every awaited rung with a timer racing the promise — the event loop
+  is free while a promise is pending, so that race is a real interrupt — and the rung
+  becomes `E:TimeoutError`, the same outcome by the same name. **A synchronous loop is
+  the one case with nothing to interrupt it**: it never yields, so the JS half falls
+  back to a wall clock and a kill, and that function is a `look` rather than a vector.
+  It costs only itself — the child answers one function at a time, so the kill loses the
+  function that hung and, after it, the ones never started, each named as such in the
+  census, while everything already answered keeps its vector.
+- **The probe exits when it has answered, rather than when the event loop drains.** A
+  module that opens a pool, a socket or an interval at import time keeps its process
+  alive long after the last answer is written, and every such file used to cost the full
+  wall timeout for work that finished in a fraction of a second. This is not an async
+  problem — a file of ordinary synchronous functions pays it too if its module opened
+  something on the way in.
 - **The six properties are about mutation harnesses.** If your project has none, that
   half has nothing to say about it and says so rather than reporting a pass.
 - **`targets_mentioned` under-reports.** A harness that merely mentions a filename counts
@@ -408,9 +414,9 @@ are what is already published and do not change. `pyproject.toml` bridges the tw
 Working from a checkout rather than an install, `python/` is what goes on the path:
 
 ```bash
-python3 python/tests/run_tests.py        # 167 tests, ~21 s
-npm test                                 # 158 tests, ~30 s
-python3 python/tests/mutations_assay.py  # 82 mutations, both halves
+python3 python/tests/run_tests.py        # 169 tests, ~21 s
+npm test                                 # 160 tests, ~30 s
+python3 python/tests/mutations_assay.py  # 84 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master
 ```
