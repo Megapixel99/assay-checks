@@ -19,17 +19,21 @@ the difference between a suppression file and a record.
 FORMAT — `assay.json` beside your project root, or `--config PATH`:
 
     {
-      "runner_exempt": [
-        {"path": "test/mutate_api.py", "property": "sigterm",
-         "reason": "writes only under a tempdir, so a kill leaves nothing mutated"}
-      ],
-      "anchor_exempt": [
-        {"path": "test/mutate_api.py", "reason": "anchors into generated source"}
-      ],
+      "runner_exempt": [{
+        "path": "test/mutate_api.py", "property": "sigterm",
+        "reason": "writes only under a tempdir, so a kill leaves nothing mutated"
+      }],
+      "anchor_exempt": [{
+        "path": "test/mutate_api.py", "reason": "anchors into generated source"
+      }],
       "baseline": [
-        "src/thing.py has NO mutation runner naming it"
+        "test/mutate_legacy.py: no `evidence` (no failures reported and no test executed look identical)"
       ]
     }
+
+A `baseline` line is the exact text of a FINDING, and only a finding. The example above
+used to read `src/thing.py has NO mutation runner naming it`, which is a `look`: it
+never fails a run, so there is nothing to accept and the line could never match.
 
 `property` may be `"*"` to exempt a file from every property. `reason` is required and
 not decorative: an exemption without one is indistinguishable from an oversight, and
