@@ -1,5 +1,10 @@
 # assay
 
+[![PyPI](https://img.shields.io/pypi/v/assay-checks?label=PyPI&color=3775A9)](https://pypi.org/project/assay-checks/)
+[![npm](https://img.shields.io/npm/v/assay-checks?label=npm&color=CB3837)](https://www.npmjs.com/package/assay-checks)
+[![ci](https://github.com/Megapixel99/assay-checks/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Megapixel99/assay-checks/actions/workflows/ci.yml)
+[![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Two questions ordinary CI does not answer, about work that **already passes its tests**:
 
 > **Could those tests have failed?**
