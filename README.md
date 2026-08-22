@@ -364,13 +364,13 @@ it is checked.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }   # `diff` needs a base ref; a shallow clone has none
-- uses: Megapixel99/assay-checks@v0.2.1
+- uses: Megapixel99/assay-checks@v0.2.2
   with:
     command: all       # `all` is the run that can call a baseline entry stale
 
 # The same action runs the other half. `language` is `python` unless you say otherwise,
 # so a JavaScript project has to name it.
-- uses: Megapixel99/assay-checks@v0.2.1
+- uses: Megapixel99/assay-checks@v0.2.2
   with:
     command: scan
     paths: js/src

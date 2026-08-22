@@ -144,7 +144,7 @@ async function probeRef(ref) {
 
 export async function run(argv, write = (s) => process.stdout.write(s)) {
   const opts = parseArgs(argv);
-  if (opts.version) { write('assay 0.2.1\n'); return 0; }
+  if (opts.version) { write('assay 0.2.2\n'); return 0; }
   if (opts.help || !opts.cmd) { write(USAGE); return 2; }
 
   let config;
