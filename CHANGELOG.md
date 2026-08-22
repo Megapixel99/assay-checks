@@ -10,6 +10,34 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## 0.2.2
+
+Documentation only. No behaviour changed: with docstrings stripped, every shipped
+source file is identical to `0.2.1`, and the sole change inside the wheel is the
+`assay.json` example in `config.py`'s module docstring. Baselines, ladder keys and
+exit codes are all untouched, so an upgrade from `0.2.1` needs nothing.
+
+It is a release rather than a merge because **the README is the package page on both
+registries**, and both were serving the older text.
+
+**The `config.py` example baselined a `look`.** It read `src/thing.py has NO mutation
+runner naming it`, which `assay diff` reports as a `look` rather than a finding. A look
+never fails a run, so there is nothing to accept and that line could never have matched
+anything. The README's copy of the same mistake was corrected earlier; this was the
+second copy, and two copies of one example that disagree is the thing this package
+argues against everywhere else.
+
+**Both halves now appear in every example the README gives.** The three-command block
+showed Python references only, and the GitHub Action block never mentioned `language`,
+which defaults to `python` and is therefore the one input a JavaScript project has to
+set. A reader arriving from npm could follow the whole file and not learn the Action
+ran their half at all.
+
+**The prose is rewritten to the voice guide.** Em dashes fall from 12.58 per 1,000
+words of prose to zero. The dashes that remain are inside code fences, quoted from
+`verdicts.py`, `sameness.js` and `cli.js`, because editing them would misquote the tool
+in its own README.
+
 ## 0.2.1
 
 **The installed `assay` command did nothing and exited 0.** `npm` puts a `bin` on the
