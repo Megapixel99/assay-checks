@@ -15,9 +15,20 @@ npm install -g assay-checks   # the CLI: assay (JavaScript projects)
 ```
 
 ```
-$ assay scan src/
+$ assay scan src/                      # the Python half, over a Python tree
 FINDINGS — 1, each checked rather than guessed:
   finding  same answer (arity1/v3): src/format.py::humanize, src/report.py::pretty
+           no input in the ladder told them apart — READ them; only a person decides
+           whether the duplication is a defect
+```
+
+The JavaScript half answers in the same words, because the verdicts, the exit codes
+and the ladder key are one contract rather than two:
+
+```
+$ assay scan src/                      # the JavaScript half, over a JavaScript tree
+FINDINGS — 1, each checked rather than guessed:
+  finding  same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug
            no input in the ladder told them apart — READ them; only a person decides
            whether the duplication is a defect
 ```
@@ -97,9 +108,15 @@ copied into two files is still the two implementations it is.
 ladder is the absence of one. See *What `same` is worth* below: it is one character.
 
 ```bash
-assay scan src/                      # discover
-assay pair a.py::f b.py::g           # the declared route, for one pair
-assay search a.py::f --in src/ lib/  # search before you generate
+# Python
+assay scan src/                                            # discover
+assay pair src/format.py::humanize src/report.py::pretty   # the declared route, one pair
+assay search src/format.py::humanize --in src/ lib/        # search before you generate
+
+# JavaScript: the same three commands, and a reference is FILE::NAME in either language
+assay scan src/
+assay pair src/slug.js::slugify src/url.js::toSlug
+assay search src/slug.js::slugify --in src/ lib/
 ```
 
 ---
@@ -138,7 +155,7 @@ that mistake.
 
 **Exit codes are identical for every subcommand**, because scripts depend on them more
 than on anything printed: `0` nothing to read, `1` findings, `2` the tool could not
-run. `2` is never suppressible; "could not run" and "found nothing" are opposite
+run. `2` is never suppressible: "could not run" and "found nothing" are opposite
 situations, and letting the second silence the first is how a broken invocation reads
 as a clean audit for months.
 
@@ -233,7 +250,23 @@ differs  keystrokes.py::is_wordy  vs  pycomplete.py::_word
 ```
 
 A `same` became a `differs` with a witness, from **one character**. That is what `same`
-is worth, and it is why the verdict is worded the way it is. The general lesson is
+is worth, and it is why the verdict is worded the way it is.
+
+The ladder carries those characters in both halves, so the same question asked in
+JavaScript is settled on the same rung. This pair is a demonstration rather than a
+finding out of somebody's tree, but the run is real:
+
+```javascript
+export function isWordy(tok) { return /[A-Za-z0-9_]/.test(tok[0] ?? ''); }
+export function wordish(tok) { return /[\p{L}\p{N}_]/u.test(tok[0] ?? ''); }
+```
+
+```
+ok       differs: w.js::isWordy  vs  w.js::wordish — ["\u00bd"] -> V:false vs V:true
+```
+
+`½` is `\p{N}` and is not in `[0-9]`, which is the whole of the difference between two
+functions that agree on every ASCII token you would think to try. The general lesson is
 worth stealing whatever you use to test: **ask what characters your inputs never
 contain, then add them.**
 
@@ -329,6 +362,14 @@ it is checked.
 - uses: Megapixel99/assay-checks@v0.2.1
   with:
     command: all       # `all` is the run that can call a baseline entry stale
+
+# The same action runs the other half. `language` is `python` unless you say otherwise,
+# so a JavaScript project has to name it.
+- uses: Megapixel99/assay-checks@v0.2.1
+  with:
+    command: scan
+    paths: js/src
+    language: node
 ```
 
 **Docker**, both runtimes, one image, for CI that has neither toolchain:
