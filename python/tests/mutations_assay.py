@@ -152,6 +152,19 @@ def target(name):
 
 # (label, file, old, new)
 MUTATIONS = [
+    # ---- a snippet's function is never guessed at ---------------------------- #
+    ("sameness: an ambiguous snippet silently picks a function instead of refusing",
+     "sameness.py",
+     """    if len(mod.funcs) > 1:
+        return None, ("the snippet defines %d functions (%s) — name one with --name"
+                      % (len(mod.funcs), ", ".join(sorted(mod.funcs))))""",
+     """    if False:
+        return None, ("the snippet defines %d functions (%s) — name one with --name"
+                      % (len(mod.funcs), ", ".join(sorted(mod.funcs))))"""),
+    ("cli: --name is accepted and inert without --stdin (the shape of a shipped defect)",
+     "cli.py",
+     """    if args.name is not None and not args.stdin:""",
+     """    if False:"""),
     # ---- the vacuous-probe guard ------------------------------------------- #
     ("sameness: a shallow COPY stops counting as vacuous (a shipped defect)",
      "sameness.py",
@@ -541,6 +554,15 @@ MUTATIONS = [
 # --------------------------------------------------------------------------- #
 
 MUTATIONS += [
+    # ---- a snippet's function is never guessed at ---------------------------- #
+    ("js cli: an ambiguous snippet silently picks a function instead of refusing",
+     "cli.js",
+     """  } else if (roster.length > 1) {""",
+     """  } else if (false) {"""),
+    ("js cli: a snippet is allowed to import from the tree",
+     "cli.js",
+     """  if (relativeSpecifiers(text).length) {""",
+     """  if (false) {"""),
     # ---- one function object is one function -------------------------------- #
     ("js probe: two names for ONE function object are a pair again (a shipped defect)",
      "probe.js",

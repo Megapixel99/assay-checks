@@ -251,6 +251,29 @@ class TheTwoHalvesAgree(unittest.TestCase):
         for key in ("runner_exempt", "anchor_exempt", "baseline"):
             self.assertIn("'%s'" % key, source)
 
+    def test_both_halves_call_a_STDIN_SNIPPET_the_same_thing(self):
+        """`search` excludes the query from its own hits by REFERENCE. A snippet has
+        no path, so it is given one that collides with nothing a tree can contain —
+        and if the two halves chose different strings, the same snippet would be named
+        two ways in a polyglot repository's output."""
+        self.assertEqual(sameness.SNIPPET_PATH, "<stdin>")
+        self.assertIn("export const SNIPPET_PATH = '<stdin>';", js("sameness.js"))
+
+    def test_both_halves_REFUSE_to_pick_a_function_out_of_an_ambiguous_snippet(self):
+        """Picking one would make the tool answer about code nobody asked about. Both
+        halves say so in the same words and both exit 2, because a query that cannot
+        be read is `the tool could not run` and never `the tool found nothing`."""
+        wanted = "name one with --name"
+        self.assertIn(wanted, py("sameness.py"))
+        self.assertIn(wanted, js("cli.js"))
+
+    def test_both_halves_treat_an_INAPPLICABLE_FLAG_as_an_error(self):
+        """A flag that is accepted, documented and inert is the defect this CLI
+        already carries two docstrings about."""
+        wanted = "--name selects a function inside a --stdin snippet"
+        self.assertIn(wanted, py("cli.py"))
+        self.assertIn(wanted, js("cli.js"))
+
     def test_the_ladder_VERSION_matches(self):
         """A vector produced by one half and compared by the other must come from the
         same ladder, and the version string is what says so."""
