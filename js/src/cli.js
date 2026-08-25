@@ -65,6 +65,7 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] [--json] <command>
   search FILE::NAME --in DIR  does the tree already answer this?
          --stdin [--name N]   ...about a function that is not a file yet
   why FILE::NAME              which gate refused this function, or that it was probed
+      --stdin [--name N]      ...about a function that is not a file yet
   probe FILE::NAME            one function's cross-language vector, as JSON on stdout
   cross A B [--with CMD]      compare a JavaScript function to a Python one
 
@@ -287,16 +288,71 @@ async function whyRef(ref, report) {
       'refused before the ladder, so it is in no bucket and can pair with nothing');
     return { answered: true };
   }
+  reportProbed(entry, display, report);
+  return { answered: true };
+}
+
+/**
+ * What a probed function's vector says about it: the `look`, or the `ok`.
+ *
+ * An `ok` is PRINTED rather than left silent, for the same reason every other one is:
+ * "it was probed" and "nothing looked at it" are different claims and only one of them
+ * is evidence.
+ */
+function reportProbed(entry, display, report) {
+  if (undiscriminated(report, entry, display)) return;
   const inputs = ladder(entry.arity);
-  const detail = discriminationDetail(entry.vector, inputs);
-  if (detail !== null) {
-    report.look(`${display} — not discriminated by the ladder`, display, detail);
-    return { answered: true };
-  }
   const { returned, distinct } = discriminating(entry.vector, inputs);
   report.ok(`${display} — probed on ${ladderKey(entry.arity)}: ${returned} of `
     + `${entry.vector.length} rungs answered, ${distinct} distinct value(s)`, display);
-  return { answered: true };
+}
+
+/**
+ * Report the `look` that says the ladder could not tell this function apart.
+ *
+ * True when it did, and nothing was decided. ONE PLACE FOR ONE ANSWER, because `why`
+ * and `search` are asking the same question of the same vector — and the defect this
+ * replaced was the two of them answering it differently. `search` deduced nothing and
+ * printed the clean `same none`; `why`, on the identical function, said the ladder
+ * could not see it. Two deciders that can disagree is the shape of defect this package
+ * exists to report, and a sentence kept in step by hand is how they get there.
+ */
+function undiscriminated(report, entry, display) {
+  const detail = discriminationDetail(entry.vector, ladder(entry.arity));
+  if (detail === null) return false;
+  report.look(`${display} — not discriminated by the ladder`, display, detail);
+  return true;
+}
+
+/**
+ * The two ways a query arrives, checked once for both commands that take them.
+ *
+ * A FILE::NAME names something that already exists; `--stdin` takes something that does
+ * not exist yet, which is the case `search` is named for — SEARCH BEFORE YOU GENERATE
+ * cannot mean "first write the file". `why` takes the same two because it is the same
+ * question asked one step earlier, and answering it only for code already on disk would
+ * mean writing the file first in order to be told the file was never the problem.
+ *
+ * A FLAG OR AN ARGUMENT THAT DOES NOT APPLY IS AN ERROR RATHER THAN A NO-OP. `--name`
+ * picks one definition out of a snippet, so with a FILE::NAME it has nothing to pick;
+ * a second reference is a second question this answers nothing about. Accepting either
+ * quietly leaves something documented, parsed and inert.
+ *
+ * Returns the message to fail with, or null when the invocation makes sense.
+ */
+function queryFlags(opts) {
+  if (opts.name !== null && !opts.stdin) {
+    return '--name selects a function inside a --stdin snippet; '
+      + 'a FILE::NAME already names one';
+  }
+  if (opts.stdin && opts.positional.length) {
+    return '--stdin and a FILE::NAME are two different queries; give one';
+  }
+  if (!opts.stdin && !opts.positional.length) {
+    return `${opts.cmd} needs a FILE::NAME or --stdin`;
+  }
+  if (opts.positional.length > 1) return `${opts.cmd} takes one FILE::NAME`;
+  return null;
 }
 
 /**
@@ -605,11 +661,23 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       return finish(report, config, write, opts, ['anchors']);
 
     case 'why': {
-      if (opts.positional.length !== 1) {
-        return fail(opts, write, 'why needs one FILE::NAME');
-      }
-      const found = await whyRef(opts.positional[0], report);
+      const bad = queryFlags(opts);
+      if (bad) return fail(opts, write, bad);
+      // A SNIPPET HAS NO FILE GATE TO CHECK FIRST, which is the whole of the
+      // difference between these two paths. `whyRef` reads a module off disk and asks
+      // whether the FILE was refused before it asks anything about one function;
+      // `probeStdin` was handed the text, so its refusal is already the answer.
+      const found = opts.stdin
+        ? await probeStdin(readStdin(), opts.name)
+        : await whyRef(opts.positional[0], report);
       if (found.unresolved) return fail(opts, write, found.unresolved);
+      if (!found.answered) {
+        if (found.unprobed) {
+          report.look(`${found.display} — ${found.unprobed}`, found.display,
+            'refused before the ladder, so it is in no bucket and can pair with '
+            + 'nothing');
+        } else reportProbed(found.entry, found.display, report);
+      }
       return finish(report, config, write, opts);
     }
 
@@ -790,21 +858,8 @@ export async function run(argv, write = (s) => process.stdout.write(s),
 
     case 'search': {
       if (!opts.into.length) return fail(opts, write, 'search needs --in DIR');
-      // A FLAG THAT DOES NOT APPLY IS AN ERROR RATHER THAN A NO-OP. `--name` picks one
-      // definition out of a snippet, so with a FILE::NAME it has nothing to pick, and
-      // accepting it quietly leaves a flag that is documented, parsed and inert.
-      if (opts.name !== null && !opts.stdin) {
-        return fail(opts, write,
-          '--name selects a function inside a --stdin snippet; '
-          + 'a FILE::NAME already names one');
-      }
-      if (opts.stdin && opts.positional.length) {
-        return fail(opts, write,
-          '--stdin and a FILE::NAME are two different queries; give one');
-      }
-      if (!opts.stdin && !opts.positional.length) {
-        return fail(opts, write, 'search needs a FILE::NAME or --stdin');
-      }
+      const bad = queryFlags(opts);
+      if (bad) return fail(opts, write, bad);
       const found = opts.stdin
         ? await probeStdin(readStdin(), opts.name)
         : await probeRef(opts.positional[0]);
@@ -816,6 +871,18 @@ export async function run(argv, write = (s) => process.stdout.write(s),
         return finish(report, config, write, opts);
       }
       const { entry, display: ref } = found;
+      // THERE ARE TWO WAYS NOT TO SEARCH and only one of them used to be reported. A
+      // query refused before the ladder is obvious: no vector, nothing to match, and
+      // the branch above says so. A query the ladder cannot DISCRIMINATE is the quiet
+      // one — it has a vector, the matching runs, and it matches nothing, because
+      // `collect` files every function the ladder cannot tell apart under skipped and
+      // a constant can therefore only fail to find the other constants. This printed
+      // `same none`, which is the clean result, for a search never capable of a hit.
+      if (undiscriminated(report, entry, ref)) {
+        report.note('       the tree was not searched: the census excludes every '
+          + 'function this ladder cannot tell apart, so a match was never possible');
+        return finish(report, config, write, opts);
+      }
       const scan = await collect(opts.into);
       const key = ladderKey(entry.arity);
       const target = entry.vector.join(' ');

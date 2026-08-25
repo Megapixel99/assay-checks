@@ -223,6 +223,17 @@ MUTATIONS = [
      "cli.py",
      """    if args.name is not None and not args.stdin:""",
      """    if False:"""),
+    # ---- a search that could never have matched says so --------------------- #
+    ("cli: `search` calls a query the ladder cannot discriminate a clean `none` "
+     "(a shipped defect)",
+     "cli.py",
+     """    if _undiscriminated(report, query, vector):""",
+     """    if False:"""),
+    ("cli: the ladder's own refusal prints as an `ok`, so nothing says the tool "
+     "could not decide",
+     "cli.py",
+     """    report.look("%s — not discriminated by the ladder" % func.ref, func.ref, detail)""",
+     """    report.ok("%s — not discriminated by the ladder" % func.ref, func.ref, detail)"""),
     # ---- the vacuous-probe guard ------------------------------------------- #
     ("sameness: a shallow COPY stops counting as vacuous (a shipped defect)",
      "sameness.py",
@@ -837,6 +848,17 @@ MUTATIONS += [
      "cli.js",
      """  if (relativeSpecifiers(text).length) {""",
      """  if (false) {"""),
+    # ---- a search that could never have matched says so --------------------- #
+    ("js cli: `search` calls a query the ladder cannot discriminate a clean `none` "
+     "(a shipped defect)",
+     "cli.js",
+     """      if (undiscriminated(report, entry, ref)) {""",
+     """      if (false) {"""),
+    ("js cli: the ladder's own refusal prints as an `ok`, so nothing says the tool "
+     "could not decide",
+     "cli.js",
+     """  report.look(`${display} — not discriminated by the ladder`, display, detail);""",
+     """  report.ok(`${display} — not discriminated by the ladder`, display, detail);"""),
     # ---- one function object is one function -------------------------------- #
     ("js probe: two names for ONE function object are a pair again (a shipped defect)",
      "probe.js",

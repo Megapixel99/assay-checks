@@ -384,6 +384,48 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertIn('out.write("           %s\\n" % item.detail)', py("verdicts.py"))
         self.assertIn("write(`           ${item.detail}\\n`)", js("verdicts.js"))
 
+    def test_both_halves_report_a_SEARCH_that_could_never_have_matched(self):
+        """`collect` files every function the ladder cannot tell apart under skipped,
+        so a query it cannot discriminate can only fail to find the other functions it
+        cannot discriminate — the match was never possible, and the tree was never
+        really searched. `same none` is the CLEAN result, and printing it there says
+        "we found none" where the truth is "we never looked". Both halves say the
+        other thing instead, and in the same words: a polyglot repository gets this
+        answer from whichever binary it happened to install."""
+        for phrase in ("not discriminated by the ladder",
+                       "the tree was not searched: the census excludes every",
+                       "function this ladder cannot tell apart, so a match was never"):
+            self.assertIn(phrase, py("cli.py"))
+            self.assertIn(phrase, js("cli.js"))
+
+    def test_both_halves_DECIDE_the_undiscriminated_look_in_ONE_place(self):
+        """`why` and `search` ask the same question of the same vector, and the defect
+        this replaced was the two of them answering it differently. A sentence kept in
+        step by hand is how they get back there, so each half writes it once."""
+        self.assertIn("def _undiscriminated(report, func, vector):", py("cli.py"))
+        self.assertIn("function undiscriminated(report, entry, display) {",
+                      js("cli.js"))
+
+    def test_both_halves_take_a_SNIPPET_for_why_as_well_as_for_search(self):
+        """`search --stdin` is search before you generate, and `why` is the same
+        question asked one step earlier. Answering it only for code already on disk
+        would mean writing the file first in order to be told the file was never the
+        problem — in one language only, if the halves disagree."""
+        import inspect                                        # noqa: PLC0415
+
+        from assay.cli import build_parser, cmd_search, cmd_why  # noqa: PLC0415
+
+        args = build_parser().parse_args(["why", "--stdin"])
+        self.assertTrue(args.stdin)
+        self.assertIsNone(args.ref)
+        # ONE RULE ABOUT WHICH WAY IN WAS USED, for both commands. Two copies that
+        # must agree is the duplication this package exists to report.
+        for command in (cmd_why, cmd_search):
+            self.assertIn("_query(args, out)", inspect.getsource(command))
+        self.assertEqual(js("cli.js").count("await probeStdin(readStdin(), opts.name)"),
+                         2)
+        self.assertEqual(js("cli.js").count("const bad = queryFlags(opts);"), 2)
+
     def test_both_halves_ship_the_same_SUBCOMMANDS(self):
         """A command in one half and not the other means the same documented
         invocation works or exits 2 depending on which binary CI installed. `anchors`

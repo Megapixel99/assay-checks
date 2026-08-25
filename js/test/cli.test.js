@@ -632,9 +632,187 @@ test('a reference with no separator exits 2', async () => {
   assert.match(text, /FILE::NAME/);
 });
 
-test('why needs exactly one reference', async () => {
-  const { code } = await cli('why');
+test('why needs one of the two ways in, and says which two', async () => {
+  const { code, text } = await cli('why');
   assert.equal(code, 2);
+  assert.match(text, /why needs a FILE::NAME or --stdin/);
+});
+
+test('a second reference is a second question, not an ignored argument', async () => {
+  const { code, text } = await cli('why', 'a.js::f', 'b.js::g');
+  assert.equal(code, 2);
+  assert.match(text, /takes one FILE::NAME/);
+});
+
+// --------------------------------------------------------------------------- //
+// why --stdin: the same question, about code that is not a file yet
+// --------------------------------------------------------------------------- //
+// `search --stdin` has to answer it on the way, so asking it directly should not
+// require inventing a file: writing the file first in order to be told the file was
+// never the problem is the shape `--stdin` exists to avoid.
+
+test('a snippet gets the same answer as the file it will become', async () => {
+  const source = 'export function constant(x) { void x; return 1; }\n';
+  const fromFile = (await why('constant', { 'm.js': source })).text;
+  const { code, text: fromStdin } = await cliStdin(source, 'why', '--stdin');
+  assert.equal(code, 0, fromStdin);
+  for (const text of [fromFile, fromStdin]) {
+    assert.match(text, /not discriminated by the ladder/);
+    assert.match(text, /it is a constant/);
+  }
+  assert.match(fromStdin, /<stdin>::constant/);
+});
+
+test('a PROBED snippet says so rather than staying silent', async () => {
+  const { code, text } = await cliStdin('export function d(x) { return x + x; }\n',
+    'why', '--stdin');
+  assert.equal(code, 0, text);
+  assert.match(text, /probed on arity1\//);
+});
+
+test('a snippet the file gate refuses is answered without being loaded', async () => {
+  const { code, text } = await cliStdin(
+    'export function t(x) { return Date.now() + x; }\n', 'why', '--stdin');
+  assert.equal(code, 0, text);
+  assert.match(text, /reads the clock/);
+});
+
+test('why --name picks one function out of a snippet', async () => {
+  const { code, text } = await cliStdin(
+    'export function a(x) { return x + 1; }\nexport function b(x) { return x * 2; }\n',
+    'why', '--stdin', '--name', 'b');
+  assert.equal(code, 0, text);
+  assert.match(text, /<stdin>::b/);
+  assert.doesNotMatch(text, /<stdin>::a\b/);
+});
+
+test('an AMBIGUOUS snippet is refused rather than guessed', async () => {
+  const { code, text } = await cliStdin(
+    'export function a(x) { return x + 1; }\nexport function b(x) { return x * 2; }\n',
+    'why', '--stdin');
+  assert.equal(code, 2);
+  assert.match(text, /name one with --name/);
+});
+
+test('why --stdin with a reference is two queries and exits 2', async () => {
+  const { code, text } = await cliStdin('export function a(x) { return x; }\n',
+    'why', '--stdin', 'm.js::a');
+  assert.equal(code, 2);
+  assert.match(text, /two different queries/);
+});
+
+test('why --name without --stdin is an ERROR rather than ignored', async () => {
+  // A flag that is accepted, documented and inert is the defect this CLI already
+  // carries two docstrings about.
+  const { code, text } = await cli('why', '--name', 'a', 'm.js::a');
+  assert.equal(code, 2);
+  assert.match(text, /--name selects a function inside a --stdin snippet/);
+});
+
+// --------------------------------------------------------------------------- //
+// search: a query the ladder could never have matched
+// --------------------------------------------------------------------------- //
+// `collect` files every function the ladder cannot tell apart under skipped, so a
+// constant query can only fail to find the other constants: the match was never
+// possible, and the tree was never really searched. Printing the clean `same none`
+// there states the one thing this tool refuses to state — found none, where the truth
+// is never looked. `why` already answered this about the same vector, so `search`
+// gives the same answer from the same function.
+//
+// THE COST LANDS ON THE BUSIEST PATH. `--stdin` is search before you generate, so the
+// person reading that line is about to write the function.
+
+const SEARCH_TREE = { 'm.js': 'export function only(n) { return n * 3 + 1; }\n' };
+const CONSTANT = 'export function k(n) { void n; return 7; }\n';
+const PROJECTION = 'export function p(n) { return n; }\n';
+const THROWS = 'export function r(n) { return n.noSuchProperty.deeper; }\n';
+
+async function search(snippet) {
+  return cliStdin(snippet, 'search', '--stdin', '--in', tree(SEARCH_TREE));
+}
+
+test('a CONSTANT query is a look rather than a clean none', async () => {
+  const { code, text } = await search(CONSTANT);
+  assert.equal(code, 0, text);
+  assert.match(text, /not discriminated by the ladder/);
+  assert.match(text, /it is a constant/);
+  assert.doesNotMatch(text, /nothing in the tree matched/);
+});
+
+test('a PROJECTION query is told apart from a constant', async () => {
+  // The two need opposite fixes — a wider ladder, or a different function — and
+  // `search` inherits that split rather than repeating the decision.
+  const { code, text } = await search(PROJECTION);
+  assert.equal(code, 0, text);
+  assert.match(text, /a projection/);
+  assert.doesNotMatch(text, /it is a constant/);
+  assert.doesNotMatch(text, /nothing in the tree matched/);
+});
+
+test('a query that THREW EVERYWHERE is not called a constant', async () => {
+  const { text } = await search(THROWS);
+  assert.match(text, /threw on all/);
+  assert.doesNotMatch(text, /it is a constant/);
+});
+
+test('search says the tree was NOT searched when a match was never possible', async () => {
+  // "We found none" and "we never looked" are different claims. This is the second way
+  // not to look, and it used to print as the first.
+  const { text } = await search(CONSTANT);
+  assert.match(text, /the tree was not searched/);
+});
+
+test('a DISCRIMINATING query still gets the clean none', async () => {
+  // The check must not swallow the result it was added to protect: a real search that
+  // really found nothing still says so.
+  const { code, text } = await search('export function q(n) { return n - 17; }\n');
+  assert.equal(code, 0, text);
+  assert.match(text, /nothing in the tree matched/);
+  assert.doesNotMatch(text, /not discriminated by the ladder/);
+});
+
+test('a FILE::NAME query gets the SAME answer as a snippet', async () => {
+  const root = tree({ 'm.js': CONSTANT });
+  const { code, text } = await cli('search', `${path.join(root, 'm.js')}::k`,
+    '--in', root);
+  assert.equal(code, 0, text);
+  assert.match(text, /not discriminated by the ladder/);
+  assert.match(text, /it is a constant/);
+});
+
+test('search and why give ONE answer for one function', async () => {
+  // The defect this replaced was the two of them disagreeing: `why` said the ladder
+  // could not see the function and `search`, on the same vector, printed the result
+  // that means a clean sweep.
+  const root = tree({ 'm.js': PROJECTION });
+  const ref = `${path.join(root, 'm.js')}::p`;
+  const searched = (await cli('search', ref, '--in', root)).text;
+  const asked = (await cli('why', ref)).text;
+  for (const text of [searched, asked]) {
+    assert.match(text, /::p — not discriminated by the ladder/);
+    assert.match(text, /a projection: everywhere it answered/);
+  }
+});
+
+test('the verdict IS a look, not an ok that reads as clean', async () => {
+  // The whole answer is the verdict. An `ok` carrying the same sentence says the tool
+  // decided and found nothing wrong, which is the claim it must not make — and it
+  // would read identically in the prose the eye skims.
+  const root = tree({ 'm.js': CONSTANT });
+  const { data } = await payload('--json', 'search', `${path.join(root, 'm.js')}::k`,
+    '--in', root);
+  const looks = data.items.filter(
+    (i) => i.message.includes('not discriminated by the ladder'));
+  assert.equal(looks.length, 1, JSON.stringify(data.items));
+  assert.equal(looks[0].verdict, 'look');
+});
+
+test('a look from search NEVER fails the run', async () => {
+  for (const snippet of [CONSTANT, PROJECTION, THROWS]) {
+    // eslint-disable-next-line no-await-in-loop
+    const { code, text } = await search(snippet);
+    assert.equal(code, 0, text);
+  }
 });
 
 // --------------------------------------------------------------------------- //
