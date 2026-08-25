@@ -119,25 +119,26 @@ jobs:
         run: python3 -m assay scan python/assay
 
       - name: it audits itself
-        # `all` rather than the subcommands separately: a baseline entry is only called
-        # STALE by a run that performed every audit able to produce one.
-        run: python3 -m assay --root . all --base origin/master
+        # `all --scan` rather than the subcommands separately: a baseline entry with no
+        # `from` is only called STALE by a run that performed every audit able to
+        # produce one, and without `--scan` the sameness half is not one of them.
+        run: python3 -m assay --root . all --base origin/master --scan python/assay
 
-      - name: the JavaScript CLI answers, and refuses what it does not implement
+      - name: the JavaScript CLI answers for every command it ships
+        # `anchors` used to exit 2 here and point at PyPI, and this step asserted the
+        # refusal. It reads the mutation table by IMPORT now, so what is checked is
+        # that the command RUNS — and that the refusal text is gone, because
+        # documentation that is wrong in the direction people act on is worse than
+        # none.
         run: |
           node js/src/cli.js --version
           node js/src/cli.js scan js/src
-          set +e
-          node js/src/cli.js anchors > /tmp/anchors.txt 2>&1
-          status=$?
-          set -e
+          node js/src/cli.js --root . anchors > /tmp/anchors.txt 2>&1
           cat /tmp/anchors.txt
-          if [ "$status" != "2" ]; then
-            echo "::error::`assay anchors` under Node must exit 2, not $status"
+          if grep -q "Python package only" /tmp/anchors.txt; then
+            echo "::error::the CLI still refuses a command it now implements"
             exit 1
           fi
-          grep -q "Python" /tmp/anchors.txt || {
-            echo "::error::the refusal must name where the command does exist"; exit 1; }
 
   mutations:
     # Every guard in BOTH halves broken in turn, each declaring the test that must go
