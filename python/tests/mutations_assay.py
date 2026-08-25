@@ -328,6 +328,40 @@ MUTATIONS = [
      '''        buckets.setdefault((scan.keys[ref], tuple(vector)), []).append(ref)''',
      '''        buckets.setdefault(("", tuple(vector)), []).append(ref)'''),
 
+    # ---- `why`: which gate refused THIS function ---------------------------- #
+    ("sameness: a PROJECTION is explained as a constant",
+     "sameness.py",
+     '''    seen = len(set(answered))
+    if seen < MIN_DISTINCT:''',
+     '''    seen = len(set(answered))
+    if True:'''),
+    ("sameness: a vector that raised on EVERY rung is explained as a constant",
+     "sameness.py",
+     '''    if not answered:
+        return ("it raised on all %d rungs — the ladder reached its type errors and "
+                "never its behaviour" % len(vector))''',
+     '''    if False:
+        return ("it raised on all %d rungs — the ladder reached its type errors and "
+                "never its behaviour" % len(vector))'''),
+    ("sameness: `why` explains a function the ladder DID discriminate",
+     "sameness.py",
+     '''    if discriminating(vector, inputs) is not None:
+        return None''',
+     '''    if False:
+        return None'''),
+    ("sameness: `why` stops telling a missing FILE from a missing NAME",
+     "sameness.py",
+     '''    if not os.path.exists(path):
+        return None, "no such file: %s" % path''',
+     '''    if not os.path.exists(path):
+        return None, "cannot resolve %s" % ref'''),
+    ("verdicts: a look's DETAIL stops being printed, so `why` answers half",
+     "verdicts.py",
+     '''            if item.detail:
+                out.write("           %s\\n" % item.detail)''',
+     '''            if False:
+                out.write("           %s\\n" % item.detail)'''),
+
     # ---- the six properties ------------------------------------------------- #
     ("checks: the evidence detector is always satisfied",
      "checks.py",
@@ -585,6 +619,36 @@ MUTATIONS += [
      "probe.js",
      """  const seen = new Set(inherited);""",
      """  const seen = new Set();"""),
+
+    # ---- `why`: which gate refused THIS function ------------------------------ #
+    ("js sameness: a PROJECTION is explained as a constant",
+     "sameness.js",
+     """  const seen = new Set(answered).size;
+  if (seen < MIN_DISTINCT) {""",
+     """  const seen = new Set(answered).size;
+  if (true) {"""),
+    ("js sameness: a vector that threw on EVERY rung is explained as a constant",
+     "sameness.js",
+     """  if (!answered.length) {
+    return `it threw on all ${vector.length} rungs — the ladder reached its type `
+      + 'errors and never its behaviour';
+  }""",
+     """  if (false) {
+    return `it threw on all ${vector.length} rungs — the ladder reached its type `
+      + 'errors and never its behaviour';
+  }"""),
+    ("js sameness: `why` explains a function the ladder DID discriminate",
+     "sameness.js",
+     """  if (discriminating(vector, inputs) !== null) return null;""",
+     """  if (false) return null;"""),
+    ("js cli: `why` stops answering at the FILE level for a refused file",
+     "cli.js",
+     """  const refused = fileRefusal(source);""",
+     """  const refused = null;"""),
+    ("js verdicts: a look's DETAIL stops being printed, so `why` answers half",
+     "verdicts.js",
+     """      if (item.detail) write(`           ${item.detail}\\n`);""",
+     """      if (false) write(`           ${item.detail}\\n`);"""),
 
     # ---- the seventh property ------------------------------------------------ #
     ("js checks: the restore-verified detector is always satisfied",

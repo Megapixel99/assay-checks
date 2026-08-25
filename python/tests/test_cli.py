@@ -257,6 +257,94 @@ class SearchFromStdin(unittest.TestCase):
         self.assertIn("--name", text)
 
 
+class WhyOneFunction(unittest.TestCase):
+    """`assay why FILE::NAME` — the census, for one name.
+
+    The census gives aggregate refusal reasons with counts, which is the right shape
+    for a tree and the wrong shape for a question: a person who expected a particular
+    function to be probed cannot read `no arguments 274` and learn whether theirs is
+    one of them. Every case here is a `look` or an `ok` and never a finding — this
+    command reports what the tool did, and decides nothing.
+    """
+
+    FIXTURE = ('def double(x):\n    return x + x\n\n\n'
+               'def constant(x):\n    return 1\n\n\n'
+               'def identity(x):\n    return x\n\n\n'
+               'def nullary():\n    return 1\n\n\n'
+               'def raises_on_everything(x):\n    return x.no_such_attribute\n\n\n'
+               'import os\n\n\n'
+               'def impure(x):\n    return os.getcwd() + x\n')
+
+    def why(self, name):
+        root = tree({"m.py": self.FIXTURE})
+        return run("why", os.path.join(root, "m.py") + "::" + name)
+
+    def test_a_PROBED_function_says_so_rather_than_staying_silent(self):
+        """"It was probed" and "nothing looked at it" are different claims, and only
+        one of them is evidence."""
+        code, text = self.why("double")
+        self.assertEqual(code, 0)
+        self.assertIn("probed on arity1/", text)
+        self.assertIn("distinct value", text)
+
+    def test_a_GATE_that_refused_is_named(self):
+        code, text = self.why("impure")
+        self.assertEqual(code, 0)
+        self.assertIn("touches os", text)
+
+    def test_a_ZERO_ARITY_function_gets_the_gate_the_census_counts(self):
+        _code, text = self.why("nullary")
+        self.assertIn("no arguments", text)
+
+    def test_a_CONSTANT_and_a_PROJECTION_are_told_apart(self):
+        """The census collapses both into `not discriminated by the ladder`, which is
+        one reason with two very different answers: a constant needs a wider ladder and
+        a projection needs a different function."""
+        _c, constant = self.why("constant")
+        _p, projection = self.why("identity")
+        self.assertIn("it is a constant", constant)
+        self.assertNotIn("projection", constant)
+        self.assertIn("a projection", projection)
+        self.assertNotIn("it is a constant", projection)
+
+    def test_a_vector_that_RAISED_EVERYWHERE_is_not_called_a_constant(self):
+        """A function the ladder never reached is a different problem from one it
+        reached and found constant: the first needs inputs of another shape, the
+        second needs a wider ladder. Both are `not discriminated`, and saying which
+        is the whole point of this command."""
+        _code, text = self.why("raises_on_everything")
+        self.assertIn("raised on all", text)
+        self.assertNotIn("it is a constant", text)
+
+    def test_it_NEVER_produces_a_finding(self):
+        for name in ("double", "constant", "identity", "nullary", "impure",
+                     "raises_on_everything"):
+            code, _text = self.why(name)
+            self.assertEqual(code, 0, name)
+
+    def test_a_missing_FILE_and_a_missing_NAME_are_different_answers(self):
+        """`resolve` collapses them because a scan does not care which; this command
+        is the one that does. They send you to two different places."""
+        code, missing_file = run("why", "nowhere.py::x")
+        self.assertEqual(code, 2)
+        self.assertIn("no such file", missing_file)
+        code, missing_name = self.why("notafunction")
+        self.assertEqual(code, 2)
+        self.assertIn("no module-level function named", missing_name)
+        self.assertIn("double", missing_name)
+
+    def test_a_file_that_does_not_PARSE_says_that_rather_than_cannot_resolve(self):
+        root = tree({"broken.py": "def (:\n"})
+        code, text = run("why", os.path.join(root, "broken.py") + "::anything")
+        self.assertEqual(code, 2)
+        self.assertIn("does not parse", text)
+
+    def test_a_reference_with_no_separator_exits_2(self):
+        code, text = run("why", "justaname")
+        self.assertEqual(code, 2)
+        self.assertIn("FILE::NAME", text)
+
+
 class ConfigWiring(unittest.TestCase):
 
     def test_a_baseline_entry_turns_a_finding_into_a_pass(self):

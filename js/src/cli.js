@@ -4,6 +4,7 @@
  *
  *     could those checks have failed?      assay runners | diff | all
  *     does the tree already answer this?   assay scan | pair | search
+ *     why was my function not probed?      assay why FILE::NAME
  *
  * EXIT CODES, identical for every subcommand, because scripts depend on them more than
  * on anything printed:
@@ -31,8 +32,9 @@ import { fileURLToPath } from 'node:url';
 import { auditDiff, auditRunners, checkExemptions } from './checks.js';
 import { applyBaseline, ConfigError, load } from './config.js';
 import {
-  collect, compare, displayPath, fileRefusal, group, jsFiles, ladder, ladderKey,
-  probeFile, reportScan, Scan, SNIPPET_PATH, stripNonCode,
+  collect, compare, discriminating, discriminationDetail, displayPath, fileRefusal,
+  group, jsFiles, ladder, ladderKey, probeFile, reportScan, Scan, SNIPPET_PATH,
+  stripNonCode,
 } from './sameness.js';
 import { relativeSpecifiers } from './probe.js';
 import { FINDING, Report, render } from './verdicts.js';
@@ -47,6 +49,7 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
   pair FILE::NAME FILE::NAME  compare two named functions
   search FILE::NAME --in DIR  does the tree already answer this?
          --stdin [--name N]   ...about a function that is not a file yet
+  why FILE::NAME              which gate refused this function, or that it was probed
 
   anchors                     Python only — see \`assay\` on PyPI
 
@@ -145,6 +148,68 @@ async function probeRef(ref) {
   if (!entry) return { unresolved: `${file} exports no function named ${name}` };
   if (entry.skip) return { display, unprobed: entry.skip };
   return { entry, display };
+}
+
+/**
+ * The census, for one name: which gate refused THIS function.
+ *
+ * `assay scan` prints refusal reasons with counts, which is the right shape for a tree
+ * and the wrong shape for a question. Somebody who expected a particular function to be
+ * probed cannot read `no arguments 274` and learn whether theirs is one of the 274.
+ *
+ * THE FILE GATE IS CHECKED FIRST, and on this half that is usually the answer. Python
+ * lifts one function's source out and never imports the module; here a function object
+ * only exists once its module has been evaluated, so a file that reaches for the clock
+ * or the filesystem is refused WHOLE and none of its functions were ever looked at.
+ * Reporting a per-function reason for a file nobody opened would be a reason invented
+ * after the fact.
+ */
+async function whyRef(ref, report) {
+  const split = ref.lastIndexOf('::');
+  if (split < 0) return { unresolved: `not a FILE::NAME reference: ${ref}` };
+  const file = path.resolve(ref.slice(0, split));
+  const name = ref.slice(split + 2);
+  const display = `${displayPath(file)}::${name}`;
+  let source;
+  try {
+    source = readFileSync(file, 'utf8');
+  } catch {
+    return { unresolved: `cannot read ${file}` };
+  }
+  const refused = fileRefusal(source);
+  if (refused) {
+    report.look(`${display} — the FILE was refused: ${refused}`, display,
+      'the module was never loaded, so no function in it was looked at — this is a '
+      + 'file-level answer and every other function here has the same one');
+    return { answered: true };
+  }
+  const result = await probeFile(file, undefined, source);
+  if (result.error) return { unresolved: result.error };
+  const entry = (result.functions || []).find((f) => f.name === name);
+  if (!entry) {
+    const roster = (result.functions || []).map((f) => f.name).sort();
+    return {
+      unresolved: `${displayPath(file)} EXPORTS no function named ${name} (it exports: `
+        + `${roster.join(', ') || 'nothing'}). Only exported functions reach the probe: `
+        + 'a module\'s functions arrive through its exports, and finding an unexported '
+        + 'declaration would mean reading source with a regex',
+    };
+  }
+  if (entry.skip) {
+    report.look(`${display} — ${entry.skip}`, display,
+      'refused before the ladder, so it is in no bucket and can pair with nothing');
+    return { answered: true };
+  }
+  const inputs = ladder(entry.arity);
+  const detail = discriminationDetail(entry.vector, inputs);
+  if (detail !== null) {
+    report.look(`${display} — not discriminated by the ladder`, display, detail);
+    return { answered: true };
+  }
+  const { returned, distinct } = discriminating(entry.vector, inputs);
+  report.ok(`${display} — probed on ${ladderKey(entry.arity)}: ${returned} of `
+    + `${entry.vector.length} rungs answered, ${distinct} distinct value(s)`, display);
+  return { answered: true };
 }
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
@@ -260,6 +325,16 @@ export async function run(argv, write = (s) => process.stdout.write(s),
         + '       regex version would report confident nonsense. Use `pip install\n'
         + '       assay` for that command.\n');
       return 2;
+
+    case 'why': {
+      if (opts.positional.length !== 1) {
+        write('assay why needs one FILE::NAME\n');
+        return 2;
+      }
+      const found = await whyRef(opts.positional[0], report);
+      if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
+      return finish(report, config, write, verbose);
+    }
 
     case 'runners':
       auditRunners(root, config, report);

@@ -310,6 +310,46 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertIn(wanted, py("cli.py"))
         self.assertIn(wanted, js("cli.js"))
 
+    def test_both_halves_EXPLAIN_a_refused_probe_in_the_same_words(self):
+        """`assay why` is the command a person reaches for when the census did not
+        answer their question, so the answer must not depend on which binary they
+        happened to have installed. Two of the three explanations are pinned: the
+        constant and the projection, which the census collapses into one reason and
+        which need opposite fixes — a wider ladder, or a different function.
+        """
+        for phrase in ("it is a constant",
+                       "a projection: everywhere it answered it did nothing"):
+            self.assertIn(phrase, py("sameness.py"))
+            self.assertIn(phrase, js("sameness.js"))
+
+    def test_both_halves_DEDUCE_the_projection_rather_than_deciding_it_twice(self):
+        """`discrimination_detail` defers to `discriminating` and then explains the
+        no. A second call to the projection guard would be a second decider for one
+        question, and two deciders that can disagree is the shape of defect this
+        package exists to report — so neither half may call it."""
+        self.assertIn("if discriminating(vector, inputs) is not None:",
+                      py("sameness.py"))
+        self.assertIn("if (discriminating(vector, inputs) !== null) return null;",
+                      js("sameness.js"))
+
+    def test_a_LOOK_prints_its_detail_in_both_halves(self):
+        """A `look` says the tool cannot decide; the detail is where it says what it
+        DID find out on the way to not deciding. `assay why` puts its whole answer
+        there, so a renderer that drops it answers half the question — in one language
+        only, if the halves disagree."""
+        self.assertIn('out.write("           %s\\n" % item.detail)', py("verdicts.py"))
+        self.assertIn("write(`           ${item.detail}\\n`)", js("verdicts.js"))
+
+    def test_both_halves_ship_the_same_SUBCOMMANDS(self):
+        """A command in one half and not the other means the same documented
+        invocation works or exits 2 depending on which binary CI installed. `anchors`
+        is the one deliberate exception and it is asserted separately, by the test
+        that checks this half NAMES what it does not implement."""
+        from assay.cli import COMMANDS                        # noqa: PLC0415
+
+        found = set(re.findall(r"case '([a-z]+)':", js("cli.js")))
+        self.assertEqual(found, set(COMMANDS))
+
     def test_the_ladder_VERSION_matches(self):
         """A vector produced by one half and compared by the other must come from the
         same ladder, and the version string is what says so."""

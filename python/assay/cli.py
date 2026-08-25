@@ -2,6 +2,7 @@
 
     could those checks have failed?      assay runners | anchors | diff | all
     does the tree already answer this?   assay scan | pair | search
+    why was my function not probed?      assay why FILE::NAME
 
 Both halves ask about work that ALREADY PASSES ITS TESTS, which is why neither is a
 linter and neither is a test runner. A green suite tells you the code did what the
@@ -28,8 +29,9 @@ from . import __version__
 from .anchors import audit_anchors
 from .checks import audit_diff, audit_runners, check_exemptions
 from .config import ConfigError, apply_baseline, load
-from .sameness import (collect, compare, group, ladder, ladder_key, probe,
-                       report_scan, resolve, resolve_source)
+from .sameness import (collect, compare, discriminating, discrimination_detail,
+                       group, ladder, ladder_key, probe, report_scan, resolve,
+                       resolve_source, resolve_why)
 from .verdicts import FINDING, Report, render
 
 
@@ -142,6 +144,44 @@ def cmd_pair(args, config, out):
     return _finish(report, config, out, args.verbose)
 
 
+def cmd_why(args, config, out):
+    """The census, for one name: which gate refused THIS function.
+
+    `assay scan` prints refusal reasons with counts, which is the right shape for a
+    tree and the wrong shape for a question. Somebody who expected a particular
+    function to be probed cannot read `no arguments 274` and learn whether theirs is
+    one of the 274, and guessing which of eight gates rejected it is exactly the work
+    the census was supposed to save them.
+
+    IT NEVER PRODUCES A FINDING. This command decides nothing about the code; it
+    reports what the tool did and why it did it. A refusal is a `look` and a probe is
+    an `ok` — and an `ok` here is printed rather than left silent for the same reason
+    every other one is, because "it was probed" and "nothing looked at it" are
+    different claims and only one of them is evidence.
+    """
+    func, unresolved = resolve_why(args.ref)
+    if func is None:
+        out.write("assay: %s\n" % unresolved)
+        return 2
+    report = Report()
+    vector, refused = probe(func)
+    if vector is None:
+        report.look("%s — %s" % (func.ref, refused), func.ref,
+                    "refused before the ladder, so it is in no bucket and can pair "
+                    "with nothing")
+        return _finish(report, config, out, args.verbose)
+    inputs = ladder(len(func.params))
+    detail = discrimination_detail(vector, inputs)
+    if detail is not None:
+        report.look("%s — not discriminated by the ladder" % func.ref, func.ref, detail)
+        return _finish(report, config, out, args.verbose)
+    answered, distinct = discriminating(vector, inputs)
+    report.ok("%s — probed on %s: %d of %d rungs answered, %d distinct value(s)"
+              % (func.ref, ladder_key(func), answered, len(vector), distinct),
+              func.ref)
+    return _finish(report, config, out, args.verbose)
+
+
 def _query(args, out):
     """The function `search` is asking about: (Func, None) or (None, exit code).
 
@@ -206,6 +246,7 @@ def cmd_search(args, config, out):
 
 
 COMMANDS = {
+    "why": cmd_why,
     "runners": cmd_runners,
     "anchors": cmd_anchors,
     "diff": cmd_diff,
@@ -277,6 +318,10 @@ def build_parser():
                        help="compare two named functions")
     p.add_argument("a", metavar="FILE::NAME")
     p.add_argument("b", metavar="FILE::NAME")
+
+    p = sub.add_parser("why", parents=[_common()],
+                       help="which gate refused this function, or that it was probed")
+    p.add_argument("ref", metavar="FILE::NAME")
 
     p = sub.add_parser("search", parents=[_common()],
                        help="does the tree already answer this?")

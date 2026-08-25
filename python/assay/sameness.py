@@ -634,6 +634,64 @@ def resolve(ref):
     return mod.funcs.get(name) if mod else None
 
 
+def resolve_why(ref):
+    """(Func, None), or (None, the reason this reference names nothing).
+
+    THREE DIFFERENT ANSWERS, and `resolve` collapses them into None because a scan does
+    not care which. `assay why` is the command that does: no such file, a file that
+    does not parse, and a file with no such function send you to three different places,
+    and "cannot resolve" sends you to none of them.
+    """
+    if "::" not in ref:
+        return None, "not a FILE::NAME reference: %s" % ref
+    path, _, name = ref.rpartition("::")
+    if not os.path.exists(path):
+        return None, "no such file: %s" % path
+    mod = parse(path)
+    if mod is None:
+        return None, ("%s does not parse, or cannot be read as UTF-8 — nothing in it "
+                      "is reachable" % path)
+    func = mod.funcs.get(name)
+    if func is None:
+        known = ", ".join(sorted(mod.funcs)) or "no module-level functions at all"
+        return None, ("%s defines no module-level function named %s (it defines: %s)"
+                      % (path, name, known))
+    return func, None
+
+
+def discrimination_detail(vector, inputs):
+    """Why this ladder did not tell this function apart, or None if it did.
+
+    `discriminating()` answers yes or no, because yes or no is all a scan needs: the
+    census counts one reason and moves on. Somebody who expected a PARTICULAR function
+    to be probed needs the other thing — which of the two guards refused it, since a
+    constant and a projection are different problems with different answers.
+
+    IT DOES NOT NAME WHICH ARGUMENT a projection handed back. Doing so would need a
+    second copy of the vacuous table beside `projections()`, kept in step by hand, and
+    two tables that must agree is the exact duplication this package exists to report.
+    The shape is named; the index is left to the reader, who has the function open.
+    """
+    if discriminating(vector, inputs) is not None:
+        return None
+    answered = [o for o in vector if o[:2] != "E:"]
+    if not answered:
+        return ("it raised on all %d rungs — the ladder reached its type errors and "
+                "never its behaviour" % len(vector))
+    seen = len(set(answered))
+    if seen < MIN_DISTINCT:
+        return ("%d distinct returned value across the %d rungs that answered, and %d "
+                "is the minimum — as far as this ladder can see it is a constant"
+                % (seen, len(answered), MIN_DISTINCT))
+    # THE LAST BRANCH IS DEDUCED, not re-decided. `discriminating` already said no and
+    # the two counting branches above did not explain it, so the projection guard is
+    # what refused this vector. Asking `is_projection` again would be a SECOND decider
+    # for one question, and two deciders that can disagree is the shape of defect this
+    # package exists to report.
+    return ("a projection: everywhere it answered it did nothing with its "
+            "arguments — handed one back, or copied one through")
+
+
 def resolve_source(text, name=None):
     """A snippet on its way to being written -> (Func, None) or (None, reason).
 

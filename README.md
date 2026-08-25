@@ -126,6 +126,7 @@ ladder is the absence of one. See *What `same` is worth* below: it is one charac
 assay scan src/                                            # discover
 assay pair src/format.py::humanize src/report.py::pretty   # the declared route, one pair
 assay search src/format.py::humanize --in src/ lib/        # search before you generate
+assay why src/format.py::humanize                          # ...and if it was not probed, why
 assay search --stdin --in src/ lib/ < draft.py             # ...before it is a file
 
 # JavaScript: the same commands, and a reference is FILE::NAME in either language
@@ -170,6 +171,29 @@ of what it refused and why:
   no arguments                                 274
   not discriminated by the ladder              127
 ```
+
+**A census answers about a tree; `assay why` answers about a name.** Reading `no
+arguments 274` does not tell you whether the function you expected to be probed is one
+of the 274, and guessing which of eight gates rejected it is the work the census was
+supposed to save you:
+
+```
+$ assay why src/format.py::humanize
+  look     src/format.py::humanize — touches os
+           refused before the ladder, so it is in no bucket and can pair with nothing
+
+$ assay why src/slug.js::slugify
+  ok       src/slug.js::slugify — probed on arity1/v3: 29 of 29 rungs answered, 23 distinct value(s)
+```
+
+It never produces a finding: it reports what the tool did, and decides nothing. It also
+splits the one reason the census cannot split — `not discriminated by the ladder` covers
+a **constant**, a **projection**, and a function the ladder **never reached**, and those
+need a wider ladder, a different function, and inputs of another shape respectively.
+
+On the JavaScript half the answer is often at the **file** level, and it says so: a file
+that reaches for the clock is refused whole, so none of its functions were ever looked
+at and every one of them has the same answer.
 
 **Files and functions are counted separately, and the second line is an equation.** A
 file nobody opened holds an unknown number of functions (not opening it is exactly why
@@ -357,6 +381,7 @@ your tree, point the tool at the files you trust rather than at the whole reposi
 | | Python | JavaScript |
 |---|---|---|
 | `scan` / `pair` / `search` | yes | yes |
+| `why` | yes | yes, and the answer is often the FILE gate |
 | `runners` | yes | yes, with a weaker `dead-vs-real` (see below) |
 | `diff` | yes | yes |
 | `anchors` | yes | **no, and the CLI says so** |

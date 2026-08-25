@@ -631,6 +631,41 @@ export function discriminating(vector, inputs = null) {
   return { returned: returned.length, distinct: new Set(returned).size };
 }
 
+/**
+ * Why this ladder did not tell this function apart, or null if it did.
+ *
+ * `discriminating()` answers yes or no, because yes or no is all a scan needs: the
+ * census counts one reason and moves on. Somebody who expected a PARTICULAR function
+ * to be probed needs the other thing — which of the two guards refused it, since a
+ * constant and a projection are different problems with different answers.
+ *
+ * IT DOES NOT NAME WHICH ARGUMENT a projection handed back. Doing so would need a
+ * second copy of the vacuous table beside `projections()`, kept in step by hand, and
+ * two tables that must agree is the exact duplication this package exists to report.
+ * The shape is named; the index is left to the reader, who has the function open.
+ */
+export function discriminationDetail(vector, inputs) {
+  if (discriminating(vector, inputs) !== null) return null;
+  const answered = vector.filter((o) => o.slice(0, 2) !== 'E:');
+  if (!answered.length) {
+    return `it threw on all ${vector.length} rungs — the ladder reached its type `
+      + 'errors and never its behaviour';
+  }
+  const seen = new Set(answered).size;
+  if (seen < MIN_DISTINCT) {
+    return `${seen} distinct returned value across the ${answered.length} rungs `
+      + `that answered, and ${MIN_DISTINCT} is the minimum — as far as this ladder `
+      + 'can see it is a constant';
+  }
+  // THE LAST BRANCH IS DEDUCED, not re-decided. `discriminating` already said no and
+  // the two counting branches above did not explain it, so the projection guard is
+  // what refused this vector. Asking `isProjection` again would be a SECOND decider
+  // for one question, and two deciders that can disagree is the shape of defect this
+  // package exists to report.
+  return 'a projection: everywhere it answered it did nothing with its arguments '
+    + '— handed one back, or copied one through';
+}
+
 /** ['same'|'differs'|'look', detail]. Refuses two vectors from different ladders. */
 export function compare(aVec, bVec, aKey, bKey, inputs) {
   if (aKey !== bKey) return ['look', `not comparable: ${aKey} vs ${bKey}`];

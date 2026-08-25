@@ -19,7 +19,7 @@ export {
 } from './checks.js';
 export {
   BASE_VALUES, LADDER_VERSION, MAX_ARITY, MIN_DISTINCT, Scan,
-  canon, collect, compare, discriminating, displayPath, fileRefusal,
+  canon, collect, compare, discriminating, discriminationDetail, displayPath, fileRefusal,
   functionRefusal, group, isProjection, jsFiles, ladder, ladderKey, outcomeOf,
   probeFile, projections, reportScan,
 } from './sameness.js';

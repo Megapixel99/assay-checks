@@ -12,6 +12,39 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### `assay why FILE::NAME`: the census, for one name
+
+The census prints refusal reasons with counts, which is the right shape for a tree and
+the wrong shape for a question. Somebody who expected a particular function to be probed
+cannot read `no arguments 274` and learn whether theirs is one of the 274, and guessing
+which of eight gates rejected it is the work the census was supposed to save them.
+
+`why` prints the gate that refused **this** function, or says it was probed and on which
+ladder. It never produces a finding — it reports what the tool did and decides nothing —
+so a refusal is a `look` and a probe is an `ok`, printed rather than left silent for the
+reason every other `ok` is.
+
+**It splits the one reason the census cannot split.** `not discriminated by the ladder`
+covers three different situations: a **constant**, a **projection**, and a vector that
+raised on every rung. They need a wider ladder, a different function, and inputs of
+another shape, and the census sends all three to the same place. The explanation is
+**deduced** rather than re-decided: `discrimination_detail` defers to `discriminating`
+and then says which branch refused, because a second decider for one question is two
+answers that can disagree.
+
+**A `look` now prints its detail**, exactly as a finding does — that is where `why` puts
+its whole answer, and dropping it answered half the question.
+
+**Three answers where `resolve` had one.** No such file, a file that does not parse, and
+a file with no such function send you to three different places; `cannot resolve` sends
+you to none of them. On the JavaScript half a name that is not exported says so, with
+the reason: a module's functions arrive through its exports, and finding an unexported
+declaration would mean reading source with a regex.
+
+On the JavaScript half the answer is often at the **file** level. A file that reaches for
+the clock is refused whole, so none of its functions were ever looked at — reporting a
+per-function reason for a file nobody opened would be a reason invented after the fact.
+
 ### A seventh runner property: `restore-verified`
 
 `restore-in-finally` proves the restore **path executes**. It does not prove the tree

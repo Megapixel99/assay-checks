@@ -354,6 +354,107 @@ test('the package scans ITSELF clean', async () => {
 });
 
 // --------------------------------------------------------------------------- //
+// why: the census, for one name
+// --------------------------------------------------------------------------- //
+// The census gives aggregate refusal reasons with counts, which is the right shape for
+// a tree and the wrong shape for a question: somebody who expected a particular
+// function to be probed cannot read `no arguments 274` and learn whether theirs is one
+// of them. Every case here is a `look` or an `ok` and never a finding.
+
+const WHY_FIXTURE = `
+export function double(x) { return x + x; }
+export function constant(x) { void x; return 1; }
+export function identity(x) { return x; }
+export function nullary() { return 1; }
+export function throwsOnEverything(x) { return x.noSuchProperty.deeper; }
+`;
+
+async function why(name, files = { 'm.js': WHY_FIXTURE }) {
+  const root = tree(files);
+  return cli('why', `${path.join(root, Object.keys(files)[0])}::${name}`);
+}
+
+test('a PROBED function says so rather than staying silent', async () => {
+  // "It was probed" and "nothing looked at it" are different claims, and only one of
+  // them is evidence.
+  const { code, text } = await why('double');
+  assert.equal(code, 0, text);
+  assert.match(text, /probed on arity1\//);
+  assert.match(text, /distinct value/);
+});
+
+test('a CONSTANT and a PROJECTION are told apart', async () => {
+  // The census collapses both into `not discriminated by the ladder`, which is one
+  // reason with two very different answers: a constant needs a wider ladder and a
+  // projection needs a different function.
+  const constant = (await why('constant')).text;
+  const projection = (await why('identity')).text;
+  assert.match(constant, /it is a constant/);
+  assert.doesNotMatch(constant, /projection/);
+  assert.match(projection, /a projection/);
+  assert.doesNotMatch(projection, /it is a constant/);
+});
+
+test('a zero-arity function gets the gate the census counts', async () => {
+  const { text } = await why('nullary');
+  assert.match(text, /no arguments/);
+});
+
+test('a refused FILE is answered at the file level, not per function', async () => {
+  // Python lifts one function's source out and never imports the module; here a
+  // function object only exists once its module has been evaluated, so a file that
+  // reads the clock is refused WHOLE and none of its functions were ever looked at.
+  // A per-function reason would be a reason invented after the fact.
+  const { code, text } = await why('fine', {
+    'm.js': 'export function fine(x) { return x + x; }\n'
+      + 'export function clock() { return Date.now(); }\n',
+  });
+  assert.equal(code, 0, text);
+  assert.match(text, /the FILE was refused: reads the clock/);
+  assert.match(text, /never loaded/);
+});
+
+test('a vector that THREW EVERYWHERE is not called a constant', async () => {
+  // A function the ladder never reached is a different problem from one it reached and
+  // found constant: the first needs inputs of another shape, the second needs a wider
+  // ladder. Both are `not discriminated`, and saying which is the point of `why`.
+  const { text } = await why('throwsOnEverything');
+  assert.match(text, /threw on all/);
+  assert.doesNotMatch(text, /it is a constant/);
+});
+
+test('why NEVER produces a finding', async () => {
+  for (const name of ['double', 'constant', 'identity', 'nullary', 'throwsOnEverything']) {
+    // eslint-disable-next-line no-await-in-loop
+    const { code, text } = await why(name);
+    assert.equal(code, 0, `${name}: ${text}`);
+  }
+});
+
+test('an unexported function says WHY it is unreachable rather than "cannot resolve"', async () => {
+  // The gap is real and the reason is worth printing: a module's functions arrive
+  // through its exports, and finding an unexported declaration would mean reading
+  // source with a regex.
+  const { code, text } = await why('hidden', {
+    'm.js': 'function hidden(x) { return x; }\nexport function shown(x) { return x + 1; }\n',
+  });
+  assert.equal(code, 2);
+  assert.match(text, /EXPORTS no function named hidden/);
+  assert.match(text, /shown/);
+});
+
+test('a reference with no separator exits 2', async () => {
+  const { code, text } = await cli('why', 'justaname');
+  assert.equal(code, 2);
+  assert.match(text, /FILE::NAME/);
+});
+
+test('why needs exactly one reference', async () => {
+  const { code } = await cli('why');
+  assert.equal(code, 2);
+});
+
+// --------------------------------------------------------------------------- //
 // search --stdin: a function that is not a file yet
 // --------------------------------------------------------------------------- //
 // SEARCH BEFORE YOU GENERATE cannot mean "first write the file", which is what a

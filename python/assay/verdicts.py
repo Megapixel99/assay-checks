@@ -126,6 +126,12 @@ def render(report, out, verbose=True, show_ok=True):
         out.write("       nobody runs, and an unread check is worse than none.\n")
         for item in looks:
             out.write("  look     %s\n" % item.message)
+            # A LOOK'S DETAIL IS PRINTED, exactly as a finding's is. A `look` says the
+            # tool cannot decide; the detail is where it says what it DID find out on
+            # the way to not deciding, and dropping it left `assay why` reporting the
+            # gate's name with the reason it gave silently discarded.
+            if item.detail:
+                out.write("           %s\n" % item.detail)
     findings = report.findings
     if findings:
         out.write("\nFINDINGS — %d, each checked rather than guessed:\n" % len(findings))
