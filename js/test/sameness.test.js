@@ -8,7 +8,8 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -16,7 +17,7 @@ import test from 'node:test';
 import {
   canon, collect, compare, declaredArity, discriminating, fileRefusal,
   functionRefusal, group, isProjection, ladder, ladderKey, MIN_DISTINCT, outcomeOf,
-  probeFile, probeOutcome, stripNonCode,
+  probeFile, probeOutcome, PROBE_TIMEOUT_MS, stripNonCode,
 } from '../src/sameness.js';
 import { exportedFunctions, probeFunction } from '../src/probe.js';
 
@@ -438,6 +439,96 @@ test('a barrel that RE-EXPORTS a helper does not duplicate it', async () => {
     ['impl.js::shout']);
 });
 
+// A writer whose target resolves against its OWN module url, never a bare relative
+// path. `writeFileSync('a', ...)` lands in `process.cwd()`, and during a mutation run
+// that is the repository itself — so a fixture written the obvious way commits the
+// exact offence these two tests exist to detect. `new URL` keeps it inside the fixture
+// directory, which is where the assertion below is looking.
+const WRITER = "import { writeFileSync } from 'node:fs';\n"
+  + 'export function save(name) {\n'
+  + '  writeFileSync(new URL(encodeURIComponent(String(name)), import.meta.url), "x");\n'
+  + '  return name;\n}\n';
+
+test('a DYNAMIC import of a core module is refused like a static one', () => {
+  // THE GATE HAS TO KNOW EVERY SPELLING OF AN IMPORT. `require('node:fs')` and
+  // `from 'node:fs'` were refused and `await import('node:fs')` was not, so a file
+  // could reach the filesystem through the one door nobody had written down — and
+  // unlike the barrel above, this needs no second file at all. The Python half has
+  // always banned `__import__` by name; this is the two halves agreeing again.
+  const dynamic = "export async function f(a) {\n"
+    + "  const fs = await import('node:fs');\n"
+    + '  return fs.existsSync(String(a));\n}\n';
+  assert.match(fileRefusal(dynamic) || '', /reaches a node core module/);
+  // ...and the two spellings that always were, so this cannot pass by refusing
+  // everything — a gate that refuses every file agrees with any code at all.
+  assert.match(fileRefusal("import { x } from 'node:fs';\n") || '', /core module/);
+  assert.equal(fileRefusal('export function f(a) { return a + 1; }\n'), null);
+});
+
+test('a probe writing a RELATIVE path cannot reach the directory we were run from', async () => {
+  // CONTAINMENT, because every gate here is best-effort. `functionRefusal` reads a
+  // function's own source and cannot see the module scope its free names resolve in —
+  // `writeFileSync` is a free name and nothing in that gate catches it — so the
+  // question is not only what gets refused but WHERE the damage lands when something
+  // is not. `probeFile` sits BELOW the file gate on purpose: `collect` is what refuses
+  // a file, and this is the net that has to hold when something gets past it.
+  //
+  // The cwd is moved to a scratch directory for the duration, so this test cannot
+  // itself commit the offence it is checking for, in either outcome.
+  const dir = writeTree({
+    'm.js': "import { writeFileSync } from 'node:fs';\n"
+      + 'export function save(a) { writeFileSync(String(a), "x"); return a; }\n',
+  });
+  const scratch = mkdtempSync(path.join(tmpdir(), 'assay-cwd-'));
+  const saved = process.cwd();
+  process.chdir(scratch);
+  try {
+    await probeFile(path.join(dir, 'm.js'));
+  } finally {
+    process.chdir(saved);
+  }
+  assert.deepEqual(readdirSync(scratch), [],
+    'the probe inherited our cwd and wrote the ladder into it');
+});
+
+test('a barrel may NOT launder the gate the defining file failed', async () => {
+  // THE PROBE RUNS WHAT IT LOADS, so a gate that is applied per-file is only as good
+  // as the attribution of functions to files. `writer.js` touches `node:fs` and is
+  // refused, so its functions are never probed there. `barrel.js` re-exports one and
+  // imports no core module of its own, so it PASSES the same gate — and loading it
+  // hands the child the very function the gate just refused.
+  //
+  // `functionRefusal` cannot catch this: it looks for import statements, and a
+  // function body never contains one. What stood in the way was the de-duplication
+  // skip, which exists to name each function once and had no idea it was also the last
+  // thing between the probe and a real `writeFileSync` on a real path.
+  const dir = writeTree({
+    'writer.js': WRITER,
+    'barrel.js': "export { save } from './writer.js';\n",
+  });
+  const scan = await collect([dir]);
+  // Named, not silently dropped: "we declined to run this" and "there was nothing
+  // here" are the two claims this tool exists to keep apart.
+  const skips = [...scan.skipped.entries()].filter(([ref]) => ref.endsWith('::save'));
+  assert.equal(skips.length, 1, JSON.stringify([...scan.skipped]));
+  assert.match(skips[0][1], /reaches a node core module/);
+  assert.equal(scan.probed.size, 0, 'nothing in this tree may be probed');
+});
+
+test('the probe does not WRITE when it declines a re-exported writer', async () => {
+  // The assertion the census cannot make. `save` writes a file named after its
+  // argument, so if the gate is laundered the ladder's string rungs land on disk as
+  // real files — which is exactly what happened, ten of them, in the repository root.
+  const dir = writeTree({
+    'writer.js': WRITER,
+    'barrel.js': "export { save } from './writer.js';\n",
+  });
+  const before = readdirSync(dir).sort();
+  await collect([dir]);
+  assert.deepEqual(readdirSync(dir).sort(), before,
+    'the probe wrote into the tree, so the gate was laundered');
+});
+
 test('a function COPIED into two files is still two implementations', async () => {
   // The other direction, and the one that matters: dedupe is by identity, so a
   // verbatim copy — which is duplication a person should see — must survive it.
@@ -526,7 +617,12 @@ test('a function that never settles is PROBED, and then not discriminated', asyn
     + 'export async function pending(a) {\n'
     + '  await new Promise(() => {});\n  return a;\n}\n',
   );
-  const result = await probeFile(file);
+  // A SHORTER BUDGET, not a different question. Every rung of `pending` runs to the
+  // per-input timer, so at the default 250ms this one test costs thirty-one of them —
+  // the slowest in either half, in a suite the mutation runner runs once per mutation.
+  // What is under test is that a rung which never settles becomes an OUTCOME, and the
+  // budget travels to the child in the request, so shortening it asks the same thing.
+  const result = await probeFile(file, PROBE_TIMEOUT_MS, null, false, 25);
   assert.equal(result.error, undefined, JSON.stringify(result));
   const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
   assert.ok(byName.fine.vector, 'the function that settled keeps its vector');
@@ -568,7 +664,10 @@ test('one non-terminating function does not cost the whole file', async () => {
     + 'export function spins(a) {\n'
     + '  while (a !== undefined) { /* never returns */ }\n  return a;\n}\n',
   );
-  const result = await probeFile(file, 2500);
+  // 2500ms was ten times what the child needs to boot, load and answer for the
+  // function that settles (~200ms here); 1000 is still five times it, and the wait is
+  // paid twice in this file. What is asserted is which function the kill lands on.
+  const result = await probeFile(file, 1000);
   assert.equal(result.error, undefined, JSON.stringify(result));
   assert.equal(result.functions.length, 2);
   const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
@@ -584,7 +683,7 @@ test('a killed probe tells the hung function from the ones never started', async
     + 'export function bSpins(a) { while (a !== undefined) { /* hangs */ } return a; }\n'
     + "export function cLater(a) { return a === 1 ? 'one' : typeof a; }\n",
   );
-  const result = await probeFile(file, 2500);
+  const result = await probeFile(file, 1000);
   const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
   assert.ok(byName.aFirst.vector);
   assert.match(byName.bSpins.skip, /did not answer/);

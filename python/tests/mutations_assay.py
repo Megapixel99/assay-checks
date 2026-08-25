@@ -30,6 +30,17 @@ as a catch, no scratch state written into the tree, and a digest taken before th
 first write and compared after the last restore — because a restore that RAN is not a
 restore that WORKED.
 
+An EIGHTH property, from exp 183, which `assay runners` does not audit for and which
+this runner needs anyway — because restoring the SOURCE is not enough on its own. The
+modules mutated here are IMPORTED by the Python suite, and a `.pyc` is judged valid by
+source SIZE plus mtime-SECONDS. `MIN_DISTINCT = 2` -> `MIN_DISTINCT = 1` below is the
+same LENGTH, so the restore leaves an identical size in the same second, CPython's
+cache check passes, and the NEXT run executes bytecode compiled from the MUTATED file
+— failing on a line that exists in no source file on disk, which reads exactly like a
+real defect in the tool rather than an instrument fault. So the suites run with
+`PYTHONDONTWRITEBYTECODE=1`, and `__pycache__` beside the mutated package is dropped
+before the baseline, before each mutation and inside every restore.
+
     python3 mutations_assay.py              # the whole table
     python3 mutations_assay.py --only same  # substring filter (PARTIAL RUN)
 """
@@ -153,6 +164,21 @@ def target(name):
     return os.path.join(language(name)["sources"], name)
 
 
+def drop_bytecode():
+    """Clear cached bytecode beside the Python sources this runner mutates.
+
+    Belt to `PYTHONDONTWRITEBYTECODE`'s braces; see the module docstring. Not a
+    per-half answer like the four above, because it is not a question both halves
+    have: node compiles nothing to disk, so this is a fact about ONE of them.
+    """
+    cache = os.path.join(LANGUAGES[".py"]["sources"], "__pycache__")
+    if not os.path.isdir(cache):
+        return
+    for name in os.listdir(cache):
+        if name.endswith(".pyc"):
+            os.remove(os.path.join(cache, name))
+
+
 # (label, file, old, new)
 MUTATIONS = [
     # ---- the JSON report says the same thing the prose one does -------------- #
@@ -263,10 +289,10 @@ MUTATIONS = [
     ("sameness: a coroutine is read as an object rather than run",
      "sameness.py",
      """        if inspect.iscoroutine(value):
-            value = asyncio.run(value)
+            value = _await(value)
     except BaseException as exc:                              # noqa: BLE001""",
      """        if False:
-            value = asyncio.run(value)
+            value = _await(value)
     except BaseException as exc:                              # noqa: BLE001"""),
 
     # ---- the cross-language interlingua -------------------------------------- #
@@ -1064,17 +1090,66 @@ MUTATIONS += [
      """  const text = stripNonCode(source, true) || source;
   if (text === null) return null;"""),
 
+    # ---- the gate knows every spelling of an import, and the blast is bounded -- #
+    ("js sameness: a DYNAMIC import of a core module stops being refused",
+     "sameness.js",
+     r"""  [new RegExp('\\bimport\\s*\\(\\s*[\'"](?:node:)?(?:' + CORE_MODULES + ')'),
+    'reaches a node core module', SPECIFIER],""",
+     r"""  [new RegExp('\\bimport\\s*\\(\\s*[\'"]THIS_MATCHES_NOTHING(?:node:)?(?:' + CORE_MODULES + ')'),
+    'reaches a node core module', SPECIFIER],"""),
+    ("js sameness: the probe child inherits OUR cwd, so a stray write lands in the tree",
+     "sameness.js",
+     """      { stdio: ['pipe', 'pipe', 'pipe', 'pipe'], cwd: tmpdir() });""",
+     """      { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });"""),
+
+    # ---- a barrel may not launder the gate its own file failed ---------------- #
+    ("js probe: a re-exported function is probed though ITS file is refused",
+     "probe.js",
+     """    const elsewhere = origins.get(fn);
+    if (elsewhere) {""",
+     """    const elsewhere = origins.get(fn);
+    if (false) {"""),
+    ("js probe: the origin gate reads the BARREL's bytes instead of the origin's",
+     "probe.js",
+     """      const refusal = fileRefusal(text);""",
+     """      const refusal = fileRefusal(source);"""),
+    ("js probe: a refused origin is de-duplicated away, so nothing reports it",
+     "probe.js",
+     """  for (const [fn, refusal] of origins) if (!refusal) inherited.add(fn);""",
+     """  for (const [fn] of origins) inherited.add(fn);"""),
+
     # ---- a hang costs the function that hung, not the file --------------------- #
     ("js probe: the child answers once at the end, so a kill loses everything",
      "probe.js",
      """  for (const [name, fn] of found) {
+    // THE DEFINING FILE'S REFUSAL, CHECKED BEFORE THE FUNCTION IS CALLED. Reaching a
+    // function through a barrel must not launder the gate its own file failed; see
+    // `dependencyExports`. A `skip` rather than a silent drop, because "we declined to
+    // run this" and "there was nothing here" are the two claims this tool exists to
+    // keep apart.
+    const elsewhere = origins.get(fn);
+    if (elsewhere) {
+      say({ entry: { name, skip: `defined in a file that ${elsewhere}` } });
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
-    say({ entry: await probeFunction(fn, name, request.ladders, request.cross === true) });
+    say({
+      entry: await probeFunction(fn, name, request.ladders, request.cross === true,
+        // A request from an older caller carries no budget; the shared default is
+        // then the same number it would have read from this module anyway.
+        typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS),
+    });
   }""",
      """  const all = [];
   for (const [name, fn] of found) {
+    const elsewhere = origins.get(fn);
+    if (elsewhere) {
+      all.push({ name, skip: `defined in a file that ${elsewhere}` });
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
-    all.push(await probeFunction(fn, name, request.ladders, request.cross === true));
+    all.push(await probeFunction(fn, name, request.ladders, request.cross === true,
+      typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS));
   }
   for (const entry of all) say({ entry });"""),
     ("js sameness: a function that never answered is dropped rather than reported",
@@ -1201,6 +1276,11 @@ MUTATIONS += [
 
 SUITE_TIMEOUT = 1800
 
+# See the module docstring: a `.pyc` compiled from a mutated module can outlive the
+# restore and decide the NEXT run. Handed to both halves because `node` ignores it and
+# a second environment to keep in step is a second thing that can fall out of step.
+SUITE_ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+
 
 def run_suite(lang):
     """(ran, failures). Positive evidence required, per the property this audits for.
@@ -1216,7 +1296,7 @@ def run_suite(lang):
     """
     try:
         proc = subprocess.run(lang["suite"], capture_output=True, text=True,
-                              timeout=SUITE_TIMEOUT)
+                              timeout=SUITE_TIMEOUT, env=SUITE_ENV)
     except subprocess.TimeoutExpired:
         return False, ["DID NOT RUN (the %s suite hung for %ds)"
                        % (lang["name"], SUITE_TIMEOUT)]
@@ -1232,6 +1312,17 @@ def main(argv=None):
     ap.add_argument("--only", default="",
                     help="run only mutations whose label contains this substring")
     args = ap.parse_args(argv)
+
+    # LINE BUFFERED, BECAUSE SILENCE HERE READS AS A HANG. Python switches to an
+    # 8KB block buffer the moment stdout is not a terminal, which is every CI log:
+    # this run printed nothing for its first 15m49s, then 8190 bytes at once, and a
+    # job that shows no output for a quarter of an hour is indistinguishable from a
+    # job that never started — the same conflation this whole file is about. One
+    # line per mutation is the progress report; it has to leave the process.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except AttributeError:                                    # pragma: no cover
+        pass                                                  # Python < 3.7
 
     table = [m for m in MUTATIONS if args.only.lower() in m[0].lower()]
     if args.only:
@@ -1276,6 +1367,7 @@ def main(argv=None):
         for name, text in originals.items():
             with open(target(name), "w", encoding="utf-8") as fh:
                 fh.write(text)
+        drop_bytecode()
         wrong = []
         for name in sorted(originals):
             with open(target(name), "rb") as fh:
@@ -1296,6 +1388,10 @@ def main(argv=None):
         signal.signal(sig, _bail)
 
     try:
+        # BEFORE THE BASELINE, because a `.pyc` left by an earlier run would fail the
+        # baseline itself — and this runner then refuses to score anything, pointing
+        # at code that is correct in every source file on disk.
+        drop_bytecode()
         # A BASELINE PER HALF, and only for the halves this run touches. Scoring a
         # JavaScript mutation against a green Python baseline would be evidence about
         # a suite that was never going to see the mutation — and a `--only` filter
@@ -1327,6 +1423,7 @@ def main(argv=None):
             # the only place a `.js` mutant can be parsed honestly is where it lives.
             # The write is therefore inside the same `try` whose `finally` restores —
             # an invalid mutant leaves the tree exactly as clean as a valid one.
+            drop_bytecode()
             with open(target(name), "w", encoding="utf-8") as fh:
                 fh.write(mutated)
             try:

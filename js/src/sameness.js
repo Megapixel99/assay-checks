@@ -34,6 +34,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -103,6 +104,13 @@ const IMPURE_SOURCE = [
   [new RegExp('\\brequire\\s*\\(\\s*[\'"](?:node:)?(?:' + CORE_MODULES + ')'),
     'reaches a node core module', SPECIFIER],
   [new RegExp('\\bfrom\\s+[\'"](?:node:)?(?:' + CORE_MODULES + ')'),
+    'reaches a node core module', SPECIFIER],
+  // DYNAMIC IMPORT IS AN IMPORT. `await import('node:fs')` reads as ordinary code and
+  // was refused by neither pattern above, so a file could reach the filesystem through
+  // a spelling the gate did not know — no barrel required. The Python half has always
+  // banned `__import__` by name, which is the same door; this is the two halves
+  // agreeing again rather than a new rule.
+  [new RegExp('\\bimport\\s*\\(\\s*[\'"](?:node:)?(?:' + CORE_MODULES + ')'),
     'reaches a node core module', SPECIFIER],
   [/(?<![.?\w$])process\s*\./, 'touches process'],
   [/\bMath\s*\.\s*random\b/, 'uses randomness'],
@@ -973,7 +981,8 @@ export function compare(aVec, bVec, aKey, bKey, inputs) {
  * interlingua — see `crossOutcome`. It is the same child doing the same gating; only
  * what goes in and what comes out change.
  */
-export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null, cross = false) {
+export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null, cross = false,
+  perInput = PER_INPUT_MS) {
   return new Promise((resolve) => {
     const worker = path.join(HERE, 'probe.js');
     // The source travels WITH the path. The child loads by path, so relative imports
@@ -999,8 +1008,16 @@ export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null, cross 
     // between the answer and whatever the module prints means the banner lands in
     // front of the JSON, the parse throws, and a diagnosis the child had ALREADY
     // COMPUTED (`could not load (JWT_SECRET must be set...)`) is replaced by silence.
+    // CWD IS NOT THE REPOSITORY, and this is containment rather than tidiness. Every
+    // gate here is best-effort — `functionRefusal` reads a function's own source and
+    // cannot see the module scope its free names resolve in — so the question is not
+    // only what gets refused but where the damage lands when something is not. A
+    // probed function calling `writeFileSync('a', ...)` writes to the child's cwd, and
+    // inheriting ours put the ladder's string rungs in the repository root as real
+    // files. The child resolves every path it uses absolutely, so it needs no
+    // particular cwd; giving it a scratch one costs nothing and bounds the blast.
     const child = spawn(process.execPath, [worker],
-      { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+      { stdio: ['pipe', 'pipe', 'pipe', 'pipe'], cwd: tmpdir() });
     let answer = '';
     let out = '';
     let err = '';
@@ -1054,7 +1071,13 @@ export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null, cross 
     for (let arity = 1; arity <= MAX_ARITY; arity += 1) {
       ladders[arity] = cross ? crossLadder(arity) : ladder(arity);
     }
-    child.stdin.end(JSON.stringify({ file, source, ladders, cross }));
+    // `perInput` TRAVELS WITH THE REQUEST rather than being read from this module by
+    // the child, which is what the Python half already does with `per_input`. The child
+    // is a separate process and imports its own copy of these constants, so a caller
+    // that shortens the budget here would otherwise be shortening it only for itself.
+    child.stdin.end(JSON.stringify({
+      file, source, ladders, cross, perInput,
+    }));
   });
 }
 

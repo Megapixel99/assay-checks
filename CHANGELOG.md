@@ -15,6 +15,114 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## 0.4.0
+
+**A MINOR bump, and the rule at the top says why:** the purity gate now refuses files
+it used to load, so a tree that was green on 0.3.0 may report new `look`s — and a
+project whose census counted certain functions as probed will find them counted as
+declined instead. Nothing about the CLI contract, `assay.json`, the verdict vocabulary
+or the JSON schema moves.
+
+### A barrel could launder the gate its own file failed
+
+`config.js` imports `node:fs`, so the gate refuses it and `writeBaseline` is never
+probed there. `index.js` re-exports `writeBaseline` and imports no core module of its
+own — so it passed the same gate, and loading it handed the probe the very function the
+gate had just refused. `functionRefusal` could not catch it either: that gate looks for
+**import statements**, and a function body never contains one. `writeFileSync` is a
+free name resolved in a module scope the gate cannot see.
+
+What stood in the way was the de-duplication skip in `exportedFunctions`, which exists
+to name each function once and had no idea it was also the last thing between the probe
+and a real `writeFileSync` on a real path. Two mutations remove that skip, and the
+probe wrote **ten files named after the ladder's string rungs into the repository
+root** — which CI then reported as `a mutation was left applied — the restore did not
+run`, naming the wrong cause for a real failure.
+
+The defining file's refusal now travels **with** the function. A function reached
+through a barrel is skipped by name, with the origin's reason, rather than silently
+dropped — so the census says what it declined to run instead of saying nothing.
+
+### `await import('node:fs')` was not an import
+
+The same gate refused `require('node:fs')` and `from 'node:fs'` and allowed the dynamic
+form, so a file could reach the filesystem through the one spelling nobody had written
+down — no barrel required. The Python half has always banned `__import__` by name; this
+is the two halves agreeing again rather than a new rule.
+
+### The probe no longer runs in your repository
+
+Every gate here is best-effort, so the question is not only what gets refused but where
+the damage lands when something is not. The child resolves every path it uses
+absolutely and needs no particular working directory, so it is given a scratch one. A
+probed function calling `writeFileSync('a', ...)` can no longer reach the tree it was
+pointed at.
+
+### The suites got about five times faster
+
+`run_tests.py` runs one process per `TestCase` class. The suite is almost entirely
+waiting — a probe is a child process per function — so the cores sat idle through all
+of it: **25.4s serial against 4.9s in parallel**. The output contract is unchanged,
+because `mutations_assay.py` reads this suite's stdout to decide whether it RAN.
+
+The mutation runner is also line-buffered now. Python switches to an 8KB block buffer
+the moment stdout is not a terminal, so a measured CI run printed **nothing for its
+first 15m49s**, then 8190 bytes at once. A job that shows no output for a quarter of an
+hour cannot be told from one that never started, which is the conflation this whole
+package is about. The full table now runs in about 28 minutes, against 93 before.
+
+## 0.3.1 (unreleased, folded into 0.4.0)
+
+**A PATCH bump, and the rule at the top says why:** nothing here touches the CLI
+contract, the `assay.json` format, the verdict vocabulary or the JSON schema, and no
+new check is added. A tree green on 0.3.0 is green on 0.3.1, faster.
+
+### Probing no longer imports `asyncio` to find out it did not need it
+
+One probe is one child process per function, and that child imported `assay.sameness`,
+which imported `asyncio` at module scope — **85ms of the 190ms a spawn cost**, paid by
+every function to serve the small minority that are coroutines. Both call sites were
+already behind `inspect.iscoroutine`, so the import moved inside the branch that awaits.
+A scan's probing is about **35% faster per function**, which is most of what a scan is;
+the package's own Python suite went from 39s to 25s on the same machine, and the
+mutation job from about ninety minutes to about sixty.
+
+Nothing about what a probe answers changed. `asyncio` remains in the purity gate's
+refusal list, which is a string of module names and was never this import.
+
+### The JavaScript probe takes the per-input budget from its caller
+
+`probeFile` gained an optional final `perInput`, and the request it writes to the child
+carries it. The Python worker has always received `per_input` this way; the JavaScript
+child read the constant from its own copy of the module instead, so a caller that
+shortened the budget shortened it only for itself. Additive — a request without the
+field gets the same `PER_INPUT_MS` the child would have read anyway.
+
+### The mutation runner drops cached bytecode
+
+A `.pyc` is judged valid by source **size** plus mtime **seconds**, so a same-length
+mutation — `MIN_DISTINCT = 2` -> `MIN_DISTINCT = 1` is one, and it is in the table —
+restores to an identical size within the same second, CPython's cache check passes it,
+and the **next** run executes bytecode compiled from the mutated file. It fails on a
+line that exists in no source file on disk, which reads like a defect in the tool rather
+than an instrument fault.
+
+The suites now run with `PYTHONDONTWRITEBYTECODE=1`, and `__pycache__` beside the
+mutated package is dropped before the baseline, before each mutation and inside every
+restore — which every restore path already goes through, including the SIGTERM handler
+and the outer `finally`. An eighth property this runner carries, beside the seven
+`assay runners` audits for.
+
+### Three tests that were waiting rather than testing
+
+The slowest test in each half was paying a timeout in full to assert something the
+timeout's *length* was no part of: a non-terminating Python function burned eight
+one-second alarms, and a never-settling JavaScript rung burned thirty-one 250ms ones.
+Both now set a shorter budget and ask the same question, and the two synchronous
+spinners bounded by the wall clock dropped from 2500ms to 1000ms — still five times
+what the child needs to boot, load and answer. The JavaScript suite's `sameness` file
+went from 17s to 8s.
+
 ## 0.3.0
 
 **A MINOR bump, and the rule says why:** a new check is a minor bump even though it can

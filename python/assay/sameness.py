@@ -62,7 +62,6 @@ and counted, because "we found none" and "we never looked" are different claims.
 """
 
 import ast
-import asyncio
 import functools
 import builtins
 import hashlib
@@ -555,7 +554,7 @@ def cross_outcome_of(fn, args):
     try:
         value = fn(*args)
         if inspect.iscoroutine(value):
-            value = asyncio.run(value)
+            value = _await(value)
     except BaseException:                                     # noqa: BLE001
         return "E:*"
     text = cross_render(value)
@@ -688,6 +687,21 @@ def probe(func, python=None, mode="native"):
         return None, "probe returned nothing readable"
 
 
+def _await(coro):
+    """`asyncio.run`, imported at the moment it is needed rather than at module load.
+
+    THE WORKER PAYS THIS IMPORT ONCE PER PROBE, because a probe is a fresh process per
+    function, and `asyncio` is ~85ms of interpreter startup — more than the rest of
+    this module put together. Almost no probed function is a coroutine, so at module
+    scope the cost lands on every function to serve a small minority of them, and it
+    lands most heavily on the suite, which probes hundreds. The call sites are already
+    behind `inspect.iscoroutine`, so deferring it changes nothing about what either
+    one answers.
+    """
+    import asyncio                                            # noqa: PLC0415
+    return asyncio.run(coro)
+
+
 def canon(value, _depth=0):
     """A stable, order-insensitive rendering. Longer than REPR_INLINE -> a hash.
 
@@ -732,7 +746,7 @@ def outcome_of(fn, args):
     try:
         value = fn(*args)
         if inspect.iscoroutine(value):
-            value = asyncio.run(value)
+            value = _await(value)
     except BaseException as exc:                              # noqa: BLE001
         return "E:%s" % type(exc).__name__
     text = canon(value)
