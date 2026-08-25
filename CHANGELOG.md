@@ -15,7 +15,19 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
-## Unreleased
+## 0.3.0
+
+**A MINOR bump, and the rule says why:** a new check is a minor bump even though it can
+turn a passing build red. This release adds a seventh runner property, an `anchors`
+implementation for the JavaScript half, and three commands, so a tree that was green on
+0.2.2 may not be on 0.3.0. Pin exactly if that matters, and `assay accept` is the
+shortest route through the backlog.
+
+**Two contract changes to read before upgrading.** A `baseline` entry may now be an
+object, and the old bare string is still legal, so no config has to move. The `--json`
+payload's `baseline` object drops `complete`/`incomplete_because` for `performed` and
+`unchecked` — `--json` has not been in a release, so nothing published ever carried the
+older shape.
 
 ### `assay cross`: a Python function against a JavaScript one
 

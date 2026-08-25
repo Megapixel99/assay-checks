@@ -8,7 +8,7 @@
 Two questions ordinary CI does not answer, about work that **already passes its tests**:
 
 > **Could those tests have failed?**
-> **Does the tree already answer this?**
+> **Does the tree already answer this?** — *in either language*
 
 A green suite tells you the code did what the suite asked. It tells you nothing about
 whether the suite could have objected, and nothing about whether the code needed to be
@@ -36,6 +36,16 @@ FINDINGS — 1, each checked rather than guessed:
   finding  same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug
            no input in the ladder told them apart — READ them; only a person decides
            whether the duplication is a defect
+```
+
+...and one contract is enough to ask the question **across** the two, which is where the
+duplication a polyglot repository actually accumulates:
+
+```
+$ assay cross src/api.py::shout src/ui.mjs::yell --with assay-js
+FINDINGS — 1, each checked rather than guessed:
+  finding  same answer across languages (cross1/v3/d3b2ba61ccb7):
+           src/api.py::shout [python]  vs  src/ui.mjs::yell [javascript]
 ```
 
 Neither half is a linter and neither is a test runner. Both are stdlib-only, in both
@@ -319,7 +329,7 @@ object instead of the prose report:
            "skipped": {"no arguments": 274}, "unloadable": {"reads the clock": 19}},
   "schema": 1,
   "tool": "assay",
-  "version": "0.2.2"
+  "version": "0.3.0"
 }
 ```
 
@@ -643,7 +653,7 @@ exists to find, so it is checked.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }   # `diff` needs a base ref; a shallow clone has none
-- uses: Megapixel99/assay-checks@v0.2.2
+- uses: Megapixel99/assay-checks@v0.3.0
   with:
     command: all       # every audit that can produce a baseline line
     paths: src         # ...and with `all`, paths mean `--scan`: the sameness half
@@ -651,18 +661,20 @@ exists to find, so it is checked.
 
 # The same action runs the other half. `language` is `python` unless you say otherwise,
 # so a JavaScript project has to name it.
-- uses: Megapixel99/assay-checks@v0.2.2
+- uses: Megapixel99/assay-checks@v0.3.0
   with:
     command: scan
     paths: js/src
     language: node
 ```
 
-**Docker**, both runtimes, one image, for CI that has neither toolchain:
+**Docker**, both runtimes, one image, for CI that has neither toolchain — and the one
+place `assay cross` needs no arranging, because both binaries are already there:
 
 ```bash
 docker run --rm -v "$PWD:/work" assay runners
 docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
+docker run --rm -v "$PWD:/work" assay cross src/api.py::shout src/ui.mjs::yell --with assay-js
 ```
 
 ## Limits (honest ones)
@@ -735,6 +747,14 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
   finding it anyway would mean reading declarations out of source with a regex — the
   same thing `anchors` declines to do. The name is asked for instead. Python has no
   such gap: a top-level `def` is a top-level `def`.
+- **`assay anchors` under Node IMPORTS the harness, and that is a real hazard rather
+  than a detail.** The Python half reads the table with `ast` and executes nothing; the
+  JavaScript half has no parser to read it with, so it reads the table as *data* — which
+  means the module that builds it has run. It runs in a child process, so a crash or a
+  hang costs the probe rather than the audit, but a harness that mutates the tree at
+  import time mutates the tree, and no child process undoes that. Guard `main()` behind
+  the entry-point check every program in this package carries. If yours cannot,
+  `anchor_exempt` is the table for saying so, with the reason.
 - **The seven properties are about mutation harnesses.** If your project has none, that
   half has nothing to say about it and says so rather than reporting a pass.
 - **`targets_mentioned` under-reports.** A harness that merely mentions a filename counts
@@ -794,6 +814,15 @@ correctly, the parser accepted it, and printing the function back showed a space
 the key it built at runtime could never match the key in the table, so the audit went on
 reporting the finding an exemption had been written to silence. That reads exactly like a
 config that was never loaded. `test_parity.py` now checks the bytes.
+
+**A mutation that comes back `NOT DETECTED` is not always a missing test, and it is
+never left in the table.** Three came back that way while 0.3.0 was being written: two
+were fixtures that could not reach the case, and the third was a guard whose absence
+produced *the same observable as its presence* — dead code with a comment explaining
+what it did. That last one is the defect this package exists to report, arriving inside
+it, so the branch was deleted and the check moved to the thing it had been restating. A
+mutation nothing can catch is a table entry claiming a guard is covered when nothing
+breaks it on purpose.
 
 ## A note on the name
 
