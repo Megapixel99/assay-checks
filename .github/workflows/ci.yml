@@ -147,11 +147,18 @@ jobs:
     # would be a tally over a suite that was never going to see it.
     # Separate job so the fast feedback above is never held up behind it.
     runs-on: ubuntu-latest
-    # The Python half dominates the wall clock; the JavaScript mutations add a few
-    # minutes. Raised from 20 when the runner learned to break both halves, because a
-    # timeout kills the runner and SIGKILL does not run `finally` — the one way this
-    # job can leave the tree mutated is by being cut off.
-    timeout-minutes: 30
+    # THE COST IS (mutations × suite) AND BOTH GREW. Every mutation runs a whole suite
+    # from scratch, so the wall clock is the table length times about half a minute,
+    # and the table roughly doubled when the cross-language half, the seventh runner
+    # property and the baseline work arrived.
+    #
+    # Raised rather than sampled. A `--only` filter exists and prints PARTIAL RUN when
+    # it is used, because a tally over the mutations you had time for reads exactly
+    # like a tally over all of them — which is the defect this package exists to
+    # report. The number is generous on purpose: a timeout KILLS the runner, SIGKILL
+    # does not run `finally`, and being cut off is the one way this job can leave the
+    # tree mutated. The step below is what says so when it happens.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

@@ -572,10 +572,13 @@ The JS `dead-vs-real` detector is textual where Python's reads an AST. The conse
 one-directional and worth knowing: it will not produce a false FINDING, it will miss a
 real one. If your harnesses are Python, run the Python half over them.
 
-`python/tests/test_parity.py` asserts the contract rather than trusting it: same property
-names, same verdict names, same config keys, same ladder version, same thresholds. Two
-implementations of one contract is exactly the duplication this tool exists to find, so
-it is checked.
+`python/tests/test_parity.py` asserts the contract rather than trusting it: same
+property names, same verdict names, same config keys, same subcommands, same ladder
+version, same thresholds, same baseline families, same probe schema — and, for
+`assay cross`, the same cross ladder **byte for byte**, because two lists that were
+meant to hold the same values and quietly stopped is the only thing that comparison
+rests on. Two implementations of one contract is exactly the duplication this tool
+exists to find, so it is checked.
 
 ## Also shipped
 
