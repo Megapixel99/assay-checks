@@ -13,6 +13,7 @@ silently skips when a runtime is missing reports a pass for a check that never r
 Reading is enough for the questions asked here, and it always runs.
 """
 
+import json
 import os
 import re
 import sys
@@ -26,7 +27,7 @@ PY_ROOT = os.path.dirname(HERE)              # python/ — what `import assay` n
 REPO = os.path.dirname(PY_ROOT)              # the repository, which holds both halves
 sys.path.insert(0, PY_ROOT)
 
-from assay import checks, sameness  # noqa: E402
+from assay import anchors, checks, sameness  # noqa: E402
 from assay.config import CONFIG_NAMES  # noqa: E402
 from assay.verdicts import FINDING, LOOK, OK  # noqa: E402
 
@@ -145,6 +146,25 @@ class TheTwoHalvesAgree(unittest.TestCase):
                         for key, desc, why, _det in checks.PROPERTIES)
         self.assertEqual(found, expected)
 
+    def test_the_restore_verified_TELLS_are_the_same_in_both_halves(self):
+        """A `.py` harness is audited by the Python half and a `.js` one by the
+        JavaScript half, so this is the one property whose detectors read DIFFERENT
+        files and must still accept the same design. A tell present in one list and
+        missing from the other means a correct harness passes in one language and is a
+        finding in the other — one repository, two verdicts, and nothing saying so.
+
+        The lists are the contract; the surrounding code is not, which is why this
+        compares them rather than the detectors.
+        """
+        found = {}
+        for name in ("DIGEST_TELLS", "RESTORE_FAILURE_TELLS"):
+            table = re.search(r"export const %s = \[(.*?)\];" % name,
+                              js("checks.js"), re.S).group(1)
+            found[name] = set(re.findall(r"'([^']*)'", table))
+        self.assertEqual(found["DIGEST_TELLS"], set(checks.DIGEST_TELLS))
+        self.assertEqual(found["RESTORE_FAILURE_TELLS"],
+                         set(checks.RESTORE_FAILURE_TELLS))
+
     def test_both_halves_treat_a_SHALLOW_COPY_as_vacuous(self):
         """The vacuity guard decides what `same` is worth, so it has to decide the same
         thing twice. A function that only copies its argument through has not been
@@ -163,14 +183,24 @@ class TheTwoHalvesAgree(unittest.TestCase):
             self.assertIn("unloadable", source)
             self.assertIn(member, source)
 
-    def test_both_halves_refuse_to_call_a_baseline_STALE_from_a_partial_run(self):
+    def test_both_halves_COUNT_the_baseline_lines_they_could_not_check(self):
         """The rule, not the wording: a line is only stale to a run that could have
-        seen it fire. Python says so from any command but `all`; the JavaScript half
-        says so from every command, because `anchors` is Python-only and no run there
-        performs every audit able to produce a baseline line. What must match is that
-        BOTH say it rather than printing a zero that reads as `nothing is stale`."""
+        seen it fire, and a run that could not see it says so rather than printing a
+        zero. `0 stale` from a run that never looked reads as "nothing is stale", and
+        those are different claims — the same reason `ok` is printed rather than left
+        silent everywhere else here."""
         for source in (py("cli.py"), js("cli.js")):
-            self.assertIn("staleness needs", source)
+            self.assertIn("NOT checked for staleness", source)
+
+    def test_both_halves_know_the_same_set_of_baseline_FAMILIES(self):
+        """`from` names the command that can produce a line, and the two halves have
+        to agree on what those are or one `assay.json` is valid to one binary and a
+        hard error to the other."""
+        from assay.config import FAMILIES                     # noqa: PLC0415
+
+        found = re.search(r"export const FAMILIES = \[([^\]]+)\]", js("config.js"))
+        names = tuple(re.findall(r"'([^']+)'", found.group(1)))
+        self.assertEqual(names, FAMILIES)
 
     def test_both_halves_call_the_same_EXTENSIONS_source(self):
         """The drift this caught: the JavaScript half audited `.mjs` and `.cjs` and
@@ -324,6 +354,189 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertIn(wanted, py("cli.py"))
         self.assertIn(wanted, js("cli.js"))
 
+    def test_both_halves_EXPLAIN_a_refused_probe_in_the_same_words(self):
+        """`assay why` is the command a person reaches for when the census did not
+        answer their question, so the answer must not depend on which binary they
+        happened to have installed. Two of the three explanations are pinned: the
+        constant and the projection, which the census collapses into one reason and
+        which need opposite fixes — a wider ladder, or a different function.
+        """
+        for phrase in ("it is a constant",
+                       "a projection: everywhere it answered it did nothing"):
+            self.assertIn(phrase, py("sameness.py"))
+            self.assertIn(phrase, js("sameness.js"))
+
+    def test_both_halves_DEDUCE_the_projection_rather_than_deciding_it_twice(self):
+        """`discrimination_detail` defers to `discriminating` and then explains the
+        no. A second call to the projection guard would be a second decider for one
+        question, and two deciders that can disagree is the shape of defect this
+        package exists to report — so neither half may call it."""
+        self.assertIn("if discriminating(vector, inputs) is not None:",
+                      py("sameness.py"))
+        self.assertIn("if (discriminating(vector, inputs) !== null) return null;",
+                      js("sameness.js"))
+
+    def test_a_LOOK_prints_its_detail_in_both_halves(self):
+        """A `look` says the tool cannot decide; the detail is where it says what it
+        DID find out on the way to not deciding. `assay why` puts its whole answer
+        there, so a renderer that drops it answers half the question — in one language
+        only, if the halves disagree."""
+        self.assertIn('out.write("           %s\\n" % item.detail)', py("verdicts.py"))
+        self.assertIn("write(`           ${item.detail}\\n`)", js("verdicts.js"))
+
+    def test_both_halves_ship_the_same_SUBCOMMANDS(self):
+        """A command in one half and not the other means the same documented
+        invocation works or exits 2 depending on which binary CI installed. `anchors`
+        is the one deliberate exception and it is asserted separately, by the test
+        that checks this half NAMES what it does not implement."""
+        from assay.cli import COMMANDS                        # noqa: PLC0415
+
+        found = set(re.findall(r"case '([a-z]+)':", js("cli.js")))
+        self.assertEqual(found, set(COMMANDS))
+
+    def test_both_halves_REFUSE_to_baseline_a_look(self):
+        """The 0.2.2 changelog records shipping a config example that baselined a
+        `look`. A look never fails the run, so the line can never be suppressed and can
+        never expire — a record of nothing, indistinguishable from a record of
+        something already fixed. An example is fixed once per copy of it; a command
+        that cannot make the mistake is fixed once, and it has to refuse in BOTH
+        binaries or the same paste is accepted by one of them."""
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn("`look` never fails the run", source)
+            self.assertIn("stale the moment it lands", source)
+
+    def test_both_halves_write_the_same_three_baseline_KEYS(self):
+        """`assay accept` writes the file the other half then reads. A key one writes
+        and the other does not understand is a config that is valid to the binary that
+        produced it and a hard error to the one that runs next."""
+        self.assertIn('entry = {"line": line, "reason": reason}', py("config.py"))
+        self.assertIn("const entry = { line, reason };", js("config.js"))
+        self.assertIn('entry["from"] = produced_by', py("config.py"))
+        self.assertIn("entry.from = producedBy;", js("config.js"))
+
+    def test_both_halves_have_ONE_definition_of_a_complete_run(self):
+        """`all` needs it to say whether it may call a line stale; `accept` needs it to
+        write `from`. Two lists that had to agree about what "every audit" means would
+        be the duplication this package exists to find, and they would disagree in
+        silence: `accept` would tag a line with a command `all` no longer performs, and
+        that line could then never be called stale."""
+        self.assertIn("_audit_everything(args, config, report)", py("cli.py"))
+        self.assertIn("auditEverything(root, opts, config, report)", js("cli.js"))
+        # ...and each half CALLS it exactly twice, from `all` and from `accept`. A
+        # third call site would be a third opinion about what a complete run is.
+        self.assertEqual(py("cli.py").count("= _audit_everything("), 2)
+        self.assertEqual(js("cli.js").count("= await auditEverything("), 2)
+
+    def test_the_CROSS_LADDER_is_ONE_DOCUMENT_carried_by_BOTH_halves(self):
+        """The proof `assay cross` rests on, and the reason the shape check below is
+        not enough for it.
+
+        `BASE_VALUES` is two hand-written lists and `test_both_ladders_cover_the_same_
+        SHAPES` is the strongest thing that can be said about them: the languages have
+        different primitives, so an equal-length assertion would fail for a correct
+        reason. That is fine for comparing two Python functions and nothing like enough
+        for comparing a Python function to a JavaScript one — there, two lists that
+        were meant to hold the same values and quietly stopped is the entire hazard.
+
+        So the cross ladder is ONE JSON DOCUMENT and this compares the two texts. The
+        values are then identical by construction rather than by inspection, and the
+        digest below follows from the text rather than being a second thing to keep in
+        step.
+        """
+        found = re.search(r"export const CROSS_VALUES_JSON = (.*?);\n",
+                          js("sameness.js"), re.S).group(1)
+        # The JavaScript literal is written as concatenated fragments to stay inside a
+        # line width; joining them is what the runtime does. Nothing else in the
+        # expression may contribute, so anything outside a quoted fragment must be
+        # whitespace or a `+`.
+        fragments = re.findall(r"'((?:[^'\\]|\\.)*)'", found)
+        self.assertTrue(fragments, "the JavaScript cross ladder literal moved")
+        self.assertRegex(re.sub(r"'(?:[^'\\]|\\.)*'", "", found).strip(),
+                         r"^[+\s]*$",
+                         "the JavaScript cross ladder is built from something other "
+                         "than string fragments, so joining them is not what it means")
+        # `\u00bd` in the source is a backslash and four characters in the VALUE, in
+        # both languages, and that is what both `json.loads` and `JSON.parse` decode.
+        joined = "".join(f.replace("\\\\", "\\") for f in fragments)
+        self.assertEqual(joined, sameness.CROSS_VALUES_JSON,
+                         "the two halves carry different cross ladders")
+
+    def test_the_CROSS_LADDER_KEY_is_the_same_in_both_halves(self):
+        """The key carries a digest of the RUNGS, so a ladder that changed by one
+        character produces a different key and `compare_cross` refuses the pair through
+        the branch that already refuses a mismatched arity. Computed here from the
+        JavaScript half's own text, so this is a check rather than a restatement."""
+        found = re.search(r"export const CROSS_VALUES_JSON = (.*?);\n",
+                          js("sameness.js"), re.S).group(1)
+        fragments = re.findall(r"'((?:[^'\\]|\\.)*)'", found)
+        joined = "".join(f.replace("\\\\", "\\") for f in fragments)
+        self.assertEqual(json.loads(joined), sameness.CROSS_VALUES)
+        # ...and the digest both halves put in the key falls out of that text.
+        for arity in (1, 2, 3):
+            self.assertRegex(sameness.cross_key(arity),
+                             r"^cross%d/%s/[0-9a-f]{12}$"
+                             % (arity, re.escape(sameness.LADDER_VERSION)))
+
+    def test_both_halves_render_EVERY_raise_as_the_SAME_token(self):
+        """The load-bearing decision of the interlingua, and the whole of how a rung
+        where both sides raised gets masked.
+
+        The two languages' error taxonomies genuinely diverge, so a name would make
+        every honest pair `differs`, and declaring two names equal is worse because
+        `same` is the verdict that FAILS. Rendering every raise as ONE token settles
+        it: two of them can never be a witness, and `cross_discriminating` counts only
+        returned values so two of them can never be evidence either.
+
+        THIS IS PINNED AT THE RENDERING RATHER THAN AT A BRANCH IN `compare`. There
+        used to be a branch, and a mutation that removed it changed nothing — the guard
+        and its absence produced the same observable, which is the failure this package
+        exists to report, so the branch is gone and this checks the fact it restated.
+        """
+        self.assertIn('return "E:*"', py("sameness.py"))
+        self.assertIn("return 'E:*';", js("sameness.js"))
+
+    def test_both_halves_report_the_BASELINE_the_same_way_in_JSON(self):
+        """`stale` alone is not the answer, and the shape says so in both halves.
+
+        A consumer reading `stale: []` and nothing else reads "nothing is stale",
+        which is a different claim from "this run never looked". So the payload carries
+        `performed` — what this run audited — and `unchecked`, each entry it could not
+        have seen fire. There is no `complete` boolean any more, because completeness
+        stopped being a property of the RUN when an entry learned to name the command
+        that fires it, and a half still emitting one would answer a question the other
+        half no longer asks.
+        """
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn('"performed"' if "def " in source else "performed:", source)
+            self.assertIn('"unchecked"' if "def " in source else "unchecked:", source)
+            self.assertNotIn("incomplete_because", source)
+
+    def test_a_probe_RECORD_has_one_shape_on_both_paths_in_both_halves(self):
+        """`--json` is not what decides it: `assay probe` writes JSON either way, so a
+        reference that names nothing emits the SAME record with `error` where `vector`
+        would be. A consumer never has to ask which of two shapes it received, and `2`
+        still means the tool could not run."""
+        self.assertIn('"error": unresolved', py("cli.py"))
+        self.assertIn("error: found.unresolved,", js("cli.js"))
+
+    def test_both_halves_use_the_same_PROBE_RECORD_SCHEMA(self):
+        """One half writes the record and the other reads it, which makes it a
+        published interface with the same claim on stability as the exit codes. A
+        record from a version that meant something else by `vector` would otherwise be
+        compared anyway."""
+        found = int(re.search(r"export const PROBE_SCHEMA = (\d+);",
+                              js("sameness.js")).group(1))
+        self.assertEqual(found, sameness.PROBE_SCHEMA)
+
+    def test_both_halves_decide_a_reference_LANGUAGE_by_the_same_SUFFIXES(self):
+        """A suffix one half calls JavaScript and the other calls nothing is a
+        reference that `cross` accepts from one binary and refuses from the other."""
+        from assay.cli import LANGUAGE_OF                      # noqa: PLC0415
+
+        table = re.search(r"const LANGUAGE_OF = \{(.*?)\};", js("cli.js"), re.S).group(1)
+        found = dict(re.findall(r"'(\.[a-z]+)': '([a-z]+)'", table))
+        self.assertEqual(found, dict(LANGUAGE_OF))
+
     def test_the_ladder_VERSION_matches(self):
         """A vector produced by one half and compared by the other must come from the
         same ladder, and the version string is what says so."""
@@ -366,10 +579,45 @@ class TheTwoHalvesAgree(unittest.TestCase):
             source = js(name)
             self.assertIn("0 nothing to read, 1 findings, 2 could not run", source)
 
-    def test_the_javascript_half_NAMES_the_command_it_does_not_implement(self):
-        """A gap stated is a limit; a gap unstated is a bug report waiting to happen."""
-        self.assertIn("Python", js("cli.js"))
-        self.assertIn("anchors", js("cli.js"))
+    def test_both_halves_read_a_mutation_table_by_the_SAME_RULE(self):
+        """`anchors` is the one command whose halves work by different MECHANISMS —
+        Python lifts the table out with `ast` and the JavaScript half imports it and
+        reads the value — so what has to match is the rule, not the code.
+
+        THE ANCHOR IS THE SECOND-TO-LAST STRING, and both halves say so in the same
+        place. That is a consequence of `replace(old, new)` rather than a convention:
+        whatever else an entry carries, `old` and `new` are adjacent and in that order,
+        because that is the call they feed. A half that took a different column would
+        report a different set of dead anchors for one repository.
+        """
+        self.assertIn("found.append(parts[-2].value)", py("anchors.py"))
+        self.assertIn("found.push(parts[parts.length - 2])", js("anchors.js"))
+        # ...and both bound the readable shapes the same way, so an entry one half
+        # offers as unreadable is not silently guessed at by the other.
+        self.assertIn("if 2 <= len(parts) <= 4:", py("anchors.py"))
+        self.assertIn("if (parts.length >= 2 && parts.length <= 4)", js("anchors.js"))
+
+    def test_both_halves_keep_EVERY_harness_out_of_the_corpus(self):
+        """In either language, which is the part a single-language audit gets wrong. A
+        polyglot repository has a `mutations-x.js` beside a `mutations_a.py`; each half
+        can only READ its own, and both must be kept out of the corpus or one half's
+        anchors are counted inside the other half's harness."""
+        self.assertIn("skip = harness_paths(root)", py("anchors.py"))
+        self.assertIn("const skip = harnessPaths(root);", js("anchors.js"))
+        # ...over the same set of source extensions, or one half walks past a harness
+        # the other excludes. Compared as SETS: the two are spelled differently on
+        # purpose (a tuple here, one regex alternation there) and pinning the spelling
+        # would fail for a correct reason.
+        found = set(re.search(r"const SOURCE = /\\\.\(([a-z|]+)\)\$/;",
+                              js("anchors.js")).group(1).split("|"))
+        self.assertEqual(found, set(e.lstrip(".") for e in anchors.SOURCE_EXTS))
+
+    def test_the_javascript_half_no_longer_REFUSES_anchors(self):
+        """The gap it used to state is closed, and the statement has to go with it. A
+        CLI that still points at PyPI for a command it now implements is documentation
+        that is wrong in the direction people act on."""
+        self.assertNotIn("Python package only", js("cli.js"))
+        self.assertIn("auditAnchors(root, config, report)", js("cli.js"))
 
 
 if __name__ == "__main__":

@@ -22,11 +22,13 @@ than as comments so a defect fixed once cannot come back quietly:
   * `guards_per_file` reading only committed history, so uncommitted guards vanish
   * `audit_anchors` letting harnesses into the corpus, so anchors match themselves
 
-This runner is also a SUBJECT of `assay runners` and carries all six properties it
+This runner is also a SUBJECT of `assay runners` and carries all seven properties it
 audits for: positive evidence a suite RAN, a dead-vs-real partition before any
 counting, restore in a `finally`, SIGTERM turned into an exception (SIGTERM does not
 run `finally`), an `ast.parse` guard so a mutation that breaks the file is not scored
-as a catch, and no scratch state written into the tree.
+as a catch, no scratch state written into the tree, and a digest taken before the
+first write and compared after the last restore — because a restore that RAN is not a
+restore that WORKED.
 
     python3 mutations_assay.py              # the whole table
     python3 mutations_assay.py --only same  # substring filter (PARTIAL RUN)
@@ -35,6 +37,7 @@ as a catch, and no scratch state written into the tree.
 import argparse
 import ast
 import glob
+import hashlib
 import os
 import re
 import signal
@@ -173,10 +176,14 @@ MUTATIONS = [
         return render_json(None, out, meta=_meta(args), error=message)""",
      """    if False:
         return render_json(None, out, meta=_meta(args), error=message)"""),
-    ("cli: a partial run claims it checked the baseline for stale lines",
+    ("cli: the JSON baseline hides the lines this run could not check",
      "cli.py",
-     """            "complete": complete, "stale": list(stale) if complete else [],""",
-     """            "complete": True, "stale": list(stale) if complete else [],"""),
+     '''            "unchecked": [{"line": e.line, "from": e.produced_by} for e in unchecked],''',
+     '''            "unchecked": [],'''),
+    ("cli: the JSON baseline claims it performed every audit",
+     "cli.py",
+     '''            "performed": sorted(performed),''',
+     '''            "performed": ["runners", "anchors", "diff", "scan"],'''),
     # ---- a snippet's function is never guessed at ---------------------------- #
     ("sameness: an ambiguous snippet silently picks a function instead of refusing",
      "sameness.py",
@@ -256,17 +263,103 @@ MUTATIONS = [
     ("sameness: a coroutine is read as an object rather than run",
      "sameness.py",
      """        if inspect.iscoroutine(value):
-            value = asyncio.run(value)""",
+            value = asyncio.run(value)
+    except BaseException as exc:                              # noqa: BLE001""",
      """        if False:
-            value = asyncio.run(value)"""),
+            value = asyncio.run(value)
+    except BaseException as exc:                              # noqa: BLE001"""),
+
+    # ---- the cross-language interlingua -------------------------------------- #
+    ("sameness: a raise carries its NAME across the language boundary again",
+     "sameness.py",
+     '''    except BaseException:                                     # noqa: BLE001
+        return "E:*"''',
+     '''    except BaseException as exc:                              # noqa: BLE001
+        return "E:%s" % type(exc).__name__'''),
+    ("sameness: an outcome the interlingua cannot state is COMPARED anyway",
+     "sameness.py",
+     '''        if x.startswith("X:") or y.startswith("X:"):''',
+     '''        if False:'''),
+    ("sameness: an unstatable value is rendered approximately rather than refused",
+     "sameness.py",
+     '''    text = cross_render(value)
+    if text is None:
+        return "X:%s" % type(value).__name__''',
+     '''    text = cross_render(value)
+    if text is None:
+        text = repr(value)'''),
+    ("sameness: an INTEGRAL float stops rendering as an integer",
+     "sameness.py",
+     '''        if value.is_integer():
+            return "%d" % int(value)''',
+     '''        if False:
+            return "%d" % int(value)'''),
+    ("sameness: NaN and the infinities collapse into one absence",
+     "sameness.py",
+     '''        if value != value:
+            return "NaN"''',
+     '''        if value != value:
+            return "null"'''),
+    ("sameness: cross object keys stop being sorted",
+     "sameness.py",
+     '''        for key in sorted(value, key=repr):''',
+     '''        for key in value:'''),
+    ("sameness: the CROSS ladder key drops the digest of its rungs",
+     "sameness.py",
+     '''    return "cross%d/%s/%s" % (arity, LADDER_VERSION, digest)''',
+     '''    return "cross%d/%s/%s" % (arity, LADDER_VERSION, "")'''),
+    ("sameness: the cross vacuity guard stops consulting the projections",
+     "sameness.py",
+     '''    for proj in cross_projections(rungs):
+        if live and all(vector[i] == proj[i] for i in live):
+            return None''',
+     '''    for proj in cross_projections(rungs):
+        if False:
+            return None'''),
+    ("cli: `cross` reports a `differs` as a finding",
+     "cli.py",
+     '''        report.ok("differs: %s — %s" % (pair, detail), first["ref"])''',
+     '''        report.finding("differs: %s — %s" % (pair, detail), first["ref"])'''),
+    ("cli: `cross` compares a record from ANOTHER schema anyway",
+     "cli.py",
+     '''    if record["assay_probe"] != PROBE_SCHEMA:''',
+     '''    if False:'''),
+    ("cli: `cross` compares two functions of ONE language on the cross ladder",
+     "cli.py",
+     '''    if first["language"] == second["language"]:''',
+     '''    if False:'''),
+    ("cli: `probe` turns a refused function into exit 2 rather than a record",
+     "cli.py",
+     '''    if vector is None:
+        record["look"] = refused''',
+     '''    if vector is None:
+        return 2'''),
+    ("cli: the probe record stops sorting its keys, so two halves write two documents",
+     "cli.py",
+     '''    vector, refused = probe(func, mode="cross")
+    if vector is None:
+        record["look"] = refused
+    else:
+        record["ladder"] = cross_key(arity)
+        record["vector"] = vector
+    json.dump(record, out, indent=2, sort_keys=True, ensure_ascii=False)''',
+     '''    vector, refused = probe(func, mode="cross")
+    if vector is None:
+        record["look"] = refused
+    else:
+        record["ladder"] = cross_key(arity)
+        record["vector"] = vector
+    json.dump(record, out, indent=2, sort_keys=False, ensure_ascii=False)'''),
 
     # ---- comparison, and the wrong-baseline defect -------------------------- #
     ("sameness: two different ladders are zipped together",
      "sameness.py",
      '''    if a_key != b_key:
-        return "look", "not comparable: %s vs %s" % (a_key, b_key)''',
+        return "look", "not comparable: %s vs %s" % (a_key, b_key)
+    if len(a_vec) != len(b_vec) or len(a_vec) != len(inputs):''',
      '''    if False:
-        return "look", "not comparable: %s vs %s" % (a_key, b_key)'''),
+        return "look", "not comparable: %s vs %s" % (a_key, b_key)
+    if len(a_vec) != len(b_vec) or len(a_vec) != len(inputs):'''),
     ("sameness: a vector that does not match the ladder is compared anyway",
      "sameness.py",
      '''    if len(a_vec) != len(b_vec) or len(a_vec) != len(inputs):
@@ -350,6 +443,40 @@ MUTATIONS = [
      '''        buckets.setdefault((scan.keys[ref], tuple(vector)), []).append(ref)''',
      '''        buckets.setdefault(("", tuple(vector)), []).append(ref)'''),
 
+    # ---- `why`: which gate refused THIS function ---------------------------- #
+    ("sameness: a PROJECTION is explained as a constant",
+     "sameness.py",
+     '''    seen = len(set(answered))
+    if seen < MIN_DISTINCT:''',
+     '''    seen = len(set(answered))
+    if True:'''),
+    ("sameness: a vector that raised on EVERY rung is explained as a constant",
+     "sameness.py",
+     '''    if not answered:
+        return ("it raised on all %d rungs — the ladder reached its type errors and "
+                "never its behaviour" % len(vector))''',
+     '''    if False:
+        return ("it raised on all %d rungs — the ladder reached its type errors and "
+                "never its behaviour" % len(vector))'''),
+    ("sameness: `why` explains a function the ladder DID discriminate",
+     "sameness.py",
+     '''    if discriminating(vector, inputs) is not None:
+        return None''',
+     '''    if False:
+        return None'''),
+    ("sameness: `why` stops telling a missing FILE from a missing NAME",
+     "sameness.py",
+     '''    if not os.path.exists(path):
+        return None, "no such file: %s" % path''',
+     '''    if not os.path.exists(path):
+        return None, "cannot resolve %s" % ref'''),
+    ("verdicts: a look's DETAIL stops being printed, so `why` answers half",
+     "verdicts.py",
+     '''            if item.detail:
+                out.write("           %s\\n" % item.detail)''',
+     '''            if False:
+                out.write("           %s\\n" % item.detail)'''),
+
     # ---- the six properties ------------------------------------------------- #
     ("checks: the evidence detector is always satisfied",
      "checks.py",
@@ -375,6 +502,16 @@ MUTATIONS = [
      "checks.py",
      '''    return _has(src, "ast.parse", "compile(") or _requires_named_section(src)''',
      '''    return True'''),
+    ("checks: the restore-verified detector is always satisfied",
+     "checks.py",
+     '''    digested = _has(src, *DIGEST_TELLS)
+    return digested and _has(src, *RESTORE_FAILURE_TELLS)''',
+     '''    digested = _has(src, *DIGEST_TELLS)
+    return True'''),
+    ("checks: a digest NOTHING COMPARES satisfies restore-verified",
+     "checks.py",
+     '''    return digested and _has(src, *RESTORE_FAILURE_TELLS)''',
+     '''    return digested or _has(src, *RESTORE_FAILURE_TELLS)'''),
     ("checks: the named-section alternative no longer counts",
      "checks.py",
      '''    return "WRONG" in src and _has(src, "wanted", "section")''',
@@ -440,8 +577,12 @@ MUTATIONS = [
     # ---- anchors -------------------------------------------------------------- #
     ("anchors: harnesses rejoin the corpus, so anchors match themselves",
      "anchors.py",
-     '''    skip = {os.path.realpath(os.path.join(root, rel)) for rel in runners}''',
+     '''    skip = harness_paths(root)''',
      '''    skip = set()'''),
+    ("anchors: only THIS language's harnesses leave the corpus",
+     "anchors.py",
+     '''            if name.startswith("mutations") and name.endswith(SOURCE_EXTS):''',
+     '''            if name.startswith("mutations") and name.endswith(".py"):'''),
     ("anchors: an ambiguous anchor stops being a finding",
      "anchors.py",
      '''            elif worst > 1:''',
@@ -480,17 +621,72 @@ MUTATIONS = [
         return Config()'''),
     ("config: an exemption without a reason is accepted",
      "config.py",
-     '''            if not entry.get(field):''',
-     '''            if False:'''),
+     '''        for field in required:
+            if not entry.get(field):''',
+     '''        for field in required:
+            if False:'''),
+    ("config: a baseline entry in OBJECT form needs no reason",
+     "config.py",
+     '''        for field in ("line", "reason"):
+            if not entry.get(field):''',
+     '''        for field in ("line",):
+            if not entry.get(field):'''),
+    ("config: a baseline entry may name a command that cannot produce a finding",
+     "config.py",
+     '''        if produced_by is not None and produced_by not in FAMILIES:''',
+     '''        if False:'''),
+    ("config: an object-form baseline entry stops being read at all",
+     "config.py",
+     '''        if not isinstance(entry, dict):
+            raise ConfigError("%s: a 'baseline' entry must be the finding's exact "
+                              "text, or an object carrying it as 'line'" % path)''',
+     '''        if True:
+            raise ConfigError("%s: a 'baseline' entry must be the finding's exact "
+                              "text, or an object carrying it as 'line'" % path)'''),
     ("config: a stale baseline line stops being reported",
      "config.py",
-     '''    stale = sorted(known - seen)''',
-     '''    stale = []'''),
+     '''        elif entry.produced_by in performed:
+            stale.append(entry)''',
+     '''        elif entry.produced_by in performed:
+            unchecked.append(entry)'''),
+    ("config: a line THIS RUN COULD NOT SEE is called stale anyway (cries wolf)",
+     "config.py",
+     '''        else:
+            unchecked.append(entry)''',
+     '''        else:
+            stale.append(entry)'''),
+    ("config: an untagged line is called stale by a PARTIAL run",
+     "config.py",
+     '''    complete = set(FAMILIES) <= performed''',
+     '''    complete = True'''),
     ("config: the baseline matches on a prefix rather than the exact message",
      "config.py",
      '''    still = [f for f in findings if f.message not in known]''',
      '''    still = [f for f in findings
              if not any(f.message.startswith(k) for k in known)]'''),
+    ("config: write_baseline drops every OTHER key in the file",
+     "config.py",
+     '''    raw["baseline"] = baseline''',
+     '''    raw = {"baseline": baseline}'''),
+    ("config: write_baseline writes a `from` of null rather than none at all",
+     "config.py",
+     '''        if produced_by:
+            entry["from"] = produced_by''',
+     '''        entry["from"] = produced_by
+        if False:
+            entry["from"] = produced_by'''),
+    ("cli: accept writes a `look` into the baseline (the 0.2.2 defect, automated)",
+     "cli.py",
+     '''        if args.line in {i.message for i in report.looks}:''',
+     '''        if False:'''),
+    ("cli: accept writes a line nothing printed, so the entry is born stale",
+     "cli.py",
+     '''        if args.line not in fired:''',
+     '''        if False:'''),
+    ("cli: accept writes an entry with no reason",
+     "cli.py",
+     '''    if not args.reason:''',
+     '''    if False:'''),
     ("config: a named config that is missing is silently ignored",
      "config.py",
      '''    if not os.path.exists(path):
@@ -541,18 +737,29 @@ MUTATIONS = [
      "cli.py",
      '''        report.ok("differs: %s — %s" % (pair, detail), first.ref)''',
      '''        report.finding("differs: %s — %s" % (pair, detail), first.ref)'''),
-    ("cli: a PARTIAL run calls a baseline entry stale (cries wolf at itself)",
+    ("cli: a command claims it performed every audit (cries wolf at itself)",
      "cli.py",
-     '''        if complete:
-            for line in stale:''',
-     '''        if True:
-            for line in stale:'''),
+     '''    return _finish(args, report, config, out, ("runners",))''',
+     '''    return _finish(args, report, config, out,
+                   ("runners", "anchors", "diff", "scan"))'''),
+    ("cli: `all` without --scan claims it performed the sameness half",
+     "cli.py",
+     '''    return families, performed''',
+     '''    if "scan" not in performed:
+        performed.append("scan")
+    return families, performed'''),
+    ("cli: the lines nobody could check are counted as `0 stale`",
+     "cli.py",
+     '''    if unchecked:
+        why = {}''',
+     '''    if False:
+        why = {}'''),
     ("cli: `all` stops folding in the sameness half",
      "cli.py",
-     '''    scanned = getattr(args, "scan", None)
-    if scanned:''',
-     '''    scanned = None
-    if scanned:'''),
+     '''    if getattr(args, "scan", None):
+        perform("scan", scan_half)''',
+     '''    if False:
+        perform("scan", scan_half)'''),
     ("cli: a broken config is ignored rather than exiting 2",
      "cli.py",
      '''    except ConfigError as exc:
@@ -587,10 +794,14 @@ MUTATIONS += [
      "verdicts.js",
      """  for (const key of Object.keys(value).sort()) out[key] = sorted(value[key]);""",
      """  for (const key of Object.keys(value)) out[key] = sorted(value[key]);"""),
-    ("js cli: this half claims it checked the baseline for stale lines",
+    ("js cli: the JSON baseline hides the lines this run could not check",
      "cli.js",
-     """      complete: false,""",
-     """      complete: true,"""),
+     """      unchecked: unchecked.map((e) => ({ line: e.line, from: e.producedBy })),""",
+     """      unchecked: [],"""),
+    ("js cli: the JSON baseline claims it performed every audit",
+     "cli.js",
+     """      performed: [...performed].sort(),""",
+     """      performed: ['runners', 'anchors', 'diff', 'scan'],"""),
     # ---- a snippet's function is never guessed at ---------------------------- #
     ("js cli: an ambiguous snippet silently picks a function instead of refusing",
      "cli.js",
@@ -609,6 +820,174 @@ MUTATIONS += [
      "probe.js",
      """  const seen = new Set(inherited);""",
      """  const seen = new Set();"""),
+
+    # ---- the cross-language interlingua -------------------------------------- #
+    ("js sameness: a throw carries its NAME across the language boundary again",
+     "sameness.js",
+     """  } catch {
+    return 'E:*';
+  } finally {
+    clearTimeout(timer);
+  }
+  const text = crossRender(value);""",
+     """  } catch (err) {
+    return `E:${(err && err.name) || 'Error'}`;
+  } finally {
+    clearTimeout(timer);
+  }
+  const text = crossRender(value);"""),
+    ("js sameness: an outcome the interlingua cannot state is COMPARED anyway",
+     "sameness.js",
+     """    if (x.startsWith('X:') || y.startsWith('X:')) {""",
+     """    if (false) {"""),
+    ("js sameness: undefined stops being the same absence as null",
+     "sameness.js",
+     """  if (value === null || value === undefined) return 'null';""",
+     """  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';"""),
+    ("js sameness: NaN and the infinities collapse into one absence",
+     "sameness.js",
+     """    if (Number.isNaN(value)) return 'NaN';
+    if (value === Infinity) return 'Infinity';
+    if (value === -Infinity) return '-Infinity';
+    // `-0` is `0` here:""",
+     """    if (Number.isNaN(value)) return 'null';
+    if (value === Infinity) return 'Infinity';
+    if (value === -Infinity) return '-Infinity';
+    // `-0` is `0` here:"""),
+    ("js sameness: a Map or a Date is flattened rather than refused",
+     "sameness.js",
+     """  const proto = Object.getPrototypeOf(value);
+  if (typeof value !== 'object' || (proto !== Object.prototype && proto !== null)) {
+    return null;
+  }""",
+     """  if (typeof value !== 'object') return null;"""),
+    ("js sameness: cross object keys stop being sorted",
+     "sameness.js",
+     """  for (const key of Object.keys(value).sort()) {
+    const rendered = crossRender(value[key], depth + 1);""",
+     """  for (const key of Object.keys(value)) {
+    const rendered = crossRender(value[key], depth + 1);"""),
+    ("js sameness: the CROSS ladder key drops the digest of its rungs",
+     "sameness.js",
+     """  return `cross${arity}/${LADDER_VERSION}/${digest}`;""",
+     """  return `cross${arity}/${LADDER_VERSION}/`;"""),
+    ("js sameness: the cross vacuity guard stops consulting the projections",
+     "sameness.js",
+     """    if (live.length && live.every((i) => vector[i] === proj[i])) return null;""",
+     """    if (false) return null;"""),
+    ("js cli: `cross` reports a `differs` as a finding",
+     "cli.js",
+     """        report.ok(`differs: ${pair} — ${detail}`, first.ref);""",
+     """        report.finding(`differs: ${pair} — ${detail}`, first.ref);"""),
+    ("js cli: `cross` compares a record from ANOTHER schema anyway",
+     "cli.js",
+     """  if (record.assay_probe !== PROBE_SCHEMA) {
+    return {
+      unresolved: `${file} was written by schema ${record.assay_probe} and this is `""",
+     """  if (false) {
+    return {
+      unresolved: `${file} was written by schema ${record.assay_probe} and this is `"""),
+    ("js cli: `cross` compares two functions of ONE language on the cross ladder",
+     "cli.js",
+     """      if (first.language === second.language) {""",
+     """      if (false) {"""),
+    ("js cli: `probe` turns a refused function into exit 2 rather than a record",
+     "cli.js",
+     """  if (entry.skip) return { record: { ...record, arity: 0, look: entry.skip } };""",
+     """  if (entry.skip) return { unresolved: entry.skip };"""),
+    ("js cli: the probe record stops sorting its keys, so two halves write two documents",
+     "cli.js",
+     """        write(`${JSON.stringify(sortedKeys(record), null, 2)}\\n`);""",
+     """        write(`${JSON.stringify(record, null, 2)}\\n`);"""),
+
+    # ---- anchors, read by IMPORT rather than by parse ------------------------- #
+    ("js anchors: the anchor moves off the second-to-last column",
+     "anchors.js",
+     """    if (parts.length >= 2 && parts.length <= 4) found.push(parts[parts.length - 2]);""",
+     """    if (parts.length >= 2 && parts.length <= 4) found.push(parts[0]);"""),
+    ("js anchors: a table shape it cannot read is guessed at rather than offered",
+     "anchors.js",
+     """    else if (parts.length > 4) unreadable.push(parts[0]);""",
+     """    else if (parts.length > 4) found.push(parts[parts.length - 2]);"""),
+    ("js anchors: an anchor matching NOTHING stops being a finding",
+     "anchors.js",
+     """      if (worst === 0) dead.push(anchor);""",
+     """      if (false) dead.push(anchor);"""),
+    ("js anchors: an ambiguous anchor stops being a finding",
+     "anchors.js",
+     """      else if (worst > 1) ambiguous.push([anchor, worst]);""",
+     """      else if (false) ambiguous.push([anchor, worst]);"""),
+    ("js anchors: ambiguity is counted across files rather than PER file",
+     "anchors.js",
+     """        if (hits > worst) worst = hits;""",
+     """        worst += hits;"""),
+    ("js anchors: harnesses rejoin the corpus, so anchors match themselves",
+     "anchors.js",
+     """  const skip = harnessPaths(root);""",
+     """  const skip = new Set();"""),
+    ("js anchors: only THIS language's harnesses leave the corpus",
+     "anchors.js",
+     """      else if (name.startsWith(RUNNER_PREFIX) && SOURCE.test(name)) {""",
+     """      else if (name.startsWith(RUNNER_PREFIX) && /\\.(mjs|cjs|js)$/.test(name)) {"""),
+    ("js anchors: a harness with no exported table is guessed at rather than offered",
+     "anchor-probe.js",
+     """  if (!named) { say({ absent: true }); return; }""",
+     """  if (!named) { say({ table: [] }); return; }"""),
+    ("js anchors: a table that would not import comes back empty rather than as an error",
+     "anchor-probe.js",
+     """    say({ error: `could not import (${(err && err.message) || err})`.slice(0, 140) });
+    return;""",
+     """    say({ table: [] });
+    return;"""),
+    ("js anchors: the table answer shares stdout with whatever the harness printed",
+     "anchors.js",
+     """    child.stdio[ANSWER_FD].on('data', (d) => { answer += d; });""",
+     """    child.stdout.on('data', (d) => { answer += d; });"""),
+
+    # ---- `why`: which gate refused THIS function ------------------------------ #
+    ("js sameness: a PROJECTION is explained as a constant",
+     "sameness.js",
+     """  const seen = new Set(answered).size;
+  if (seen < MIN_DISTINCT) {""",
+     """  const seen = new Set(answered).size;
+  if (true) {"""),
+    ("js sameness: a vector that threw on EVERY rung is explained as a constant",
+     "sameness.js",
+     """  if (!answered.length) {
+    return `it threw on all ${vector.length} rungs — the ladder reached its type `
+      + 'errors and never its behaviour';
+  }""",
+     """  if (false) {
+    return `it threw on all ${vector.length} rungs — the ladder reached its type `
+      + 'errors and never its behaviour';
+  }"""),
+    ("js sameness: `why` explains a function the ladder DID discriminate",
+     "sameness.js",
+     """  if (discriminating(vector, inputs) !== null) return null;""",
+     """  if (false) return null;"""),
+    ("js cli: `why` stops answering at the FILE level for a refused file",
+     "cli.js",
+     """  const refused = fileRefusal(source);
+  if (refused) {
+    report.look(""",
+     """  const refused = null;
+  if (refused) {
+    report.look("""),
+    ("js verdicts: a look's DETAIL stops being printed, so `why` answers half",
+     "verdicts.js",
+     """      if (item.detail) write(`           ${item.detail}\\n`);""",
+     """      if (false) write(`           ${item.detail}\\n`);"""),
+
+    # ---- the seventh property ------------------------------------------------ #
+    ("js checks: the restore-verified detector is always satisfied",
+     "checks.js",
+     """    (src) => has(src, ...DIGEST_TELLS) && has(src, ...RESTORE_FAILURE_TELLS)],""",
+     """    () => true],"""),
+    ("js checks: a digest NOTHING COMPARES satisfies restore-verified",
+     "checks.js",
+     """export const RESTORE_FAILURE_TELLS = ['RESTORE FAILED', 'NOT RESTORED',""",
+     """export const RESTORE_FAILURE_TELLS = ['', 'NOT RESTORED',"""),
 
     # ---- the answer channel -------------------------------------------------- #
     ("js sameness: the probe answer shares stdout again (a shipped defect)",
@@ -644,16 +1023,20 @@ MUTATIONS += [
   ];"""),
     ("js sameness: the discrimination threshold stops being consulted",
      "sameness.js",
-     """  if (new Set(returned).size < MIN_DISTINCT) return null;""",
-     """  if (false) return null;"""),
+     """  if (new Set(returned).size < MIN_DISTINCT) return null;
+  if (inputs && isProjection(vector, inputs)) return null;""",
+     """  if (false) return null;
+  if (inputs && isProjection(vector, inputs)) return null;"""),
     ("js sameness: the projection guard stops being consulted",
      "sameness.js",
      """  if (inputs && isProjection(vector, inputs)) return null;""",
      """  if (false) return null;"""),
     ("js sameness: two different ladders are zipped together",
      "sameness.js",
-     """  if (aKey !== bKey) return ['look', `not comparable: ${aKey} vs ${bKey}`];""",
-     """  if (false) return ['look', `not comparable: ${aKey} vs ${bKey}`];"""),
+     """  if (aKey !== bKey) return ['look', `not comparable: ${aKey} vs ${bKey}`];
+  if (aVec.length !== bVec.length || aVec.length !== inputs.length) {""",
+     """  if (false) return ['look', `not comparable: ${aKey} vs ${bKey}`];
+  if (aVec.length !== bVec.length || aVec.length !== inputs.length) {"""),
 
     # ---- the ladder is chosen by the DECLARED parameter list ------------------ #
     ("js probe: arity comes from fn.length again (a shipped defect)",
@@ -686,12 +1069,12 @@ MUTATIONS += [
      "probe.js",
      """  for (const [name, fn] of found) {
     // eslint-disable-next-line no-await-in-loop
-    say({ entry: await probeFunction(fn, name, request.ladders) });
+    say({ entry: await probeFunction(fn, name, request.ladders, request.cross === true) });
   }""",
      """  const all = [];
   for (const [name, fn] of found) {
     // eslint-disable-next-line no-await-in-loop
-    all.push(await probeFunction(fn, name, request.ladders));
+    all.push(await probeFunction(fn, name, request.ladders, request.cross === true));
   }
   for (const entry of all) say({ entry });"""),
     ("js sameness: a function that never answered is dropped rather than reported",
@@ -702,12 +1085,16 @@ MUTATIONS += [
     # ---- coroutines ---------------------------------------------------------- #
     ("js sameness: a promise is read as an object rather than awaited",
      "sameness.js",
-     """    if (value && typeof value.then === 'function') {""",
-     """    if (false) {"""),
+     """    if (value && typeof value.then === 'function') {
+      // THE INTERRUPT THAT DOES EXIST.""",
+     """    if (false) {
+      // THE INTERRUPT THAT DOES EXIST."""),
     ("js sameness: a rejection resolves to its error rather than being an outcome",
      "sameness.js",
-     """      value = await Promise.race([value, new Promise((_resolve, reject) => {""",
-     """      value = await Promise.race([value.catch((e) => e), new Promise((_resolve, reject) => {"""),
+     """      value = await Promise.race([value, new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {""",
+     """      value = await Promise.race([value.catch((e) => e), new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {"""),
 
     # ---- what a pending promise costs ----------------------------------------- #
     ("js sameness: a per-input timeout becomes a VALUE rather than an outcome",
@@ -737,19 +1124,78 @@ MUTATIONS += [
     # ---- the config is judgment, and it is validated -------------------------- #
     ("js config: an exemption without a REASON is accepted",
      "config.js",
-     """      if (!entry[field]) {""",
-     """      if (false) {"""),
+     """    for (const field of required) {
+      if (!entry[field]) {""",
+     """    for (const field of required) {
+      if (false) {"""),
+    ("js config: a baseline entry in OBJECT form needs no reason",
+     "config.js",
+     """    for (const field of ['line', 'reason']) {""",
+     """    for (const field of ['line']) {"""),
+    ("js config: a baseline entry may name a command that cannot produce a finding",
+     "config.js",
+     """    if (producedBy !== null && !FAMILIES.includes(producedBy)) {""",
+     """    if (false) {"""),
+    ("js config: an object-form baseline entry stops being read at all",
+     "config.js",
+     """    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {""",
+     """    if (true) {"""),
+    ("js config: a stale baseline line stops being reported",
+     "config.js",
+     """    else if (did.has(entry.producedBy)) stale.push(entry);""",
+     """    else if (did.has(entry.producedBy)) unchecked.push(entry);"""),
+    ("js config: a line THIS RUN COULD NOT SEE is called stale anyway (cries wolf)",
+     "config.js",
+     """    else unchecked.push(entry);""",
+     """    else stale.push(entry);"""),
+    ("js config: an untagged line is called stale by a PARTIAL run",
+     "config.js",
+     """  const complete = FAMILIES.every((f) => did.has(f));""",
+     """  const complete = true;"""),
 
     # ---- the baseline, and the cry-wolf failure ------------------------------- #
-    ("js cli: a PARTIAL run calls a baseline entry stale (cries wolf at itself)",
+    ("js cli: a command claims it performed every audit (cries wolf at itself)",
      "cli.js",
-     """    const [still] = applyBaseline(report.findings, config.baseline);
-    const accepted = report.findings.length - still.length;
-    report.items = report.items.filter((i) => i.verdict !== FINDING).concat(still);""",
-     """    const [still, stale] = applyBaseline(report.findings, config.baseline);
-    const accepted = report.findings.length - still.length;
-    report.items = report.items.filter((i) => i.verdict !== FINDING).concat(still);
-    for (const line of stale) report.finding(`no longer fires: ${line}`);"""),
+     """      return finish(report, config, write, opts, ['runners']);""",
+     """      return finish(report, config, write, opts,
+        ['runners', 'anchors', 'diff', 'scan']);"""),
+    ("js cli: `all` without --scan claims it performed the sameness half",
+     "cli.js",
+     """  return { families, performed };""",
+     """  if (!performed.includes('scan')) performed.push('scan');
+  return { families, performed };"""),
+    ("js cli: `all` stops folding in the sameness half",
+     "cli.js",
+     """  if (opts.scan.length) {
+    await perform('scan', async (rep) => {""",
+     """  if (false) {
+    await perform('scan', async (rep) => {"""),
+    ("js config: writeBaseline drops every OTHER key in the file",
+     "config.js",
+     """  raw.baseline = baseline;""",
+     """  raw = { baseline };"""),
+    ("js config: writeBaseline writes a `from` of null rather than none at all",
+     "config.js",
+     """    if (producedBy) entry.from = producedBy;""",
+     """    entry.from = producedBy;"""),
+    ("js cli: accept writes a `look` into the baseline (the 0.2.2 defect, automated)",
+     "cli.js",
+     """        if (report.looks.some((i) => i.message === line)) {""",
+     """        if (false) {"""),
+    ("js cli: accept writes a line nothing printed, so the entry is born stale",
+     "cli.js",
+     """        if (!fired.has(line)) {""",
+     """        if (false) {"""),
+    ("js cli: accept writes an entry with no reason",
+     "cli.js",
+     """      if (!opts.reason) {""",
+     """      if (false) {"""),
+    ("js cli: the lines nobody could check are counted as `0 stale`",
+     "cli.js",
+     """  if (unchecked.length) {
+    const why = new Map();""",
+     """  if (false) {
+    const why = new Map();"""),
 ]
 
 
@@ -802,14 +1248,45 @@ def main(argv=None):
 
     files = sorted({m[1] for m in MUTATIONS})
     originals = {}
+    # THE DIGEST IS OF THE BYTES THAT WERE THERE, not of the text they decode to.
+    # Hashing the decoded string would agree with itself after a restore that wrote the
+    # file back in a different encoding, which is one of the three ways a restore runs
+    # and still leaves the tree wrong.
+    digests = {}
     for name in files:
-        with open(target(name), encoding="utf-8") as fh:
-            originals[name] = fh.read()
+        with open(target(name), "rb") as fh:
+            raw = fh.read()
+        originals[name] = raw.decode("utf-8")
+        digests[name] = hashlib.sha256(raw).hexdigest()
 
     def restore():
+        """Put every file back, and then PROVE it came back.
+
+        THE SEVENTH PROPERTY, and it is about this function rather than about the
+        `finally` that calls it. `restore-in-finally` proves the restore PATH runs; it
+        says nothing about the file on disk. A harness that restores from a buffer read
+        after the mutation, or writes the text back in a different encoding, or saves
+        one of the two files it touches, satisfies the other six and still leaves work
+        proceeding on top of deliberately broken code.
+
+        So the bytes are read back and compared against the digest taken before
+        anything was written. A mismatch is announced by name: this is the one failure
+        in the run that outlives the run.
+        """
         for name, text in originals.items():
             with open(target(name), "w", encoding="utf-8") as fh:
                 fh.write(text)
+        wrong = []
+        for name in sorted(originals):
+            with open(target(name), "rb") as fh:
+                if hashlib.sha256(fh.read()).hexdigest() != digests[name]:
+                    wrong.append(name)
+        if wrong:
+            RESTORE_FAILURES.extend(wrong)
+            print("RESTORE FAILED — %s did not come back; the tree is LEFT MUTATED "
+                  "and every suite after this one scores code nobody wrote"
+                  % ", ".join(wrong))
+        return wrong
 
     # SIGTERM does not run `finally`, so a killed runner would leave the tree mutated
     # and work would proceed on top of deliberately broken code.
@@ -876,10 +1353,23 @@ def main(argv=None):
             print("%-64s %s" % (label[:64],
                                 ("CAUGHT  " + real[0][:36]) if real else "NOT DETECTED"))
         print("\n%d/%d mutations detected" % (detected, len(table)))
+        # A FAILED RESTORE OUTRANKS THE SCORE. A perfect tally over a tree that did not
+        # come back is a tally about a file that is no longer the file, and reporting
+        # it as a pass is the exact shape this runner audits for.
+        if RESTORE_FAILURES:
+            return 2
         return 0 if detected == len(table) else 1
     finally:
         restore()
 
 
+# Filled in by `restore()` when the bytes it wrote back are not the bytes it saved.
+# A module-level list because the LAST restore runs in `main`'s `finally`, after the
+# return value above has already been computed — so a failure there has to be folded
+# in below or it prints loudly and exits 0.
+RESTORE_FAILURES = []
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    _code = main()
+    sys.exit(2 if RESTORE_FAILURES else _code)

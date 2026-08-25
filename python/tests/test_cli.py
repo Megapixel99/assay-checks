@@ -253,16 +253,40 @@ class JsonOutput(unittest.TestCase):
                                    "runners")
         self.assertIsNone(data["scan"])
 
-    def test_the_baseline_carries_WHY_it_could_not_check_staleness(self):
+    def test_the_baseline_carries_WHAT_it_could_not_check_for_staleness(self):
+        """The caveat travels as data, and it is a LIST rather than a boolean now.
+
+        Completeness stopped being a property of the run when a baseline entry learned
+        to name the command that fires it: `performed` says what this run audited, and
+        `unchecked` names each entry it could not have seen fire. A consumer reading
+        `stale: []` and nothing else would read "nothing is stale", which is a
+        different claim from "this run never looked".
+        """
         root = tree({"m.py": TWINS, "assay.json": json.dumps(
             {"baseline": ["same answer (arity1/v3): x, y"]})})
         _code, data = self.payload("--root", root, "--json", "scan", root)
-        self.assertEqual(data["baseline"]["complete"], False)
-        self.assertIn("assay all", data["baseline"]["incomplete_because"])
+        self.assertEqual(data["baseline"]["performed"], ["scan"])
+        self.assertEqual(data["baseline"]["stale"], [])
+        self.assertEqual([e["line"] for e in data["baseline"]["unchecked"]],
+                         ["same answer (arity1/v3): x, y"])
+        self.assertIsNone(data["baseline"]["unchecked"][0]["from"])
         _code, complete = self.payload("--root", root, "--json", "all",
                                        "--scan", root)
-        self.assertEqual(complete["baseline"]["complete"], True)
-        self.assertIsNone(complete["baseline"]["incomplete_because"])
+        self.assertEqual(complete["baseline"]["performed"],
+                         ["anchors", "diff", "runners", "scan"])
+        self.assertEqual(complete["baseline"]["unchecked"], [])
+        self.assertEqual(complete["baseline"]["stale"],
+                         ["same answer (arity1/v3): x, y"])
+
+    def test_a_TAGGED_baseline_entry_is_answered_by_one_command_in_JSON_too(self):
+        """The per-line rule, in the shape a machine reads. `assay scan` performed the
+        audit that fires this line, so it is stale — and nothing is left unchecked."""
+        root = tree({"m.py": TWINS, "assay.json": json.dumps({"baseline": [
+            {"line": "a scan finding long gone", "reason": "read it",
+             "from": "scan"}]})})
+        _code, data = self.payload("--root", root, "--json", "scan", root)
+        self.assertEqual(data["baseline"]["stale"], ["a scan finding long gone"])
+        self.assertEqual(data["baseline"]["unchecked"], [])
 
     def test_json_prints_JSON_AND_NOTHING_ELSE(self):
         """A prose banner in front of the object is a parse error, and a parse error
@@ -383,6 +407,94 @@ class SearchFromStdin(unittest.TestCase):
         self.assertIn("--name", text)
 
 
+class WhyOneFunction(unittest.TestCase):
+    """`assay why FILE::NAME` — the census, for one name.
+
+    The census gives aggregate refusal reasons with counts, which is the right shape
+    for a tree and the wrong shape for a question: a person who expected a particular
+    function to be probed cannot read `no arguments 274` and learn whether theirs is
+    one of them. Every case here is a `look` or an `ok` and never a finding — this
+    command reports what the tool did, and decides nothing.
+    """
+
+    FIXTURE = ('def double(x):\n    return x + x\n\n\n'
+               'def constant(x):\n    return 1\n\n\n'
+               'def identity(x):\n    return x\n\n\n'
+               'def nullary():\n    return 1\n\n\n'
+               'def raises_on_everything(x):\n    return x.no_such_attribute\n\n\n'
+               'import os\n\n\n'
+               'def impure(x):\n    return os.getcwd() + x\n')
+
+    def why(self, name):
+        root = tree({"m.py": self.FIXTURE})
+        return run("why", os.path.join(root, "m.py") + "::" + name)
+
+    def test_a_PROBED_function_says_so_rather_than_staying_silent(self):
+        """"It was probed" and "nothing looked at it" are different claims, and only
+        one of them is evidence."""
+        code, text = self.why("double")
+        self.assertEqual(code, 0)
+        self.assertIn("probed on arity1/", text)
+        self.assertIn("distinct value", text)
+
+    def test_a_GATE_that_refused_is_named(self):
+        code, text = self.why("impure")
+        self.assertEqual(code, 0)
+        self.assertIn("touches os", text)
+
+    def test_a_ZERO_ARITY_function_gets_the_gate_the_census_counts(self):
+        _code, text = self.why("nullary")
+        self.assertIn("no arguments", text)
+
+    def test_a_CONSTANT_and_a_PROJECTION_are_told_apart(self):
+        """The census collapses both into `not discriminated by the ladder`, which is
+        one reason with two very different answers: a constant needs a wider ladder and
+        a projection needs a different function."""
+        _c, constant = self.why("constant")
+        _p, projection = self.why("identity")
+        self.assertIn("it is a constant", constant)
+        self.assertNotIn("projection", constant)
+        self.assertIn("a projection", projection)
+        self.assertNotIn("it is a constant", projection)
+
+    def test_a_vector_that_RAISED_EVERYWHERE_is_not_called_a_constant(self):
+        """A function the ladder never reached is a different problem from one it
+        reached and found constant: the first needs inputs of another shape, the
+        second needs a wider ladder. Both are `not discriminated`, and saying which
+        is the whole point of this command."""
+        _code, text = self.why("raises_on_everything")
+        self.assertIn("raised on all", text)
+        self.assertNotIn("it is a constant", text)
+
+    def test_it_NEVER_produces_a_finding(self):
+        for name in ("double", "constant", "identity", "nullary", "impure",
+                     "raises_on_everything"):
+            code, _text = self.why(name)
+            self.assertEqual(code, 0, name)
+
+    def test_a_missing_FILE_and_a_missing_NAME_are_different_answers(self):
+        """`resolve` collapses them because a scan does not care which; this command
+        is the one that does. They send you to two different places."""
+        code, missing_file = run("why", "nowhere.py::x")
+        self.assertEqual(code, 2)
+        self.assertIn("no such file", missing_file)
+        code, missing_name = self.why("notafunction")
+        self.assertEqual(code, 2)
+        self.assertIn("no module-level function named", missing_name)
+        self.assertIn("double", missing_name)
+
+    def test_a_file_that_does_not_PARSE_says_that_rather_than_cannot_resolve(self):
+        root = tree({"broken.py": "def (:\n"})
+        code, text = run("why", os.path.join(root, "broken.py") + "::anything")
+        self.assertEqual(code, 2)
+        self.assertIn("does not parse", text)
+
+    def test_a_reference_with_no_separator_exits_2(self):
+        code, text = run("why", "justaname")
+        self.assertEqual(code, 2)
+        self.assertIn("FILE::NAME", text)
+
+
 class ConfigWiring(unittest.TestCase):
 
     def test_a_baseline_entry_turns_a_finding_into_a_pass(self):
@@ -403,7 +515,9 @@ class ConfigWiring(unittest.TestCase):
         otherwise, which is how a suppression file becomes a work of fiction."""
         cfg = tree({"assay.json": json.dumps({"baseline": ["a finding long gone"]}),
                     "m.py": "def a(n):\n    return n * 2\n"})
-        code, text = run("--root", cfg, "all", "--base", "HEAD")
+        # `--scan` is what makes the run complete: without it the sameness half did not
+        # run, so an UNTAGGED line — one that names no command — is still unchecked.
+        code, text = run("--root", cfg, "all", "--base", "HEAD", "--scan", cfg)
         self.assertEqual(code, 1)
         self.assertIn("no longer fires", text)
 
@@ -420,7 +534,59 @@ class ConfigWiring(unittest.TestCase):
         code, text = run("--root", cfg, "runners")
         self.assertEqual(code, 0, text)
         self.assertNotIn("no longer fires", text)
-        self.assertIn("staleness needs", text)
+        self.assertIn("NOT checked for staleness", text)
+        self.assertIn("needs `assay all`", text)
+
+    def test_SCAN_does_not_claim_it_performed_every_audit_either(self):
+        """Driven per COMMAND rather than once: `performed` is a literal at each call
+        site, so a command that claims more than it did is a defect one test cannot
+        see. The JavaScript half's equivalent was NOT DETECTED until it existed."""
+        cfg = tree({"assay.json": json.dumps({"baseline": ["a runners-only finding"]}),
+                    "m.py": "def a(n):\n    return n * 2\n"})
+        code, text = run("--root", cfg, "scan", cfg)
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("no longer fires", text)
+        self.assertIn("NOT checked for staleness", text)
+
+    def test_a_line_that_NAMES_its_command_is_answered_by_that_command(self):
+        """The point of `from`. `assay runners` knows perfectly well whether a
+        `runners` finding fired, and needed a whole `assay all` to be allowed to say
+        so — which meant a project running the subcommands separately never got the
+        second direction at all."""
+        cfg = tree({"assay.json": json.dumps({"baseline": [
+            {"line": "a runners finding long gone", "reason": "read it",
+             "from": "runners"}]}),
+            "a.py": "x = 1\n"})
+        code, text = run("--root", cfg, "runners")
+        self.assertEqual(code, 1, text)
+        self.assertIn("no longer fires", text)
+
+    def test_a_line_from_ANOTHER_command_is_counted_rather_than_called_stale(self):
+        """The cry-wolf failure, and why the first fix was a whole-run flag. What is
+        new is that the lines nobody could check are COUNTED: `0 stale` from a run that
+        never looked reads as `nothing is stale`, and those are different claims."""
+        cfg = tree({"assay.json": json.dumps({"baseline": [
+            {"line": "an anchors finding", "reason": "read it", "from": "anchors"}]}),
+            "a.py": "x = 1\n"})
+        code, text = run("--root", cfg, "runners")
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("no longer fires", text)
+        self.assertIn("NOT checked for staleness (anchors: 1)", text)
+
+    def test_all_WITHOUT_scan_does_not_claim_it_performed_the_sameness_half(self):
+        """`--scan` is what makes `all` complete, and the flag used to say complete
+        either way — so a `same answer` line was called stale by a run that never
+        scanned anything, on a clean tree."""
+        cfg = tree({"assay.json": json.dumps({"baseline": [
+            {"line": "same answer (arity1/v3): a.py::x, b.py::y",
+             "reason": "read them", "from": "scan"}]}),
+            "a.py": "x = 1\n"})
+        # The exit code is not asserted: a temp directory is not a git repository, so
+        # `diff` reports one of its own findings here and the run fails for a reason
+        # that has nothing to do with the baseline.
+        _code, text = run("--root", cfg, "all", "--base", "HEAD")
+        self.assertNotIn("no longer fires", text)
+        self.assertIn("NOT checked for staleness (scan: 1)", text)
 
     def test_all_folds_in_the_sameness_half_when_asked(self):
         """Without `--scan` a `same answer` line in the baseline would be called
@@ -435,6 +601,121 @@ class ConfigWiring(unittest.TestCase):
                      "a.py": "x = 1\n"})
         _code, text = run("--root", root, "runners")
         self.assertIn("assay.json", text)
+
+
+class Accept(unittest.TestCase):
+    """`assay accept` — the command that writes the baseline line for you.
+
+    THE 0.2.2 CHANGELOG RECORDS SHIPPING A CONFIG EXAMPLE THAT BASELINED A `look`. A
+    look never fails the run, so the line could never be suppressed and could never
+    expire: a record of nothing, indistinguishable from a record of something already
+    fixed. That was fixed by editing the example, and an example is fixed once per copy
+    of it. These drive the command that cannot make the mistake at all.
+    """
+
+    RUNNER = 'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'
+    UNREADABLE = 'MUTATIONS = [("a label", "b", "c", "d", "e", "f")]\n'
+    SIGTERM = ("mutations_x.py: no `sigterm` (SIGTERM does not run `finally`; "
+               "a kill leaves the tree broken)")
+
+    def project(self, body=None, config=None):
+        files = {"mutations_x.py": body if body is not None else self.RUNNER}
+        if config is not None:
+            files["assay.json"] = json.dumps(config)
+        return tree(files)
+
+    def written(self, root):
+        with open(os.path.join(root, "assay.json"), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_it_REFUSES_without_a_reason(self):
+        """The same rule an exemption follows. An acceptance without one cannot be
+        told from an oversight, and this is the table that rots fastest."""
+        root = self.project()
+        code, text = run("--root", root, "accept", "--base", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("--reason", text)
+        self.assertFalse(os.path.exists(os.path.join(root, "assay.json")))
+
+    def test_it_writes_the_LINE_the_REASON_and_what_FIRES_it(self):
+        root = self.project()
+        code, text = run("--root", root, "accept", self.SIGTERM,
+                         "--reason", "a tempdir, so a kill leaves nothing mutated",
+                         "--base", "HEAD")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.written(root)["baseline"], [{
+            "line": self.SIGTERM,
+            "reason": "a tempdir, so a kill leaves nothing mutated",
+            "from": "runners"}])
+
+    def test_what_it_wrote_is_then_SUPPRESSED_by_the_audit_that_fires_it(self):
+        """The round trip is the point: the entry is the finding's exact text, taken
+        from the run rather than typed, which is what makes whole-line matching safe."""
+        root = self.project()
+        run("--root", root, "accept", self.SIGTERM, "--reason", "r", "--base", "HEAD")
+        _code, text = run("--root", root, "runners")
+        self.assertIn("1 accepted", text)
+        self.assertNotIn(self.SIGTERM, text.split("FINDINGS")[-1])
+
+    def test_it_REFUSES_a_look(self):
+        """A `look` never fails the run, so there is nothing to accept — and a
+        baselined look is a record that can never match and never expire."""
+        root = self.project(self.UNREADABLE)
+        _c, anchors_text = run("--root", root, "anchors")
+        look = [l.split("look     ", 1)[1].strip()
+                for l in anchors_text.splitlines() if "  look     " in l][0]
+        code, text = run("--root", root, "accept", look, "--reason", "r",
+                         "--base", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("`look` never fails the run", text)
+        self.assertFalse(os.path.exists(os.path.join(root, "assay.json")))
+
+    def test_it_REFUSES_a_line_nothing_printed(self):
+        """Accepting a line that does not fire writes an entry that is stale the
+        moment it lands, and the file then arrives already claiming something untrue."""
+        root = self.project()
+        code, text = run("--root", root, "accept", "a finding I invented",
+                         "--reason", "r", "--base", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("stale the moment it lands", text)
+
+    def test_it_REFUSES_a_line_already_accepted(self):
+        root = self.project(config={"baseline": [
+            {"line": self.SIGTERM, "reason": "read it", "from": "runners"}]})
+        code, text = run("--root", root, "accept", self.SIGTERM, "--reason", "r",
+                         "--base", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("already in the baseline", text)
+
+    def test_with_no_LINE_it_accepts_every_NEW_finding(self):
+        root = self.project()
+        code, _text = run("--root", root, "accept", "--reason", "adopting this",
+                          "--base", "HEAD")
+        self.assertEqual(code, 0)
+        lines = [e["line"] for e in self.written(root)["baseline"]]
+        self.assertIn(self.SIGTERM, lines)
+        self.assertTrue(all(e["reason"] == "adopting this"
+                            for e in self.written(root)["baseline"]))
+
+    def test_it_leaves_every_OTHER_key_and_every_existing_entry_alone(self):
+        """Rewriting somebody's file into a shape they did not ask for is not the job
+        of a command asked to add one line."""
+        root = self.project(config={
+            "runner_exempt": [{"path": "other.py", "reason": "elsewhere"}],
+            "baseline": ["a line pasted straight out of a run"]})
+        run("--root", root, "accept", self.SIGTERM, "--reason", "r", "--base", "HEAD")
+        raw = self.written(root)
+        self.assertEqual(raw["runner_exempt"],
+                         [{"path": "other.py", "reason": "elsewhere"}])
+        self.assertEqual(raw["baseline"][0], "a line pasted straight out of a run")
+        self.assertEqual(raw["baseline"][1]["line"], self.SIGTERM)
+
+    def test_nothing_new_is_not_an_error(self):
+        root = self.project(config={"baseline": []})
+        run("--root", root, "accept", "--reason", "r", "--base", "HEAD")
+        code, text = run("--root", root, "accept", "--reason", "r", "--base", "HEAD")
+        self.assertEqual(code, 0)
+        self.assertIn("nothing new to accept", text)
 
 
 class AsASubprocess(unittest.TestCase):

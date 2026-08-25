@@ -78,6 +78,18 @@ function assignsAll(src, ...names) {
   ).test(src));
 }
 
+// THE TELLS ARE NAMED CONSTANTS because both halves must accept the same harness. A
+// `.js` harness is audited by this half and a `.py` one by the other, so a tell present
+// in one list and absent from the other means a correct harness passes in one language
+// and is a finding in the other — one config, two verdicts, which is the drift
+// `test_parity.py` exists to stop. Both spellings of the failure name are here for the
+// same reason: `restoreFailed` is what a JavaScript harness writes and `restore_failed`
+// is what a Python one writes, and neither is wrong.
+export const DIGEST_TELLS = ['hexdigest', '.digest(', 'sha256', 'sha1', 'sha512',
+  'md5', 'createHash'];
+export const RESTORE_FAILURE_TELLS = ['RESTORE FAILED', 'NOT RESTORED',
+  'restore_failed', 'restoreFailed', 'did not come back'];
+
 export const PROPERTIES = [
   ['evidence', 'positive proof each suite RAN',
     'no failures reported and no test executed look identical',
@@ -98,13 +110,25 @@ export const PROPERTIES = [
   ['no-tree-writes', 'no scratch state beside the code under test',
     'a clean target is not a clean tree',
     (src) => !/writeFileSync\s*\(\s*(?:path\.)?join\(\s*(?:HERE|__dirname)\s*,\s*['"][^'"]+\.(?:json|tsv|db|jsonl|txt)['"]/.test(src)],
+  // THE TREE CAME BACK, proved rather than assumed because the restore ran.
+  // `restore-in-finally` proves the restore PATH EXECUTES; it says nothing about the
+  // file on disk. A harness that restores from a buffer it read AFTER mutating, that
+  // writes the text back in a different encoding, or that saved one of the two files
+  // it touches, satisfies all six properties above and still leaves the tree wrong —
+  // and every suite after it then scores code nobody wrote. The tell is a digest
+  // taken before and compared after, plus a NAME for the failure when the two
+  // disagree: a digest nothing compares is arithmetic, and a message nothing computes
+  // is a string.
+  ['restore-verified', 'the tree is PROVED to have come back',
+    'a restore that ran is not a restore that worked',
+    (src) => has(src, ...DIGEST_TELLS) && has(src, ...RESTORE_FAILURE_TELLS)],
 ];
 
 export const PROPERTY_KEYS = new Set(PROPERTIES.map(([k]) => k));
 
 /**
- * The rule the six collapse into, worth stating on its own because it is the
- * generalisation and the six are instances.
+ * The rule the seven collapse into, worth stating on its own because it is the
+ * generalisation and the seven are instances.
  */
 export const THREE_QUESTIONS = 'a harness must answer separately whether the suite '
   + 'RAN, whether it FAILED, and whether the failure was the RIGHT one';
@@ -124,7 +148,7 @@ export function auditRunners(root, config, report = new Report()) {
       + '  that still applies to it.');
     return report;
   }
-  report.note('MUTATION RUNNERS — six properties, each a way a harness can lie\n');
+  report.note('MUTATION RUNNERS — seven properties, each a way a harness can lie\n');
   for (const [key, desc, why] of PROPERTIES) {
     report.note(`  ${key.padEnd(20)} ${desc.padEnd(46)} ${why}`);
   }

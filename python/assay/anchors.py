@@ -80,7 +80,35 @@ def anchors_of(path):
     return found, unreadable
 
 
-def source_files(root, exts=(".py", ".js")):
+SOURCE_EXTS = (".py", ".js", ".mjs", ".cjs")
+
+
+def harness_paths(root):
+    """Every mutation harness under root, IN EITHER LANGUAGE, as real paths.
+
+    `find_runners` finds the harnesses this half can READ, which is the `.py` ones.
+    This finds the ones that must be kept OUT OF THE CORPUS, which is all of them: a
+    polyglot repository has a `mutations_x.py` beside a `mutations-y.js`, and a
+    JavaScript harness left in the corpus is a file full of anchor strings for the
+    Python audit to match its own anchors against. One harness's REPLACEMENT text
+    routinely appears in another's, so that produces a confident finding about a file
+    the harness has nothing to do with.
+
+    Reading and excluding are two different questions, and answering both with one
+    walk was the mistake.
+    """
+    out = set()
+    for base, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs
+                         if not d.startswith(".") and d not in
+                         {"node_modules", "__pycache__", "venv", ".venv"})
+        for name in sorted(files):
+            if name.startswith("mutations") and name.endswith(SOURCE_EXTS):
+                out.add(os.path.realpath(os.path.join(base, name)))
+    return out
+
+
+def source_files(root, exts=SOURCE_EXTS):
     out = []
     for base, dirs, files in os.walk(root):
         dirs[:] = sorted(d for d in dirs
@@ -107,8 +135,12 @@ def audit_anchors(root, config, report=None):
     # a common replacement like a disabled branch matches dozens of times in a sibling
     # and produces a confident finding about a file it has nothing to do with.
     #
+    # IN EITHER LANGUAGE, which `find_runners` cannot answer: it finds the harnesses
+    # this half can READ, and what has to leave the corpus is all of them. Reading and
+    # excluding are two different questions.
+    #
     # Anchors point at the code under test. Harnesses are not the code under test.
-    skip = {os.path.realpath(os.path.join(root, rel)) for rel in runners}
+    skip = harness_paths(root)
     corpus = {}
     for path in source_files(root):
         if os.path.realpath(path) in skip:

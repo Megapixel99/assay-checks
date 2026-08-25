@@ -9,6 +9,12 @@
 #   docker run --rm -v "$PWD:/work" assay scan .
 #   docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
 #
+# It is also the one place `assay cross` needs no arranging. The two halves never invoke
+# each other by default — neither package can assume the other is installed — but here
+# both binaries are on the path, so `--with` has something to name:
+#
+#   docker run --rm -v "$PWD:/work" assay cross src/api.py::f src/ui.mjs::g --with assay-js
+#
 # `diff` needs git history, so mount the repository rather than a checkout of the
 # working tree — a shallow clone cannot resolve the base ref and the tool will say so
 # rather than reporting a clean audit over nothing.

@@ -23,7 +23,8 @@ from assay.config import Config  # noqa: E402
 # one replacement made the file unparseable (so the finding was "does not parse", not
 # the property under test) and another left the marker string behind in a second place.
 def runner(evidence=True, partition=True, restore_in_finally=True, sigterm=True,
-           parses=True, named_section=False, tree_write=False):
+           parses=True, named_section=False, tree_write=False,
+           restore_verified=True):
     marker = 'EVIDENCE = "Ran "' if evidence else 'MARKER = "x"'
     ran_check = ('    if EVIDENCE not in out:\n'
                  '        return False, ["DID NOT RUN"]\n') if evidence else (
@@ -52,8 +53,20 @@ def runner(evidence=True, partition=True, restore_in_finally=True, sigterm=True,
     handler = ('    signal.signal(signal.SIGTERM, lambda *a: None)\n' if sigterm
                else '    signal.signal(signal.SIGUSR1, lambda *a: None)\n')
     scratch = ('\nOUT = os.path.join(HERE, "results.json")\n' if tree_write else '')
+    # A restore that RAN is not a restore that WORKED. The verified harness takes a
+    # digest of the bytes before anything is written and compares it after; the other
+    # one restores exactly as diligently and never looks.
+    if restore_verified:
+        verify = ('        after = hashlib.sha256(read_back()).hexdigest()\n'
+                  '        if after != before:\n'
+                  '            print("RESTORE FAILED — the tree did not come back")\n')
+        digest = ('    before = hashlib.sha256(read_back()).hexdigest()\n')
+    else:
+        verify = ''
+        digest = ''
     return (
         'import ast\n'
+        'import hashlib\n'
         'import os\n'
         'import signal\n'
         'import subprocess\n'
@@ -65,6 +78,9 @@ def runner(evidence=True, partition=True, restore_in_finally=True, sigterm=True,
         'def write_back(text):\n'
         '    pass\n'
         '\n\n'
+        'def read_back():\n'
+        '    return b"source"\n'
+        '\n\n'
         'def run_suite():\n'
         '    out = subprocess.run(["x"], capture_output=True, text=True).stdout\n'
         + ran_check +
@@ -72,11 +88,11 @@ def runner(evidence=True, partition=True, restore_in_finally=True, sigterm=True,
         '\n\n'
         'def main():\n'
         '    original = "source"\n'
-        + handler +
+        + digest + handler +
         '    for name, old, new in MUTATIONS:\n'
         '        mutated = original.replace(old, new, 1)\n'
         '        if True:\n'
-        + guard + body + score
+        + guard + body + score + verify
         + scratch)
 
 
@@ -156,6 +172,32 @@ class Properties(unittest.TestCase):
 
     def test_writing_scratch_state_beside_the_code_is_flagged(self):
         self.assertEqual(self.missing(runner(tree_write=True)), {"no-tree-writes"})
+
+    def test_a_restore_nothing_VERIFIES_is_flagged(self):
+        """The seventh property, and the one the other six cannot see.
+
+        This harness restores in a `finally` and so passes `restore-in-finally`. It
+        never reads the file back, so it cannot tell a restore that put the bytes back
+        from one that wrote a stale buffer, or the wrong encoding, or only one of two
+        files. A harness in that state satisfies six properties and still leaves work
+        proceeding on top of deliberately broken code.
+        """
+        self.assertEqual(self.missing(runner(restore_verified=False)),
+                         {"restore-verified"})
+
+    def test_a_DIGEST_NOTHING_COMPARES_does_not_satisfy_it(self):
+        """Arithmetic is not a check. A harness that hashes and never says what a
+        mismatch would mean has computed a number nothing reads, and the property is
+        about the comparison rather than about the import."""
+        src = runner(restore_verified=False) + '\nimport hashlib\nH = hashlib.sha256\n'
+        self.assertIn("restore-verified", self.missing(src))
+
+    def test_a_MESSAGE_NOTHING_COMPUTES_does_not_satisfy_it_either(self):
+        """The mirror of the case above: a string saying the tree did not come back,
+        in a harness with nothing that could ever have found that out."""
+        src = (runner(restore_verified=False)
+               + '\nWHAT_WOULD_BE_PRINTED = "RESTORE FAILED"\n')
+        self.assertIn("restore-verified", self.missing(src))
 
     def test_a_harness_that_does_not_PARSE_is_a_finding_not_a_crash(self):
         rep = audit(project("def broken(:\n"))

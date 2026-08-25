@@ -11,16 +11,24 @@
  */
 
 export { FINDING, LOOK, OK, Item, Report, render } from './verdicts.js';
-export { Config, ConfigError, applyBaseline, load as loadConfig } from './config.js';
+export {
+  Accepted, Config, ConfigError, FAMILIES, applyBaseline, load as loadConfig,
+  writeBaseline,
+} from './config.js';
+export {
+  anchorsOf, auditAnchors, harnessPaths, readTable, sourceFiles,
+} from './anchors.js';
 export {
   PROPERTIES, PROPERTY_KEYS, THREE_QUESTIONS,
   auditDiff, auditRunners, changedFiles, checkExemptions, findRunners,
   guardsPerFile, targetsMentioned,
 } from './checks.js';
 export {
-  BASE_VALUES, LADDER_VERSION, MAX_ARITY, MIN_DISTINCT, Scan,
-  canon, collect, compare, discriminating, displayPath, fileRefusal,
-  functionRefusal, group, isProjection, jsFiles, ladder, ladderKey, outcomeOf,
-  probeFile, projections, reportScan,
+  BASE_VALUES, CROSS_VALUES, CROSS_VALUES_JSON, LADDER_VERSION, MAX_ARITY,
+  MIN_DISTINCT, PROBE_SCHEMA, Scan,
+  canon, collect, compare, compareCross, crossDiscriminating, crossKey, crossLadder,
+  crossOutcome, crossProjections, crossRender, discriminating, discriminationDetail,
+  displayPath, fileRefusal, functionRefusal, group, isProjection, jsFiles, ladder,
+  ladderKey, outcomeOf, probeFile, projections, reportScan,
 } from './sameness.js';
-export { run, parseArgs } from './cli.js';
+export { run, parseArgs, languageOf } from './cli.js';

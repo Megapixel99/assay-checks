@@ -10,7 +10,9 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -224,12 +226,15 @@ test('a broken config exits 2 rather than auditing without it', async () => {
   assert.match(text, /not valid JSON/);
 });
 
-test('anchors names itself as Python-only rather than shipping a weak version', async () => {
-  // A regex that reports confident nonsense about which strings are anchors would be
-  // worse than the gap, and a silent no-op would be worse still.
-  const { code, text } = await cli('anchors');
-  assert.equal(code, 2);
-  assert.match(text, /Python/);
+test('anchors runs here now, and says so when there is nothing to audit', async () => {
+  // It used to exit 2 and point at PyPI. The table is read by IMPORT rather than by
+  // parse, so there is no regex and no approximation — and a project with no harness
+  // is reported rather than passing silently.
+  const { code, text } = await cli('--root', tree({ 'm.js': 'export const x = 1;\n' }),
+    'anchors');
+  assert.equal(code, 0, text);
+  assert.match(text, /no mutation runners found/);
+  assert.doesNotMatch(text, /Python package only/);
 });
 
 // --------------------------------------------------------------------------- //
@@ -261,20 +266,80 @@ test('a PARTIAL run does not call a baseline entry stale', async () => {
   const { code, text } = await cli('--root', root, 'scan', root);
   assert.equal(code, 0, text);
   assert.doesNotMatch(text, /no longer fires/);
-  assert.match(text, /staleness needs/);
+  assert.match(text, /NOT checked for staleness/);
 });
 
-test('and NAMES the half that can, rather than printing 0 stale', async () => {
-  // No command here performs every audit able to produce a baseline line, because
-  // `anchors` is Python-only. `0 stale` would read as "nothing is stale", which is a
-  // different claim from "this half never looked".
+test('runners does not claim it performed every audit either', async () => {
+  // Driven per COMMAND rather than once: `performed` is a literal at each call site,
+  // so a command that claims more than it did is a defect one test cannot see. This
+  // one was NOT DETECTED until it existed.
+  const root = tree({
+    'assay.json': JSON.stringify({ baseline: ['a scan-only finding'] }),
+    'm.js': 'export function a(n) { return n * 2; }\n',
+  });
+  const { code, text } = await cli('--root', root, 'runners');
+  assert.equal(code, 0, text);
+  assert.doesNotMatch(text, /no longer fires/);
+  assert.match(text, /NOT checked for staleness/);
+});
+
+test('a line that NAMES its command is answered by that command', async () => {
+  // The point of `from`. `assay scan` knows perfectly well whether a `scan` finding
+  // fired, and needed a whole `assay all` to be allowed to say so.
+  const root = tree({
+    'assay.json': JSON.stringify({
+      baseline: [{ line: 'a scan finding long gone', reason: 'read it', from: 'scan' }],
+    }),
+    'm.js': 'export function a(n) { return n * 2; }\n',
+  });
+  const { code, text } = await cli('--root', root, 'scan', root);
+  assert.equal(code, 1, text);
+  assert.match(text, /no longer fires/);
+});
+
+test('a line from ANOTHER command is counted rather than called stale', async () => {
+  const root = tree({
+    'assay.json': JSON.stringify({
+      baseline: [{ line: 'an anchors finding', reason: 'read it', from: 'anchors' }],
+    }),
+    'm.js': 'export function a(n) { return n * 2; }\n',
+  });
+  const { code, text } = await cli('--root', root, 'scan', root);
+  assert.equal(code, 0, text);
+  assert.doesNotMatch(text, /no longer fires/);
+  assert.match(text, /NOT checked for staleness \(anchors: 1\)/);
+});
+
+test('all WITHOUT --scan does not claim it performed the sameness half', async () => {
+  const root = tree({
+    'assay.json': JSON.stringify({
+      baseline: [{ line: 'same answer (arity1/v3): a.js::x, b.js::y', reason: 'read them', from: 'scan' }],
+    }),
+    'm.js': 'export const x = 1;\n',
+  });
+  // The exit code is not asserted: a temp directory is not a git repository, so
+  // `diff` reports one of its own findings here and the run fails for a reason that
+  // has nothing to do with the baseline.
+  const { text } = await cli('--root', root, 'all', '--base', 'HEAD');
+  assert.doesNotMatch(text, /no longer fires/);
+  assert.match(text, /NOT checked for staleness \(scan: 1\)/);
+});
+
+test('...and `all` DOES call one stale, now that this half can run every audit', async () => {
+  // The gap that used to make this impossible is closed: `anchors` reads a mutation
+  // table by importing it, so `assay all` here performs every audit able to produce a
+  // baseline line. A line that no longer fires is somebody's fixed problem with the
+  // record still claiming otherwise.
   const root = tree({
     'assay.json': JSON.stringify({ baseline: ['a finding long gone'] }),
     'm.js': 'export function a(n) { return n * 2; }\n',
   });
-  const { text } = await cli('--root', root, 'scan', root);
-  assert.match(text, /staleness needs the Python `assay all`/);
-  assert.match(text, /anchors/);
+  // `--scan` is what makes the run complete: without it the sameness half did not
+  // run, so an UNTAGGED line — one that names no command — is still unchecked.
+  const { code, text } = await cli('--root', root, 'all', '--base', 'HEAD',
+    '--scan', root);
+  assert.equal(code, 1, text);
+  assert.match(text, /no longer fires/);
 });
 
 test('all folds in the sameness half when asked', async () => {
@@ -351,6 +416,225 @@ test('the package scans ITSELF clean', async () => {
   // scanned by its own scanner.
   const { code, text } = await cli('scan', path.join(ROOT, 'js', 'src'));
   assert.equal(code, 0, text);
+});
+
+// --------------------------------------------------------------------------- //
+// accept: the command that writes the baseline line for you
+// --------------------------------------------------------------------------- //
+// The 0.2.2 changelog records shipping a config example that baselined a `look`. A
+// look never fails the run, so the line could never be suppressed and could never
+// expire: a record of nothing, indistinguishable from a record of something already
+// fixed. An example is fixed once per copy of it; a command that cannot make the
+// mistake is fixed once.
+
+const HARNESS = "export const MUTATIONS = [['label', '  return x + 1;', '  return x - 1;']];\n";
+const UNREADABLE = "export const MUTATIONS = [['a label', 'b', 'c', 'd', 'e', 'f']];\n";
+const SIGTERM = 'mutations-x.js: no `sigterm` (SIGTERM does not run `finally`; '
+  + 'a kill leaves the tree broken)';
+
+const acceptProject = (body = HARNESS, config = null) => {
+  const files = { 'mutations-x.js': body };
+  if (config) files['assay.json'] = JSON.stringify(config);
+  return tree(files);
+};
+const written = (root) => JSON.parse(readFileSync(path.join(root, 'assay.json'), 'utf8'));
+
+test('accept REFUSES without a reason', async () => {
+  // The same rule an exemption follows: an acceptance without one cannot be told from
+  // an oversight, and this is the table that rots fastest.
+  const root = acceptProject();
+  const { code, text } = await cli('--root', root, 'accept', '--base', 'HEAD');
+  assert.equal(code, 2);
+  assert.match(text, /--reason/);
+  assert.ok(!existsSync(path.join(root, 'assay.json')));
+});
+
+test('accept writes the LINE, the REASON and what FIRES it', async () => {
+  const root = acceptProject();
+  const { code, text } = await cli('--root', root, 'accept', SIGTERM,
+    '--reason', 'a tempdir, so a kill leaves nothing mutated', '--base', 'HEAD');
+  assert.equal(code, 0, text);
+  assert.deepEqual(written(root).baseline, [{
+    line: SIGTERM,
+    reason: 'a tempdir, so a kill leaves nothing mutated',
+    from: 'runners',
+  }]);
+});
+
+test('what accept wrote is then SUPPRESSED by the audit that fires it', async () => {
+  // The round trip is the point: the entry is the finding's exact text, taken from the
+  // run rather than typed, which is what makes whole-line matching safe.
+  const root = acceptProject();
+  await cli('--root', root, 'accept', SIGTERM, '--reason', 'r', '--base', 'HEAD');
+  const { text } = await cli('--root', root, 'runners');
+  assert.match(text, /1 accepted/);
+  assert.ok(!text.split('FINDINGS').pop().includes(SIGTERM));
+});
+
+test('accept REFUSES a look', async () => {
+  const root = acceptProject(UNREADABLE);
+  const { text: anchorsText } = await cli('--root', root, 'anchors');
+  const look = anchorsText.split('\n').find((l) => l.includes('  look     '))
+    .split('look     ')[1].trim();
+  const { code, text } = await cli('--root', root, 'accept', look, '--reason', 'r',
+    '--base', 'HEAD');
+  assert.equal(code, 2);
+  assert.match(text, /`look` never fails the run/);
+  assert.ok(!existsSync(path.join(root, 'assay.json')));
+});
+
+test('accept REFUSES a line nothing printed', async () => {
+  // Accepting a line that does not fire writes an entry that is stale the moment it
+  // lands, and the file then arrives already claiming something untrue.
+  const root = acceptProject();
+  const { code, text } = await cli('--root', root, 'accept', 'a finding I invented',
+    '--reason', 'r', '--base', 'HEAD');
+  assert.equal(code, 2);
+  assert.match(text, /stale the moment it lands/);
+});
+
+test('accept REFUSES a line already accepted', async () => {
+  const root = acceptProject(HARNESS, {
+    baseline: [{ line: SIGTERM, reason: 'read it', from: 'runners' }],
+  });
+  const { code, text } = await cli('--root', root, 'accept', SIGTERM, '--reason', 'r',
+    '--base', 'HEAD');
+  assert.equal(code, 2);
+  assert.match(text, /already in the baseline/);
+});
+
+test('with no LINE, accept takes every NEW finding', async () => {
+  const root = acceptProject();
+  const { code } = await cli('--root', root, 'accept', '--reason', 'adopting this',
+    '--base', 'HEAD');
+  assert.equal(code, 0);
+  const entries = written(root).baseline;
+  assert.ok(entries.some((e) => e.line === SIGTERM));
+  assert.ok(entries.every((e) => e.reason === 'adopting this'));
+});
+
+test('accept leaves every OTHER key and every existing entry alone', async () => {
+  // Rewriting somebody's file into a shape they did not ask for is not the job of a
+  // command asked to add one line.
+  const root = acceptProject(HARNESS, {
+    runner_exempt: [{ path: 'other.js', reason: 'elsewhere' }],
+    baseline: ['a line pasted straight out of a run'],
+  });
+  await cli('--root', root, 'accept', SIGTERM, '--reason', 'r', '--base', 'HEAD');
+  const raw = written(root);
+  assert.deepEqual(raw.runner_exempt, [{ path: 'other.js', reason: 'elsewhere' }]);
+  assert.equal(raw.baseline[0], 'a line pasted straight out of a run');
+  assert.equal(raw.baseline[1].line, SIGTERM);
+});
+
+test('nothing new is not an error', async () => {
+  const root = acceptProject(HARNESS, { baseline: [] });
+  await cli('--root', root, 'accept', '--reason', 'r', '--base', 'HEAD');
+  const { code, text } = await cli('--root', root, 'accept', '--reason', 'r',
+    '--base', 'HEAD');
+  assert.equal(code, 0);
+  assert.match(text, /nothing new to accept/);
+});
+
+// --------------------------------------------------------------------------- //
+// why: the census, for one name
+// --------------------------------------------------------------------------- //
+// The census gives aggregate refusal reasons with counts, which is the right shape for
+// a tree and the wrong shape for a question: somebody who expected a particular
+// function to be probed cannot read `no arguments 274` and learn whether theirs is one
+// of them. Every case here is a `look` or an `ok` and never a finding.
+
+const WHY_FIXTURE = `
+export function double(x) { return x + x; }
+export function constant(x) { void x; return 1; }
+export function identity(x) { return x; }
+export function nullary() { return 1; }
+export function throwsOnEverything(x) { return x.noSuchProperty.deeper; }
+`;
+
+async function why(name, files = { 'm.js': WHY_FIXTURE }) {
+  const root = tree(files);
+  return cli('why', `${path.join(root, Object.keys(files)[0])}::${name}`);
+}
+
+test('a PROBED function says so rather than staying silent', async () => {
+  // "It was probed" and "nothing looked at it" are different claims, and only one of
+  // them is evidence.
+  const { code, text } = await why('double');
+  assert.equal(code, 0, text);
+  assert.match(text, /probed on arity1\//);
+  assert.match(text, /distinct value/);
+});
+
+test('a CONSTANT and a PROJECTION are told apart', async () => {
+  // The census collapses both into `not discriminated by the ladder`, which is one
+  // reason with two very different answers: a constant needs a wider ladder and a
+  // projection needs a different function.
+  const constant = (await why('constant')).text;
+  const projection = (await why('identity')).text;
+  assert.match(constant, /it is a constant/);
+  assert.doesNotMatch(constant, /projection/);
+  assert.match(projection, /a projection/);
+  assert.doesNotMatch(projection, /it is a constant/);
+});
+
+test('a zero-arity function gets the gate the census counts', async () => {
+  const { text } = await why('nullary');
+  assert.match(text, /no arguments/);
+});
+
+test('a refused FILE is answered at the file level, not per function', async () => {
+  // Python lifts one function's source out and never imports the module; here a
+  // function object only exists once its module has been evaluated, so a file that
+  // reads the clock is refused WHOLE and none of its functions were ever looked at.
+  // A per-function reason would be a reason invented after the fact.
+  const { code, text } = await why('fine', {
+    'm.js': 'export function fine(x) { return x + x; }\n'
+      + 'export function clock() { return Date.now(); }\n',
+  });
+  assert.equal(code, 0, text);
+  assert.match(text, /the FILE was refused: reads the clock/);
+  assert.match(text, /never loaded/);
+});
+
+test('a vector that THREW EVERYWHERE is not called a constant', async () => {
+  // A function the ladder never reached is a different problem from one it reached and
+  // found constant: the first needs inputs of another shape, the second needs a wider
+  // ladder. Both are `not discriminated`, and saying which is the point of `why`.
+  const { text } = await why('throwsOnEverything');
+  assert.match(text, /threw on all/);
+  assert.doesNotMatch(text, /it is a constant/);
+});
+
+test('why NEVER produces a finding', async () => {
+  for (const name of ['double', 'constant', 'identity', 'nullary', 'throwsOnEverything']) {
+    // eslint-disable-next-line no-await-in-loop
+    const { code, text } = await why(name);
+    assert.equal(code, 0, `${name}: ${text}`);
+  }
+});
+
+test('an unexported function says WHY it is unreachable rather than "cannot resolve"', async () => {
+  // The gap is real and the reason is worth printing: a module's functions arrive
+  // through its exports, and finding an unexported declaration would mean reading
+  // source with a regex.
+  const { code, text } = await why('hidden', {
+    'm.js': 'function hidden(x) { return x; }\nexport function shown(x) { return x + 1; }\n',
+  });
+  assert.equal(code, 2);
+  assert.match(text, /EXPORTS no function named hidden/);
+  assert.match(text, /shown/);
+});
+
+test('a reference with no separator exits 2', async () => {
+  const { code, text } = await cli('why', 'justaname');
+  assert.equal(code, 2);
+  assert.match(text, /FILE::NAME/);
+});
+
+test('why needs exactly one reference', async () => {
+  const { code } = await cli('why');
+  assert.equal(code, 2);
 });
 
 // --------------------------------------------------------------------------- //
@@ -443,12 +727,15 @@ test('no subcommand under --json is an error object, not the usage text', async 
   assert.equal(data.error, 'no subcommand');
 });
 
-test('anchors under --json names the gap rather than printing prose', async () => {
-  // The command this half does not implement must still answer in the shape the
-  // caller asked for. Exit 2 either way: `anchors` here is a run that cannot happen.
-  const { code, data } = await payload('--json', 'anchors');
-  assert.equal(code, 2);
-  assert.match(data.error, /Python package only/);
+test('anchors under --json is a report like any other command now', async () => {
+  // It used to exit 2 here and name the gap. The gap is closed — the table is read by
+  // IMPORT rather than by parse — so what has to hold is that it emits the same
+  // envelope every other command does, with no error.
+  const root = tree({ 'm.js': 'export const x = 1;\n' });
+  const { code, data } = await payload('--root', root, '--json', 'anchors');
+  assert.equal(code, 0);
+  assert.equal(data.error, null);
+  assert.ok(data.notes.some((n) => n.includes('no mutation runners found')));
 });
 
 test('the census is DATA rather than the printed equation', async () => {
@@ -468,16 +755,35 @@ test('a command that ran no scan says null rather than zero', async () => {
   assert.equal(data.scan, null);
 });
 
-test('the baseline carries WHY this half could not check staleness', async () => {
-  // No run on this half is complete — `anchors` is Python-only — so an empty `stale`
-  // list without that flag would be this half claiming it checked and found none.
+test('the baseline carries WHAT this run could not check for staleness', async () => {
+  // The caveat travels as data, and it is a LIST rather than a boolean now.
+  // Completeness stopped being a property of the run when a baseline entry learned to
+  // name the command that fires it: `performed` says what this run audited, and
+  // `unchecked` names each entry it could not have seen fire. A consumer reading
+  // `stale: []` and nothing else would read "nothing is stale".
   const root = tree({
     'm.js': TWINS,
     'assay.json': JSON.stringify({ baseline: ['same answer (arity1/v3): x, y'] }),
   });
   const { data } = await payload('--root', root, '--json', 'scan', root);
-  assert.equal(data.baseline.complete, false);
-  assert.match(data.baseline.incomplete_because, /anchors/);
+  assert.deepEqual(data.baseline.performed, ['scan']);
+  assert.deepEqual(data.baseline.stale, []);
+  assert.deepEqual(data.baseline.unchecked,
+    [{ line: 'same answer (arity1/v3): x, y', from: null }]);
+});
+
+test('a TAGGED baseline entry is answered by one command in JSON too', async () => {
+  // The per-line rule, in the shape a machine reads. `assay scan` performed the audit
+  // that fires this line, so it is stale — and nothing is left unchecked.
+  const root = tree({
+    'm.js': TWINS,
+    'assay.json': JSON.stringify({
+      baseline: [{ line: 'a scan finding long gone', reason: 'read it', from: 'scan' }],
+    }),
+  });
+  const { data } = await payload('--root', root, '--json', 'scan', root);
+  assert.deepEqual(data.baseline.stale, ['a scan finding long gone']);
+  assert.deepEqual(data.baseline.unchecked, []);
 });
 
 test('--json prints JSON AND NOTHING ELSE', async () => {

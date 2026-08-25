@@ -8,7 +8,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from assay.anchors import anchors_of, audit_anchors  # noqa: E402
+from assay.anchors import (anchors_of, audit_anchors,  # noqa: E402
+                           harness_paths)
 from assay.config import Config  # noqa: E402
 
 
@@ -169,6 +170,35 @@ class Auditing(unittest.TestCase):
                 ']\n'})
         self.assertEqual(rep.exit_code(), 0,
                          [i.message for i in rep.findings])
+
+    def test_a_JAVASCRIPT_harness_leaves_the_corpus_too(self):
+        """`find_runners` finds the harnesses this half can READ, which is the `.py`
+        ones. What has to leave the corpus is all of them.
+
+        A polyglot repository has a `mutations-x.js` beside a `mutations_a.py`, and a
+        JavaScript harness left in the corpus is a file full of anchor strings for this
+        audit to match its own anchors against — a confident finding about a file the
+        Python harness has nothing to do with. Reading and excluding are two different
+        questions, and answering both with one walk was the mistake.
+        """
+        rep = self.audit({
+            "a.py": TARGET,
+            "mutations_a.py":
+                'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n',
+            # The JavaScript harness carries the same anchor, as its own literal.
+            "mutations-b.js":
+                "export const MUTATIONS = [['label', '    return x + 1',"
+                " '    return x - 1']];\n"})
+        self.assertEqual(rep.exit_code(), 0,
+                         [i.message for i in rep.findings])
+
+    def test_harness_paths_finds_BOTH_languages(self):
+        root = project({"mutations_a.py": "MUTATIONS = []\n",
+                        "mutations-b.js": "export const MUTATIONS = [];\n",
+                        "mutations-c.mjs": "export const MUTATIONS = [];\n",
+                        "notaharness.js": "export const x = 1;\n"})
+        names = {os.path.basename(p) for p in harness_paths(root)}
+        self.assertEqual(names, {"mutations_a.py", "mutations-b.js", "mutations-c.mjs"})
 
     def test_an_anchor_pointing_only_at_a_HARNESS_counts_as_unmatched(self):
         """The corollary, and the reason the rule is safe: anchors point at the code

@@ -15,8 +15,255 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
-## Unreleased
+## 0.3.0
 
+**A MINOR bump, and the rule says why:** a new check is a minor bump even though it can
+turn a passing build red. This release adds a seventh runner property, an `anchors`
+implementation for the JavaScript half, and three commands, so a tree that was green on
+0.2.2 may not be on 0.3.0. Pin exactly if that matters, and `assay accept` is the
+shortest route through the backlog.
+
+**Two contract changes to read before upgrading.** A `baseline` entry may now be an
+object, and the old bare string is still legal, so no config has to move. The `--json`
+payload's `baseline` object drops `complete`/`incomplete_because` for `performed` and
+`unchecked` — `--json` has not been in a release, so nothing published ever carried the
+older shape.
+
+### `assay cross`: a Python function against a JavaScript one
+
+A validator reimplemented in a Django backend and a Node frontend is the highest-value
+duplication a polyglot repository has, and it is exactly what nobody writes a
+differential test for — because writing one means agreeing, by hand, on what `False` and
+`false` have in common.
+
+```bash
+assay cross src/api.py::shout src/ui.mjs::yell --with assay-js
+
+assay probe src/ui.mjs::yell > yell.json     # or: one half writes a record,
+assay cross src/api.py::shout yell.json      # the other reads it
+```
+
+**One ladder, not two that resemble each other.** `BASE_VALUES` is a hand-written list
+per language, and the strongest thing that could be said about the pair was that they
+cover the same *shapes* — the languages have different primitives, so comparing lengths
+would fail for a correct reason. Enough for two Python functions; nothing like enough
+here, where two lists meant to hold the same values that quietly stopped is the entire
+hazard. The cross ladder is **one JSON document** carried verbatim by both halves;
+`test_parity.py` compares the two texts, and the ladder key carries a **digest of the
+rungs**, so a comparison across a changed ladder is refused by the branch that already
+refuses a mismatched arity.
+
+**One vocabulary for outcomes.** Every value renders as canonical JSON. The three lossy
+mappings are choices about which mistake to make: an integral float renders as an integer
+(JavaScript has one number type), `undefined` and `null` are one absence (Python has one
+and JavaScript has two), and a Python `tuple` renders as an array. Anything JSON cannot
+hold — bytes, a `Map`, a `Date`, a class instance — is refused rather than approximated,
+and one such outcome makes the whole comparison a `look`. `NaN` and the infinities are
+spelled out, because `JSON.stringify` turns all three into `null`.
+
+**A raise carries no name.** The two error taxonomies genuinely diverge — `d['x']` is a
+`KeyError` in Python and `undefined` in JavaScript — so comparing names would make every
+honest pair `differs`, and declaring them equal is worse, because `same` is the verdict
+that *fails*. Every raise renders as one token, which is the whole of how a rung where
+**both** sides raised gets masked: two of them can never be a witness, and the vacuity
+guard counts only returned values so two of them can never be evidence either. A rung
+where **one** raised and the other answered stays a witness, and it is the most
+interesting kind there is.
+
+The first version of that masking was a branch in the comparison loop with a comment
+explaining what it did — and a mutation removing it changed nothing, because two raises
+already render alike. The guard and its absence produced the same observable, which is
+precisely the failure this package exists to report, so the branch is gone and the
+parity test pins the rendering it restated.
+
+**The two halves do not invoke each other.** Neither package can assume the other is
+installed, and a command that shells out to a binary that may not exist fails in a way
+that reads like the code being wrong. `assay probe` writes a record and `assay cross`
+reads one; `--with CMD` runs that first step when both are present. Two references in the
+same language are a `look` pointing at `pair`, which compares them on their own
+language's fuller ladder.
+
+`assay probe` writes JSON on stdout with its keys sorted in both halves, and carries an
+`assay_probe` schema number checked on the way in: comparing a new answer against the
+wrong earlier answer is precisely the defect a difference checker exists to catch.
+
+### A baseline entry can carry a `reason`, and the command that fires it
+
+`runner_exempt` requires a `reason` because **an exemption without one cannot be told
+from an oversight**. `baseline` was a bare list of strings and got no such treatment,
+though it is the table that accumulates fastest and rots first: a fixed finding leaves
+its line behind in silence.
+
+An entry is now the finding's exact text **or** an object carrying it as `line`:
+
+```json
+{"line": "same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug",
+ "reason": "one is the URL path form; merging them needs the router change first",
+ "from": "scan"}
+```
+
+The bare string stays legal, and that is not politeness about old configs: adopting this
+means pasting lines out of a run, and a format that refuses the paste is a format nobody
+adopts. In the object form `reason` is required, on the same terms an exemption's is.
+
+**`from` makes staleness a property of the line rather than of the run.** Naming a
+command that cannot produce a finding is a hard error rather than a line nobody can ever
+check — the same both-directions rule every other table here follows.
+
+### `assay accept`: a command that cannot baseline a `look`
+
+```bash
+assay accept --reason "one is the URL path form; merging needs the router change"
+assay accept "same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug" --reason "..."
+```
+
+With no line it takes every new finding; with one it takes that one. It fills in `from`
+from the audit that actually produced the line, so the check that fires it is the one
+that can later call it stale, and `--reason` is required.
+
+**It refuses a `look`.** A look never fails the run, so a baselined one could never be
+suppressed and never expire — a record of nothing, indistinguishable from a record of
+something already fixed. The 0.2.2 changelog records shipping a config example that
+baselined a look; it was corrected by editing the example, and an example is corrected
+once per copy of it.
+
+**It refuses a line nothing printed**, because an entry that does not fire is stale the
+moment it lands. Nothing is typed by hand either: the entry is the finding's exact text,
+taken from the run, which is what makes whole-line matching safe. Other keys in the file
+and existing bare-string entries are left exactly as they were.
+
+`all` and `accept` share one definition of what a complete run is. Two lists that had to
+agree about what "every audit" means would be the duplication this package exists to
+find, and they would disagree in silence: `accept` would tag a line with a command `all`
+no longer performs, and that line could then never be called stale.
+
+### Per-line baseline staleness
+
+Staleness used to need `assay all`, because `assay runners` cannot produce a finding
+that only `diff` reports and calling one stale from a partial run flagged every other
+command's lines as fixed — the audit reporting a problem with its own config, on a clean
+tree, on every run. The fix was a whole-run flag: correct, and blunt enough to be its own
+problem. Every line in every other command went unchecked, and the run printed a
+disclaimer where a number belongs.
+
+A line that names the command firing it can be answered by that command alone. Each entry
+now lands in exactly one of three places:
+
+```
+BASELINE assay.json — 3 accepted, 0 new, 1 stale, 2 NOT checked for staleness
+                      (anchors: 1; no `from`, so it needs `assay all`: 1)
+```
+
+*Stale* is a line this run could have seen fire and did not. *Not checked* is one it
+could not have seen at all — **counted rather than folded into the stale number**,
+because `0 stale` from a run that never looked reads as "nothing is stale" and those are
+different claims. An untagged line keeps the old rule.
+
+**A defect this made visible: `assay all` without `--scan` claimed to be complete.** The
+docstring said the completeness flag tracked whether a scan had run; the code passed
+`complete=True` either way, so a `same answer` line in the baseline was called stale by a
+run that never scanned anything, on a clean tree. `scan` now joins the performed set only
+when a scan actually ran, and **`assay all --scan PATH` is the complete run**.
+
+### `assay anchors` runs under Node, by IMPORT rather than by parse
+
+It used to exit 2 and point at PyPI, and the reason was sound: pulling a mutation table
+out of source needs a real parser, JavaScript has none in its standard library, this
+package has no dependencies, and **a regex reporting confident nonsense about which
+strings are anchors would be worse than the gap**.
+
+The gap closes from the other side. The JavaScript half already loads modules, so a
+table that is **exported** is readable as *data*:
+
+```javascript
+export const MUTATIONS = [
+  ['the negative guard stops firing', "if (x < 0) throw new RangeError('x');", 'if (false) {}'],
+];
+```
+
+A property access. No parser, no dependency, no approximation anywhere in the path. The
+rule is the same one the Python half enforces and `test_parity.py` pins it: the anchor is
+the **second-to-last string**, which follows from `replace(old, new)` rather than from a
+convention about column order, and both halves bound the readable shapes identically so
+an entry one offers as unreadable is not silently guessed at by the other.
+
+**The cost is stated rather than hidden.** The harness gets imported, so guard `main()`
+behind the entry-point check every program in this package already carries — a harness
+that does work at import time will do that work, in a child process that cannot reach
+your session but on the real tree. In exchange a **computed** anchor is simply a string
+here, where the Python half can only report it as a shape it cannot read. A harness that
+exports no table is a `look`, never a finding.
+
+**Every harness leaves the corpus, in either language.** `find_runners` answers which
+harnesses a half can *read*; what has to leave the corpus is *all* of them. A polyglot
+repository has a `mutations-x.js` beside a `mutations_a.py`, and a JavaScript harness
+left in the Python corpus is a file full of anchor strings for that audit to match its
+own anchors against — a confident finding about a file the harness has nothing to do
+with. Reading and excluding are two different questions, and answering both with one
+walk was the mistake.
+
+**Under Node, `assay all` can now call a baseline line stale.** No JavaScript run used
+to perform every audit able to produce one, so the half said so instead of printing a
+`0 stale` that reads as "nothing is stale". It performs them all now.
+
+### `assay why FILE::NAME`: the census, for one name
+
+The census prints refusal reasons with counts, which is the right shape for a tree and
+the wrong shape for a question. Somebody who expected a particular function to be probed
+cannot read `no arguments 274` and learn whether theirs is one of the 274, and guessing
+which of eight gates rejected it is the work the census was supposed to save them.
+
+`why` prints the gate that refused **this** function, or says it was probed and on which
+ladder. It never produces a finding — it reports what the tool did and decides nothing —
+so a refusal is a `look` and a probe is an `ok`, printed rather than left silent for the
+reason every other `ok` is.
+
+**It splits the one reason the census cannot split.** `not discriminated by the ladder`
+covers three different situations: a **constant**, a **projection**, and a vector that
+raised on every rung. They need a wider ladder, a different function, and inputs of
+another shape, and the census sends all three to the same place. The explanation is
+**deduced** rather than re-decided: `discrimination_detail` defers to `discriminating`
+and then says which branch refused, because a second decider for one question is two
+answers that can disagree.
+
+**A `look` now prints its detail**, exactly as a finding does — that is where `why` puts
+its whole answer, and dropping it answered half the question.
+
+**Three answers where `resolve` had one.** No such file, a file that does not parse, and
+a file with no such function send you to three different places; `cannot resolve` sends
+you to none of them. On the JavaScript half a name that is not exported says so, with
+the reason: a module's functions arrive through its exports, and finding an unexported
+declaration would mean reading source with a regex.
+
+On the JavaScript half the answer is often at the **file** level. A file that reaches for
+the clock is refused whole, so none of its functions were ever looked at — reporting a
+per-function reason for a file nobody opened would be a reason invented after the fact.
+
+### A seventh runner property: `restore-verified`
+
+`restore-in-finally` proves the restore **path executes**. It does not prove the tree
+came back. A harness that restores from a buffer it read *after* mutating, that writes
+the text back in a different encoding, or that saved one of the two files it touches,
+satisfies all six of the other properties and still leaves the working tree wrong —
+and every suite after that one scores code nobody wrote, at a tally that reads exactly
+like a clean run.
+
+Hashing before and comparing after is the check. The detector wants **both halves**:
+a digest nothing compares is arithmetic, and a message nothing computes is a string,
+so it looks for a digest *and* a named failure for the case where the two disagree.
+The tells live in one list per half and `test_parity.py` pins them equal, because this
+is the one property whose two detectors read different files — a `.py` harness is
+audited by the Python half and a `.js` one by the JavaScript half — and a tell in one
+list and not the other means a correct harness passes in one language and is a finding
+in the other.
+
+`python/tests/mutations_assay.py` now carries the property it audits for: it digests
+the **bytes** of every file it will touch before writing anything and compares them
+after the last restore, and a mismatch exits 2 whatever the mutation score was. The
+digest is over bytes rather than over decoded text on purpose — hashing the string
+would agree with itself after a restore that wrote the file back in a different
+encoding, which is one of the three ways a restore runs and still leaves the tree
+wrong.
 ### `--json`: the same Report, in the shape a machine can read
 
 Every subcommand takes `--json`, on either side of the subcommand name like every other
@@ -41,9 +288,13 @@ files stay a separate population from functions. A command that ran no scan emit
 rather than `0`, because zero probed functions and no sameness half at all are different
 claims.
 
-**The baseline's caveat travels as data.** `complete` is false with `incomplete_because`
-naming why, rather than an empty `stale` list that reads as *checked, found none*. Under
-Node it is always false, since `anchors` is Python-only.
+**The baseline's caveat travels as data.** `performed` says what this run audited and
+`unchecked` names every entry it could not have seen fire, rather than an empty `stale`
+list that reads as *checked, found none*. (This shipped with a `complete` boolean and an
+`incomplete_because` string; both are gone in the same unreleased cycle, because
+completeness stopped being a property of the run — see *Per-line baseline staleness*
+below. `schema` stays at 1: version 1 has never been released, so there is nothing for a
+consumer to have pinned.)
 
 **Keys are sorted all the way down, in both halves**, so one contract prints as one
 document rather than two: `JSON.stringify` emits insertion order and `json.dump` is

@@ -163,7 +163,14 @@ export function render(report, write, { verbose = true, showOk = true } = {}) {
     write(`\nLOOK — ${looks.length} item(s) a rule applies to and this tool CANNOT decide.\n`);
     write('       These never fail the run. A check that cries wolf is one\n');
     write('       nobody runs, and an unread check is worse than none.\n');
-    for (const item of looks) write(`  look     ${item.message}\n`);
+    for (const item of looks) {
+      write(`  look     ${item.message}\n`);
+      // A LOOK'S DETAIL IS PRINTED, exactly as a finding's is. A `look` says the tool
+      // cannot decide; the detail is where it says what it DID find out on the way to
+      // not deciding, and dropping it left `assay why` reporting the gate's name with
+      // the reason it gave silently discarded.
+      if (item.detail) write(`           ${item.detail}\n`);
+    }
   }
   const findings = report.findings;
   if (findings.length) {

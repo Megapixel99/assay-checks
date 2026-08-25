@@ -2,6 +2,9 @@
 
     could those checks have failed?      assay runners | anchors | diff | all
     does the tree already answer this?   assay scan | pair | search
+    why was my function not probed?      assay why FILE::NAME
+    ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
+    I have read this one and accept it   assay accept --reason "..." [LINE]
 
 Both halves ask about work that ALREADY PASSES ITS TESTS, which is why neither is a
 linter and neither is a test runner. A green suite tells you the code did what the
@@ -21,15 +24,22 @@ read, and an unread check occupies the place where a working one would go.
 """
 
 import argparse
+import io
+import json
 import os
+import shlex
+import subprocess
 import sys
 
 from . import __version__
 from .anchors import audit_anchors
 from .checks import audit_diff, audit_runners, check_exemptions
-from .config import ConfigError, apply_baseline, load
-from .sameness import (collect, compare, group, ladder, ladder_key, probe,
-                       report_scan, resolve, resolve_source)
+from .config import (CONFIG_NAMES, ConfigError, apply_baseline, load,
+                     write_baseline)
+from .sameness import (PROBE_SCHEMA, collect, compare, compare_cross,
+                       cross_key, cross_ladder, discriminating,
+                       discrimination_detail, group, ladder, ladder_key, probe,
+                       report_scan, resolve, resolve_source, resolve_why)
 from .verdicts import FINDING, Report, render, render_json
 
 
@@ -58,42 +68,69 @@ def _fail(args, out, message):
     return 2
 
 
-def _finish(args, report, config, out, complete=False):
+def _baseline_summary(accepted, still, stale, unchecked):
+    """The counts, and never a number that reads as a claim nobody checked.
+
+    `0 stale` from a run that could not have seen those lines fire reads as "nothing
+    is stale", which is a different claim from "this run never looked". So the entries
+    nobody could check are counted apart from the ones that were, and the reason each
+    was skipped is named — the same rule the census follows for functions it refused.
+    """
+    parts = ["%d accepted" % accepted, "%d new" % len(still), "%d stale" % len(stale)]
+    if unchecked:
+        why = {}
+        for entry in unchecked:
+            key = entry.produced_by or "no `from`, so it needs `assay all`"
+            why[key] = why.get(key, 0) + 1
+        parts.append("%d NOT checked for staleness (%s)"
+                     % (len(unchecked),
+                        "; ".join("%s: %d" % kv for kv in sorted(why.items()))))
+    return ", ".join(parts)
+
+
+def _finish(args, report, config, out, performed=()):
     """Apply the baseline, render, and return the exit code.
 
-    STALE DETECTION NEEDS A COMPLETE RUN, and getting this wrong made the tool cry
-    wolf at itself. A baseline line records a finding you have read and accepted; it
-    goes stale when it stops firing. But `assay runners` cannot produce a finding that
-    only `diff` reports, so checking staleness there flags every `diff` line as fixed —
-    the audit reporting a problem with its own config, on a clean tree, every run.
+    STALENESS IS PER LINE, and getting it wrong in either direction is a defect this
+    tool shipped. `assay runners` cannot produce a finding that only `diff` reports, so
+    checking staleness there once flagged every `diff` line as fixed — the audit
+    reporting a problem with its own config, on a clean tree, every run. The first fix
+    was to check staleness only from `assay all`: correct, and blunt enough that every
+    line in every other run went unchecked and the run printed a disclaimer where a
+    number belongs.
 
-    So a line that does not fire is only called stale when the run performed EVERY
-    audit that can produce one, which is `assay all`. Every command still suppresses
-    accepted findings, because that direction is safe from any command: a line that
-    fires is a line that fires.
+    `performed` is what this run actually audited, so a baseline entry that names the
+    command firing it can be answered by that command alone. Everything else is counted
+    as NOT CHECKED rather than silently treated as fresh.
+
+    Suppression is unconditional, because that direction is safe from any run: a line
+    that fires is a line that fires.
     """
     verbose = args.verbose and not args.as_json
     if config.baseline:
-        still, stale = apply_baseline(report.findings, config.baseline)
+        still, stale, unchecked = apply_baseline(report.findings, config.baseline,
+                                                 performed)
         accepted = len(report.findings) - len(still)
         report.items = [i for i in report.items if i.verdict != FINDING] + still
-        if complete:
-            for line in stale:
-                report.finding("baseline line no longer fires (fixed? then delete "
-                               "it): %s" % line)
+        for entry in stale:
+            report.finding("baseline line no longer fires (fixed? then delete "
+                           "it): %s" % entry.line)
         # THE CAVEAT TRAVELS AS DATA rather than as a sentence a human has to notice.
-        # A partial run reports no stale lines and one that checked reports none it
-        # found, and those are different claims; `complete` is what tells them apart.
+        # `unchecked` is the caveat: a line this run could not have seen fire, which is
+        # a different claim from one it checked and found still firing. There is no
+        # `complete` boolean any more because completeness stopped being a property of
+        # the RUN — `performed` says what this run audited, and each entry names the
+        # command that can answer it.
         report.baseline = {
             "path": config.path, "accepted": accepted, "new": len(still),
-            "complete": complete, "stale": list(stale) if complete else [],
-            "incomplete_because": None if complete else "staleness needs `assay all`",
+            "performed": sorted(performed),
+            "stale": [e.line for e in stale],
+            "unchecked": [{"line": e.line, "from": e.produced_by} for e in unchecked],
         }
         if verbose:
-            out.write("\nBASELINE %s — %d accepted, %d new, %s\n"
-                      % (config.path, accepted, len(still),
-                         "%d stale" % len(stale) if complete
-                         else "staleness needs `assay all`"))
+            out.write("\nBASELINE %s — %s\n"
+                      % (config.path,
+                         _baseline_summary(accepted, still, stale, unchecked)))
     if args.as_json:
         return render_json(report, out, meta=_meta(args))
     if verbose:
@@ -105,40 +142,150 @@ def cmd_runners(args, config, out):
     report = Report()
     audit_runners(args.root, config, report)
     check_exemptions(args.root, config, report)
-    return _finish(args, report, config, out)
+    return _finish(args, report, config, out, ("runners",))
 
 
 def cmd_anchors(args, config, out):
     report = Report()
     audit_anchors(args.root, config, report)
-    return _finish(args, report, config, out)
+    return _finish(args, report, config, out, ("anchors",))
 
 
 def cmd_diff(args, config, out):
     report = Report()
     audit_diff(args.root, args.base, config, report)
-    return _finish(args, report, config, out)
+    return _finish(args, report, config, out, ("diff",))
+
+
+def _audit_everything(args, config, report):
+    """Every audit, folded into `report`. Returns ({message: family}, performed).
+
+    ONE PLACE KNOWS WHAT A COMPLETE RUN IS, and `assay accept` is why it has to be
+    one. `all` needs the list to say whether it may call a line stale; `accept` needs
+    it to write `from` on the entries it adds. Two lists that had to agree about what
+    "every audit" means would be the exact duplication this package exists to find,
+    and the way they would disagree is silent: `accept` would tag a line with a
+    command `all` no longer performs, and that line could then never be called stale.
+
+    `--scan PATH` folds the sameness half in. WITHOUT IT THE RUN DID NOT PERFORM THAT
+    HALF, and saying otherwise is how a `same answer` line gets called stale on a
+    clean tree — so `scan` joins the performed set only when a scan actually ran.
+    """
+    families, performed = {}, []
+
+    def perform(name, audit):
+        # A SEPARATE REPORT PER AUDIT, so a finding can be attributed to the audit that
+        # produced it. Reading it back off the shared report afterwards would mean
+        # guessing from the message text, which is a parser of our own output.
+        sub = Report()
+        audit(sub)
+        for item in sub.findings:
+            # FIRST WINS, and nothing here can currently produce the same message from
+            # two audits — so there is deliberately no mutation for this line. A
+            # mutation nothing can catch is a table entry claiming a guard is covered
+            # when nothing breaks it on purpose, which is the defect this runner
+            # exists to report.
+            families.setdefault(item.message, name)
+        report.extend(sub)
+        performed.append(name)
+
+    def runners(rep):
+        audit_runners(args.root, config, rep)
+        check_exemptions(args.root, config, rep)
+
+    def scan_half(rep):
+        scan = collect(args.scan)
+        group(scan)
+        report_scan(scan, rep)
+        # The census as DATA travels on the SHARED report, because that is the one a
+        # renderer sees. A sub-report is only ever a way to attribute findings to the
+        # audit that produced them.
+        report.scan = scan.to_dict()
+
+    perform("runners", runners)
+    perform("anchors", lambda rep: audit_anchors(args.root, config, rep))
+    perform("diff", lambda rep: audit_diff(args.root, args.base, config, rep))
+    if getattr(args, "scan", None):
+        perform("scan", scan_half)
+    return families, performed
 
 
 def cmd_all(args, config, out):
-    """Every audit in one run — and the only command that can call a baseline stale.
-
-    `--scan PATH` folds the sameness half in. Without it `all` covers the check half
-    only, so a baseline holding `same answer` lines would report them stale; the
-    completeness flag therefore tracks whether a scan actually ran.
-    """
+    """Every audit in one run — and, with `--scan`, the complete one."""
     report = Report()
-    audit_runners(args.root, config, report)
-    check_exemptions(args.root, config, report)
-    audit_anchors(args.root, config, report)
-    audit_diff(args.root, args.base, config, report)
-    scanned = getattr(args, "scan", None)
-    if scanned:
-        scan = collect(scanned)
-        group(scan)
-        report_scan(scan, report)
-        report.scan = scan.to_dict()
-    return _finish(args, report, config, out, complete=True)
+    _families, performed = _audit_everything(args, config, report)
+    return _finish(args, report, config, out, performed)
+
+
+def cmd_accept(args, config, out):
+    """Write a finding into the baseline, and refuse to write anything else.
+
+    THE 0.2.2 CHANGELOG RECORDS SHIPPING A CONFIG EXAMPLE THAT BASELINED A `look`.
+    A `look` never fails the run, so a line holding one can never be suppressed and
+    can never expire: it is a record of nothing, indistinguishable from a record of
+    something already fixed. That was fixed by editing the example — and an example is
+    fixed once per copy of it, while a command that cannot make the mistake is fixed
+    once. This refuses.
+
+    IT ACCEPTS ONLY WHAT IT JUST SAW FIRE, for the same reason. A line that does not
+    fire is stale the moment it is written, so the file would arrive already claiming
+    something untrue. Nothing here is typed by hand either: the entry is the finding's
+    exact text, taken from the run, which is what makes whole-line matching safe.
+
+    A partial run is fine here and that is not a loophole. Accepting is the direction
+    that is safe from any command — a line that fires is a line that fires — and the
+    `from` written beside it is the audit that produced it, so the check that fires it
+    is the one that can later call it stale.
+    """
+    if not args.reason:
+        return _fail(args, out,
+                     "accept needs --reason. An acceptance without one cannot be told "
+                     "from an oversight,\n       and the baseline is the table that "
+                     "accumulates most and rots first.")
+    report = Report()
+    families, _performed = _audit_everything(args, config, report)
+    known = set(config.baseline_lines)
+    fired = {i.message for i in report.findings}
+
+    if args.line is not None:
+        if args.line in known:
+            return _fail(args, out, "already in the baseline: %s" % args.line)
+        if args.line in {i.message for i in report.looks}:
+            return _fail(
+                args, out,
+                "that line is a `look`. A `look` never fails the run, so there is "
+                "nothing\n       to accept: baselining one writes a record that can "
+                "never match and\n       never expire.")
+        if args.line not in fired:
+            return _fail(
+                args, out,
+                "nothing in this run printed that line. Accepting it would write an "
+                "entry\n       that is stale the moment it lands — paste a `finding` "
+                "exactly as it was\n       printed.")
+        chosen = [args.line]
+    else:
+        chosen = [i.message for i in report.findings if i.message not in known]
+
+    # WHAT IT WROTE IS REPORTED AS `ok` ITEMS, and this deliberately does NOT go
+    # through `_finish`. `_finish` applies the baseline, and the baseline it would
+    # apply is the one loaded BEFORE these lines were written — so every entry already
+    # in the file would be measured against a report that holds no findings at all and
+    # come back stale. An audit reading its own writing is not an audit.
+    written = Report()
+    if not chosen:
+        written.note("assay: nothing new to accept.")
+    else:
+        path = config.path or os.path.join(args.root, CONFIG_NAMES[0])
+        write_baseline(path, [(line, args.reason, families.get(line))
+                              for line in chosen])
+        written.note("assay: wrote %d entr%s to %s"
+                     % (len(chosen), "y" if len(chosen) == 1 else "ies", path))
+        for line in chosen:
+            written.ok("[%s] %s" % (families.get(line) or "no from", line))
+    if args.as_json:
+        return render_json(written, out, meta=_meta(args))
+    render(written, out, verbose=args.verbose)
+    return 0
 
 
 def cmd_scan(args, config, out):
@@ -148,7 +295,7 @@ def cmd_scan(args, config, out):
     report.scan = scan.to_dict()
     if not scan.groups:
         report.note("\nsame   none — no two probed functions share an outcome vector")
-    return _finish(args, report, config, out)
+    return _finish(args, report, config, out, ("scan",))
 
 
 def cmd_pair(args, config, out):
@@ -176,6 +323,223 @@ def cmd_pair(args, config, out):
         report.ok("differs: %s — %s" % (pair, detail), first.ref)
     else:
         report.look("%s — %s" % (pair, detail), first.ref)
+    return _finish(args, report, config, out)
+
+
+def cmd_why(args, config, out):
+    """The census, for one name: which gate refused THIS function.
+
+    `assay scan` prints refusal reasons with counts, which is the right shape for a
+    tree and the wrong shape for a question. Somebody who expected a particular
+    function to be probed cannot read `no arguments 274` and learn whether theirs is
+    one of the 274, and guessing which of eight gates rejected it is exactly the work
+    the census was supposed to save them.
+
+    IT NEVER PRODUCES A FINDING. This command decides nothing about the code; it
+    reports what the tool did and why it did it. A refusal is a `look` and a probe is
+    an `ok` — and an `ok` here is printed rather than left silent for the same reason
+    every other one is, because "it was probed" and "nothing looked at it" are
+    different claims and only one of them is evidence.
+    """
+    func, unresolved = resolve_why(args.ref)
+    if func is None:
+        return _fail(args, out, unresolved)
+    report = Report()
+    vector, refused = probe(func)
+    if vector is None:
+        report.look("%s — %s" % (func.ref, refused), func.ref,
+                    "refused before the ladder, so it is in no bucket and can pair "
+                    "with nothing")
+        return _finish(args, report, config, out)
+    inputs = ladder(len(func.params))
+    detail = discrimination_detail(vector, inputs)
+    if detail is not None:
+        report.look("%s — not discriminated by the ladder" % func.ref, func.ref, detail)
+        return _finish(args, report, config, out)
+    answered, distinct = discriminating(vector, inputs)
+    report.ok("%s — probed on %s: %d of %d rungs answered, %d distinct value(s)"
+              % (func.ref, ladder_key(func), answered, len(vector), distinct),
+              func.ref)
+    return _finish(args, report, config, out)
+
+
+# The suffix decides which half a reference belongs to. Inferred rather than declared,
+# because a flag naming both a file and a language can disagree with itself and the
+# suffix is the fact.
+LANGUAGE_OF = {".py": "python", ".js": "javascript", ".mjs": "javascript",
+               ".cjs": "javascript"}
+
+
+def language_of(ref):
+    """'python' | 'javascript' | None, from a FILE::NAME reference's suffix."""
+    path = ref.rpartition("::")[0] or ref
+    return LANGUAGE_OF.get(os.path.splitext(path)[1])
+
+
+def cmd_probe(args, config, out):
+    """One function's CROSS vector, as JSON on stdout. The thing `cross` compares.
+
+    THE TWO HALVES DO NOT INVOKE EACH OTHER, and that is deliberate rather than lazy.
+    `pip install assay-checks` gives you the Python half and `npm install` gives you
+    the JavaScript one; neither can assume the other is on the machine, and a command
+    that shells out to a binary that may not exist fails in a way that reads like the
+    code being wrong. So one half writes a record and the other reads it:
+
+        assay probe src/slug.js::slugify > slug.json      # the JavaScript binary
+        assay cross src/format.py::humanize slug.json     # the Python one
+
+    `assay cross --with CMD` will run that first step for you when both are installed.
+
+    IT WRITES JSON ON STDOUT, so redirecting it is the point. A refusal is a record
+    with `look` instead of `vector` rather than an error: the reference resolved and
+    the tool ran, so this is not exit 2 — and a consumer gets one shape either way.
+    """
+    func, unresolved = resolve_why(args.ref)
+    if func is None:
+        # ONE SHAPE, ALWAYS, AND `--json` IS NOT WHAT DECIDES IT. This command's output
+        # IS JSON — there is no prose form to switch away from — so a reference that
+        # names nothing emits the same record with `error` where `vector` would be,
+        # and exits 2. A consumer never has to ask which of two shapes it received,
+        # and `2` still means the tool could not run.
+        record = {"assay_probe": PROBE_SCHEMA, "ref": args.ref, "language": "python",
+                  "error": unresolved}
+        json.dump(record, out, indent=2, sort_keys=True, ensure_ascii=False)
+        out.write("\n")
+        return 2
+    arity = len(func.params)
+    record = {"assay_probe": PROBE_SCHEMA, "ref": func.ref, "language": "python",
+              "arity": arity, "error": None}
+    vector, refused = probe(func, mode="cross")
+    if vector is None:
+        record["look"] = refused
+    else:
+        record["ladder"] = cross_key(arity)
+        record["vector"] = vector
+    json.dump(record, out, indent=2, sort_keys=True, ensure_ascii=False)
+    out.write("\n")
+    return 0
+
+
+def _read_record(path):
+    """An `assay probe` record from a file, or (None, why).
+
+    THE SCHEMA IS CHECKED. A record from a version that meant something else by
+    `vector` would be compared anyway, and comparing a new answer against the wrong
+    earlier answer is precisely the defect a difference checker exists to catch.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return None, "cannot read %s as an `assay probe` record (%s)" % (path, exc)
+    if not isinstance(record, dict) or "assay_probe" not in record:
+        return None, "%s is not an `assay probe` record" % path
+    if record["assay_probe"] != PROBE_SCHEMA:
+        return None, ("%s was written by schema %r and this is schema %d — the two do "
+                      "not mean the same thing by `vector`"
+                      % (path, record["assay_probe"], PROBE_SCHEMA))
+    return record, None
+
+
+def _cross_side(ref, with_cmd):
+    """One side of a cross comparison: (record, None) or (None, why).
+
+    THREE WAYS IN, and the third exists because the first two are not always enough.
+    A `.json` path is a record somebody already produced. A `.py` reference is probed
+    here. A reference in the OTHER language needs the other binary, and `--with CMD`
+    is how you say where it is — without it this refuses and says exactly what to run,
+    rather than guessing at a command name that is `assay` for both packages.
+    """
+    if ref.endswith(".json") and os.path.exists(ref):
+        return _read_record(ref)
+    language = language_of(ref)
+    if language == "python":
+        # PROBED THROUGH THE COMMAND, not around it. `cmd_probe` is what decides what a
+        # record is, and a second path to the same record is a second answer to one
+        # question. It emits one shape on both paths, so the failure is read out of the
+        # record rather than out of prose that would have to be parsed back.
+        buf = io.StringIO()
+        code = cmd_probe(argparse.Namespace(ref=ref, as_json=False), None, buf)
+        record = json.loads(buf.getvalue())
+        if code != 0:
+            return None, record.get("error") or "cannot probe %s" % ref
+        return record, None
+    if language is None:
+        return None, ("%s names no language this understands — a reference is "
+                      "FILE::NAME and the suffix says which half" % ref)
+    if not with_cmd:
+        return None, ("%s is a JavaScript reference and this is the Python half.\n"
+                      "       Run `assay probe %s > side.json` with the JavaScript "
+                      "binary and pass\n       side.json here, or give --with CMD so "
+                      "this can run it for you." % (ref, ref))
+    command = shlex.split(with_cmd) + ["probe", ref]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True,
+                              timeout=CROSS_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, "--with %r could not run (%s)" % (with_cmd, exc)
+    if proc.returncode != 0:
+        tail = (proc.stderr.strip().splitlines()
+                or proc.stdout.strip().splitlines() or ["silent"])[-1][:90]
+        return None, "--with %r exited %d (%s)" % (with_cmd, proc.returncode, tail)
+    try:
+        record = json.loads(proc.stdout)
+    except ValueError:
+        return None, ("--with %r did not print an `assay probe` record" % with_cmd)
+    if record.get("assay_probe") != PROBE_SCHEMA:
+        return None, ("--with %r wrote schema %r and this is schema %d"
+                      % (with_cmd, record.get("assay_probe"), PROBE_SCHEMA))
+    return record, None
+
+
+def cmd_cross(args, config, out):
+    """Does a Python function answer the same question as a JavaScript one?
+
+    A validator reimplemented in a Django backend and a Node frontend is the highest-
+    value duplication a polyglot repository has, and it is exactly what nobody writes a
+    differential test for — because writing one means agreeing, by hand, on what
+    `False` and `false` have in common. That agreement is `cross_render`, and the
+    ladder both sides walk is one JSON document rather than two lists somebody keeps in
+    step.
+
+    THE VERDICTS MEAN WHAT THEY MEAN EVERYWHERE ELSE HERE. `differs` is proof and is
+    an `ok`. `same` is the absence of proof and is a FINDING, because two
+    implementations that no input told apart is something a person has to read. `look`
+    is anything this cannot settle — a refused probe, a ladder mismatch, or an outcome
+    the interlingua cannot state.
+    """
+    report = Report()
+    sides = []
+    for ref in (args.a, args.b):
+        record, why = _cross_side(ref, args.with_cmd)
+        if record is None:
+            return _fail(args, out, why)
+        sides.append(record)
+    first, second = sides
+    pair = "%s [%s]  vs  %s [%s]" % (first["ref"], first["language"],
+                                     second["ref"], second["language"])
+    for side in sides:
+        if "look" in side:
+            report.look("%s — %s could not be probed: %s"
+                        % (pair, side["ref"], side["look"]), first["ref"])
+            return _finish(args, report, config, out)
+    if first["language"] == second["language"]:
+        report.look("%s — both sides are %s; `pair` compares two functions of one "
+                    "language on its own ladder, which is stronger"
+                    % (pair, first["language"]), first["ref"])
+        return _finish(args, report, config, out)
+    rungs = cross_ladder(first["arity"])
+    verdict, detail = compare_cross(first["vector"], second["vector"],
+                                    first["ladder"], second["ladder"], rungs)
+    if verdict == "same":
+        report.finding("same answer across languages (%s): %s"
+                       % (first["ladder"], pair), first["ref"],
+                       "no input in the shared ladder told them apart — READ them; "
+                       "only a person decides whether the duplication is a defect")
+    elif verdict == "differs":
+        report.ok("differs: %s — %s" % (pair, detail), first["ref"])
+    else:
+        report.look("%s — %s" % (pair, detail), first["ref"])
     return _finish(args, report, config, out)
 
 
@@ -240,7 +604,13 @@ def cmd_search(args, config, out):
     return _finish(args, report, config, out)
 
 
+CROSS_TIMEOUT = 120     # seconds for the OTHER half's `probe`, run through --with
+
 COMMANDS = {
+    "why": cmd_why,
+    "probe": cmd_probe,
+    "cross": cmd_cross,
+    "accept": cmd_accept,
     "runners": cmd_runners,
     "anchors": cmd_anchors,
     "diff": cmd_diff,
@@ -294,18 +664,25 @@ def build_parser():
     sub = ap.add_subparsers(dest="cmd")
 
     sub.add_parser("runners", parents=[_common()],
-                   help="audit mutation runners against six properties")
+                   help="audit mutation runners against seven properties")
     sub.add_parser("anchors", parents=[_common()],
                    help="every mutation anchor matches exactly once")
 
-    for name, helptext in (("diff", "does this change carry the checks it needs?"),
-                           ("all", "runners + anchors + diff")):
+    for name, helptext in (
+            ("diff", "does this change carry the checks it needs?"),
+            ("all", "runners + anchors + diff"),
+            ("accept", "write a finding into the baseline, with a reason")):
         p = sub.add_parser(name, parents=[_common()], help=helptext)
         p.add_argument("--base", default="origin/main",
                        help="ref to diff against (default origin/main)")
-        if name == "all":
+        if name in ("all", "accept"):
             p.add_argument("--scan", nargs="+",
                            help="also run the sameness half over these paths")
+        if name == "accept":
+            p.add_argument("line", nargs="?", metavar="LINE",
+                           help="one finding's exact text (default: every new one)")
+            p.add_argument("--reason", default=None,
+                           help="why you accepted it — required, and not decorative")
 
     p = sub.add_parser("scan", parents=[_common()],
                        help="discover functions that answer the same question")
@@ -315,6 +692,21 @@ def build_parser():
                        help="compare two named functions")
     p.add_argument("a", metavar="FILE::NAME")
     p.add_argument("b", metavar="FILE::NAME")
+
+    p = sub.add_parser("why", parents=[_common()],
+                       help="which gate refused this function, or that it was probed")
+    p.add_argument("ref", metavar="FILE::NAME")
+
+    p = sub.add_parser("probe", parents=[_common()],
+                       help="one function's cross-language vector, as JSON on stdout")
+    p.add_argument("ref", metavar="FILE::NAME")
+
+    p = sub.add_parser("cross", parents=[_common()],
+                       help="compare a Python function to a JavaScript one")
+    p.add_argument("a", metavar="FILE::NAME|RECORD.json")
+    p.add_argument("b", metavar="FILE::NAME|RECORD.json")
+    p.add_argument("--with", dest="with_cmd", default=None, metavar="CMD",
+                   help="run CMD `probe REF` for the side this half cannot probe")
 
     p = sub.add_parser("search", parents=[_common()],
                        help="does the tree already answer this?")

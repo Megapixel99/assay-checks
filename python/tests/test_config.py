@@ -15,7 +15,9 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from assay.config import Config, ConfigError, apply_baseline, load  # noqa: E402
+from assay.config import (Accepted, Config, ConfigError,  # noqa: E402
+                         FAMILIES, apply_baseline, load,
+                         write_baseline)
 from assay.verdicts import Item  # noqa: E402
 
 
@@ -53,7 +55,7 @@ class Loading(unittest.TestCase):
 
     def test_a_dotfile_name_is_found_too(self):
         root, _path = write_config({"baseline": ["x"]}, ".assay.json")
-        self.assertEqual(load(root=root).baseline, ["x"])
+        self.assertEqual(load(root=root).baseline_lines, ["x"])
 
     def test_an_exemption_without_a_REASON_is_refused(self):
         """An exemption with no reason cannot be told from an oversight."""
@@ -63,10 +65,48 @@ class Loading(unittest.TestCase):
             load(path)
         self.assertIn("reason", str(ctx.exception))
 
-    def test_a_baseline_that_is_not_a_list_of_strings_is_refused(self):
-        _root, path = write_config({"baseline": [{"msg": "x"}]})
+    def test_a_baseline_entry_that_is_neither_a_line_nor_an_object_is_refused(self):
+        _root, path = write_config({"baseline": [42]})
         with self.assertRaises(ConfigError):
             load(path)
+
+    def test_a_baseline_entry_in_OBJECT_form_carries_a_reason_and_what_fires_it(self):
+        """A bare string stays legal — adopting this means pasting lines out of a run,
+        and a format that refuses the paste is a format nobody adopts."""
+        _root, path = write_config({"baseline": [
+            "pasted straight out of a run",
+            {"line": "read and accepted", "reason": "the fix is the 0.3 job",
+             "from": "anchors"}]})
+        cfg = load(path)
+        self.assertEqual(cfg.baseline_lines,
+                         ["pasted straight out of a run", "read and accepted"])
+        self.assertIsNone(cfg.baseline[0].reason)
+        self.assertIsNone(cfg.baseline[0].produced_by)
+        self.assertEqual(cfg.baseline[1].reason, "the fix is the 0.3 job")
+        self.assertEqual(cfg.baseline[1].produced_by, "anchors")
+
+    def test_an_object_form_entry_without_a_REASON_is_refused(self):
+        """The same rule an exemption follows, about the table that rots fastest: an
+        acceptance without one cannot be told from an oversight."""
+        _root, path = write_config({"baseline": [{"line": "a finding"}]})
+        with self.assertRaises(ConfigError) as ctx:
+            load(path)
+        self.assertIn("reason", str(ctx.exception))
+
+    def test_an_object_form_entry_without_a_LINE_is_refused(self):
+        _root, path = write_config({"baseline": [{"reason": "because"}]})
+        with self.assertRaises(ConfigError) as ctx:
+            load(path)
+        self.assertIn("line", str(ctx.exception))
+
+    def test_a_from_naming_no_real_command_is_refused(self):
+        """Read in both directions, like every other table here. A `from` nothing can
+        produce would make the line permanently uncheckable, in silence."""
+        _root, path = write_config({"baseline": [
+            {"line": "a finding", "reason": "r", "from": "lint"}]})
+        with self.assertRaises(ConfigError) as ctx:
+            load(path)
+        self.assertIn("from", str(ctx.exception))
 
     def test_a_star_exemption_covers_every_property(self):
         _root, path = write_config(
@@ -90,34 +130,136 @@ class Loading(unittest.TestCase):
 
 class Baseline(unittest.TestCase):
 
+    EVERY = FAMILIES
+
     def items(self, *messages):
         return [Item("finding", m) for m in messages]
 
+    def accept(self, *lines):
+        return [Accepted(line) for line in lines]
+
+    def lines(self, entries):
+        return [e.line for e in entries]
+
     def test_an_accepted_finding_stops_failing(self):
-        still, stale = apply_baseline(self.items("old problem"), ["old problem"])
+        still, stale, _u = apply_baseline(self.items("old problem"),
+                                          self.accept("old problem"), self.EVERY)
         self.assertEqual(still, [])
         self.assertEqual(stale, [])
 
     def test_a_NEW_finding_still_fails(self):
-        still, _stale = apply_baseline(self.items("old", "new"), ["old"])
+        still, _stale, _u = apply_baseline(self.items("old", "new"),
+                                           self.accept("old"), self.EVERY)
         self.assertEqual([f.message for f in still], ["new"])
 
     def test_a_baseline_line_that_no_longer_fires_is_ITSELF_a_finding(self):
         """The second direction. Someone fixed it and left the record claiming
         otherwise, which is how a suppression file becomes a work of fiction."""
-        still, stale = apply_baseline(self.items(), ["fixed long ago"])
+        still, stale, _u = apply_baseline(self.items(), self.accept("fixed long ago"),
+                                          self.EVERY)
         self.assertEqual(still, [])
-        self.assertEqual(stale, ["fixed long ago"])
+        self.assertEqual(self.lines(stale), ["fixed long ago"])
 
     def test_an_empty_baseline_changes_nothing(self):
-        still, stale = apply_baseline(self.items("a"), [])
+        still, stale, _u = apply_baseline(self.items("a"), [], self.EVERY)
         self.assertEqual(len(still), 1)
         self.assertEqual(stale, [])
 
     def test_matching_is_on_the_exact_message_not_a_prefix(self):
         """A prefix match would let one accepted line silence a family of findings."""
-        still, _stale = apply_baseline(self.items("problem in a.py"), ["problem in"])
+        still, _stale, _u = apply_baseline(self.items("problem in a.py"),
+                                           self.accept("problem in"), self.EVERY)
         self.assertEqual(len(still), 1)
+
+
+class Writing(unittest.TestCase):
+    """`write_baseline` — what `assay accept` puts in the file.
+
+    Driven directly rather than only through the CLI, because the CLI can only reach
+    findings that HAVE a family: every audit names itself. The entry with no `from` is
+    reachable here and nowhere else, and it is the one the omit-the-key rule is about.
+    """
+
+    def test_it_writes_the_line_the_reason_and_the_family(self):
+        root = tempfile.mkdtemp()
+        path = os.path.join(root, "assay.json")
+        write_baseline(path, [("a finding", "read it", "runners")])
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["baseline"],
+                             [{"line": "a finding", "reason": "read it",
+                               "from": "runners"}])
+
+    def test_no_family_writes_NO_KEY_rather_than_a_null(self):
+        """A key whose value says nothing is a key a later reader has to decide the
+        meaning of, and `load` already has a rule for an absent `from`."""
+        root = tempfile.mkdtemp()
+        path = os.path.join(root, "assay.json")
+        write_baseline(path, [("a finding", "read it", None)])
+        with open(path, encoding="utf-8") as fh:
+            entry = json.load(fh)["baseline"][0]
+        self.assertNotIn("from", entry)
+        self.assertEqual(load(path).baseline[0].produced_by, None)
+
+    def test_it_APPENDS_and_leaves_every_other_key_alone(self):
+        """Rewriting somebody's file into a shape they did not ask for is not the job
+        of a command asked to add one line."""
+        _root, path = write_config({
+            "runner_exempt": [{"path": "a.py", "reason": "elsewhere"}],
+            "baseline": ["pasted straight out of a run"]})
+        write_baseline(path, [("a finding", "read it", "diff")])
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+        self.assertEqual(raw["runner_exempt"], [{"path": "a.py", "reason": "elsewhere"}])
+        self.assertEqual(raw["baseline"][0], "pasted straight out of a run")
+        self.assertEqual(raw["baseline"][1]["line"], "a finding")
+
+    def test_what_it_writes_ROUND_TRIPS_through_load(self):
+        _root, path = write_config({})
+        write_baseline(path, [("a finding", "read it", "anchors")])
+        entry = load(path).baseline[0]
+        self.assertEqual((entry.line, entry.reason, entry.produced_by),
+                         ("a finding", "read it", "anchors"))
+
+
+class StalenessIsPerLine(unittest.TestCase):
+    """A line is only stale to a run that could have seen it fire.
+
+    The first fix for the cry-wolf failure was a whole-run flag: correct, and blunt
+    enough that every line in every command but `assay all` went unchecked and the run
+    printed a disclaimer where a number belongs. An entry that names the command firing
+    it can be answered by that command alone.
+    """
+
+    def test_an_UNTAGGED_line_needs_a_run_that_performed_everything(self):
+        entry = Accepted("some finding", "read it", None)
+        _s, stale, unchecked = apply_baseline([], [entry], ("runners",))
+        self.assertEqual(stale, [])
+        self.assertEqual([e.line for e in unchecked], ["some finding"])
+        _s, stale, unchecked = apply_baseline([], [entry], FAMILIES)
+        self.assertEqual([e.line for e in stale], ["some finding"])
+        self.assertEqual(unchecked, [])
+
+    def test_a_TAGGED_line_is_answered_by_the_one_command_that_fires_it(self):
+        entry = Accepted("a runners finding", "read it", "runners")
+        _s, stale, unchecked = apply_baseline([], [entry], ("runners",))
+        self.assertEqual([e.line for e in stale], ["a runners finding"])
+        self.assertEqual(unchecked, [])
+
+    def test_a_line_THIS_RUN_COULD_NOT_SEE_is_never_called_stale(self):
+        """The cry-wolf failure itself, and the reason the first fix was blunt."""
+        entry = Accepted("an anchors finding", "read it", "anchors")
+        _s, stale, unchecked = apply_baseline([], [entry], ("runners", "diff"))
+        self.assertEqual(stale, [])
+        self.assertEqual([e.line for e in unchecked], ["an anchors finding"])
+
+    def test_a_line_that_FIRED_is_suppressed_whatever_the_run_performed(self):
+        """Suppression is safe from any run: a line that fires is a line that fires."""
+        entry = Accepted("an anchors finding", "read it", "anchors")
+        still, stale, unchecked = apply_baseline(
+            [Item("finding", "an anchors finding")], [entry], ())
+        self.assertEqual(still, [])
+        self.assertEqual(stale, [])
+        self.assertEqual(unchecked, [])
 
 
 if __name__ == "__main__":

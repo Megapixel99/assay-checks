@@ -22,21 +22,62 @@
  * duplication this tool exists to find.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const CONFIG_NAMES = ['assay.json', '.assay.json'];
 
+/**
+ * The commands that can produce a baseline line, which is exactly the set `assay all`
+ * performs. A baseline entry may name the one that fires it, and that turns staleness
+ * from a property of the RUN into a property of the LINE — see `applyBaseline`.
+ *
+ * `pair`, `search` and `why` are absent on purpose: the first two answer about a pair
+ * somebody named rather than auditing a tree, and the third produces no findings at
+ * all. Nothing they print is a line a CI run would accept.
+ */
+export const FAMILIES = ['runners', 'anchors', 'diff', 'scan'];
+
 export class ConfigError extends Error {}
+
+/**
+ * One accepted finding: the exact line, why it was accepted, what fires it.
+ *
+ * A BARE STRING IS STILL LEGAL, and that is not politeness about old configs. Adopting
+ * this on an existing project means pasting lines out of a run, and a format that
+ * refuses the paste is a format nobody adopts. What a string cannot carry is the two
+ * things this table needs most:
+ *
+ *   reason  `runner_exempt` requires one because an exemption without one cannot be
+ *           told from an oversight. A baseline entry is the same claim about a
+ *           different thing — and it is the table that accumulates most and rots
+ *           first, since a fixed finding leaves its line behind in silence.
+ *
+ *   from    WHICH COMMAND can produce this line. Without it, completeness is a
+ *           property of the whole RUN: a line can only be called stale by a run that
+ *           performed every audit, so under any single command every line goes
+ *           unchecked and the run prints a disclaimer where a number belongs.
+ */
+export class Accepted {
+  constructor(line, reason = null, producedBy = null) {
+    this.line = line;
+    this.reason = reason;
+    this.producedBy = producedBy;
+  }
+}
 
 export class Config {
   constructor({ runnerExempt = new Map(), anchorExempt = new Map(),
     baseline = [], filePath = null } = {}) {
     this.runnerExempt = runnerExempt;
     this.anchorExempt = anchorExempt;
-    this.baseline = baseline;
+    // Strings normalise to `Accepted`, so everything downstream sees one shape and the
+    // two forms cannot drift apart into two code paths.
+    this.baseline = baseline.map((b) => (b instanceof Accepted ? b : new Accepted(b)));
     this.path = filePath;
   }
+
+  get baselineLines() { return this.baseline.map((a) => a.line); }
 
   /** The reason this runner is excused this property, or null. */
   exemptRunner(rel, key) {
@@ -100,26 +141,105 @@ export function load(filePath = null, root = '.') {
   for (const entry of entries(raw, 'anchor_exempt', ['path', 'reason'], target)) {
     anchorExempt.set(entry.path, entry.reason);
   }
-  const baseline = raw.baseline || [];
-  if (!Array.isArray(baseline) || baseline.some((b) => typeof b !== 'string')) {
-    throw new ConfigError(`${target}: 'baseline' must be a list of strings`);
+  const rawBaseline = raw.baseline || [];
+  if (!Array.isArray(rawBaseline)) {
+    throw new ConfigError(`${target}: 'baseline' must be a list`);
+  }
+  const baseline = [];
+  for (const entry of rawBaseline) {
+    if (typeof entry === 'string') { baseline.push(new Accepted(entry)); continue; }
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new ConfigError(`${target}: a 'baseline' entry must be the finding's exact `
+        + "text, or an object carrying it as 'line'");
+    }
+    for (const field of ['line', 'reason']) {
+      if (!entry[field]) {
+        throw new ConfigError(`${target}: a 'baseline' entry in object form is missing `
+          + `'${field}' — an acceptance without a reason cannot be told from an `
+          + 'oversight');
+      }
+    }
+    const producedBy = entry.from === undefined ? null : entry.from;
+    if (producedBy !== null && !FAMILIES.includes(producedBy)) {
+      throw new ConfigError(`${target}: a 'baseline' entry names '${producedBy}' in `
+        + "'from', which is no command that can produce a finding "
+        + `(known: ${FAMILIES.join(', ')})`);
+    }
+    baseline.push(new Accepted(entry.line, entry.reason, producedBy));
   }
   return new Config({ runnerExempt, anchorExempt, baseline, filePath: target });
 }
 
 /**
- * [stillFailing, stale]. Accepted findings pass; a stale acceptance fails.
+ * Append accepted findings to `file`, leaving every other key exactly as it was.
+ *
+ * IT REWRITES THE WHOLE DOCUMENT, because JSON cannot be appended to. Everything
+ * already in the file is read back and written out unchanged, and an existing
+ * bare-string entry stays a bare string: rewriting somebody's file into a shape they
+ * did not ask for is not the job of a command asked to add one line.
+ *
+ * `entries` is `{ line, reason, producedBy }`. A null `producedBy` writes no `from`
+ * rather than a `from` of null — a key whose value says nothing is a key a later
+ * reader has to decide the meaning of.
+ */
+export function writeBaseline(file, entries) {
+  let raw = {};
+  if (existsSync(file)) {
+    raw = JSON.parse(readFileSync(file, 'utf8'));
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new ConfigError(`${file} must hold a JSON object`);
+    }
+  }
+  const baseline = [...(raw.baseline || [])];
+  for (const { line, reason, producedBy } of entries) {
+    const entry = { line, reason };
+    if (producedBy) entry.from = producedBy;
+    baseline.push(entry);
+  }
+  raw.baseline = baseline;
+  writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`, 'utf8');
+  return file;
+}
+
+/**
+ * [stillFailing, stale, unchecked]. Accepted findings pass; a stale one fails.
  *
  * Adopting any audit on an existing project means starting with a backlog, and the two
  * dishonest ways to handle that are a magic threshold (which goes stale in silence)
  * and a blanket suppression (which hides the next real one). Listing the findings you
  * have read, by their exact text, does neither: a new one is not in the list so it
  * fails, and one you fixed no longer fires so its line fails as stale.
+ *
+ * STALENESS IS PER LINE, NOT PER RUN, and getting that wrong made the tool cry wolf at
+ * itself. `runners` cannot produce a finding that only `diff` reports, so a partial run
+ * that checked staleness flagged every `diff` line as fixed — the audit reporting a
+ * problem with its own config, on a clean tree, on every run. The first fix was to
+ * check staleness only from `all`, which is correct and blunt: it makes every line in
+ * every other run unchecked, and the run prints a disclaimer where a number belongs.
+ *
+ * An entry that names the command firing it can be answered by that command alone, so
+ * `performed` is what this run actually audited and each entry lands in exactly one of
+ * three places: it fired, this run could see it and it did not, or this run could not
+ * see it. The third is COUNTED rather than treated as fresh — `0 stale` from a run that
+ * never looked reads as "nothing is stale", and those are different claims.
+ *
+ * An entry with no `from` keeps the old rule: only a run that performed EVERY audit can
+ * call it stale, since nothing narrower knows what could have produced it.
  */
-export function applyBaseline(findings, accepted) {
-  const known = new Set(accepted);
+export function applyBaseline(findings, accepted, performed = []) {
+  const known = new Set(accepted.map((a) => a.line));
   const seen = new Set(findings.map((f) => f.message));
   const still = findings.filter((f) => !known.has(f.message));
-  const stale = [...known].filter((k) => !seen.has(k)).sort();
-  return [still, stale];
+  const did = new Set(performed);
+  const complete = FAMILIES.every((f) => did.has(f));
+  const stale = [];
+  const unchecked = [];
+  const ordered = [...accepted].sort((a, b) => (a.line < b.line ? -1 : a.line > b.line ? 1 : 0));
+  for (const entry of ordered) {
+    if (seen.has(entry.line)) continue;
+    if (entry.producedBy === null) (complete ? stale : unchecked).push(entry);
+    else if (did.has(entry.producedBy)) stale.push(entry);
+    else unchecked.push(entry);
+  }
+  return [still, stale, unchecked];
 }

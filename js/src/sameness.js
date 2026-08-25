@@ -64,6 +64,12 @@ export const PROBE_TIMEOUT_MS = 20000;
  */
 export const PER_INPUT_MS = 250;
 export const LADDER_VERSION = 'v3';
+/**
+ * The shape of an `assay probe` record, versioned apart from the tool. One half writes
+ * it and the other reads it, which makes it a published interface with the same claim
+ * on stability as the exit codes.
+ */
+export const PROBE_SCHEMA = 1;
 // What a snippet read from stdin is called. It collides with nothing a tree can
 // contain, so `search` excluding the query by REFERENCE needs no special case for
 // it. The Python half carries the same string.
@@ -430,6 +436,283 @@ export function ladder(arity) {
 
 export function ladderKey(arity) { return `arity${arity}/${LADDER_VERSION}`; }
 
+// --------------------------------------------------------------------------- //
+// THE CROSS LADDER, and the outcome INTERLINGUA.
+//
+// `assay cross` compares a JavaScript function to a Python one, and two things have to
+// be true before that means anything.
+//
+// 1. THE TWO LADDERS MUST HOLD IDENTICAL VALUES, not merely identically-versioned
+//    ones. `BASE_VALUES` cannot: Python has a tuple and JavaScript does not, `None` and
+//    `null` are written differently, and the two lists are hand-kept in step by a test
+//    that compares SHAPES because comparing lengths would fail for a correct reason. A
+//    shape check is enough for two runs of one language and nothing like enough here.
+//
+//    So the cross ladder is ONE JSON DOCUMENT, carried verbatim by both halves and
+//    parsed by each. `test_parity.py` compares the two texts, so the VALUES are
+//    identical by construction rather than by inspection — and the rungs' digest goes
+//    into the ladder key, so a comparison across a changed ladder is refused by the
+//    same branch that already refuses a mismatched arity.
+//
+// 2. THE OUTCOMES MUST BE COMPARABLE. The README's own example prints `V:False` on one
+//    side and `V:false` on the other, which is not a disagreement about behaviour: it
+//    is two spellings of one answer. `crossRender` renders a value as canonical JSON,
+//    so both spellings become `true`/`false` and both absences become `null`.
+// --------------------------------------------------------------------------- //
+
+// ONE DOCUMENT, BYTE FOR BYTE. Both halves carry this text and `test_parity.py`
+// compares them; nothing here is a value one language wrote down and the other tried
+// to match.
+export const CROSS_VALUES_JSON = '[0, 1, 2, -1, 7, 255, 3.5, -0.5, true, false, null, "", "a", "abc", '
+  + '"Hello, World!", "ATTACK AT DAWN, at dawn!", "  padded  ", "10", "aeiou", '
+  + '"\\u00bd", "\\u00e9", "\\t\\n", [], [1, 2, 3], [3, 1, 2], ["a", "b"], {}, '
+  + '{"a": 1}, {"a": 1, "b": 2}]';
+
+export const CROSS_VALUES = JSON.parse(CROSS_VALUES_JSON);
+
+/**
+ * The argument lists for `arity`, as VALUES. The same stride walk `ladder` uses.
+ *
+ * It returns parsed values rather than source strings because the two languages have
+ * no shared source syntax — which is the whole reason this ladder exists.
+ */
+export function crossLadder(arity) {
+  if (arity === 1) return CROSS_VALUES.map((v) => [v]);
+  const n = CROSS_VALUES.length;
+  const combos = [];
+  for (let i = 0; i < MAX_PAIRS_PER_INPUT; i += 1) {
+    const idx = [];
+    for (let k = 0; k < arity; k += 1) idx.push((i * (k + 1) + k * 5) % n);
+    combos.push(idx.map((j) => CROSS_VALUES[j]));
+  }
+  for (let i = 0; i < n; i += 1) {
+    combos.push(new Array(arity).fill(CROSS_VALUES[i]));
+  }
+  const seen = new Set();
+  const out = [];
+  for (const combo of combos) {
+    const key = JSON.stringify(combo);
+    if (!seen.has(key)) { seen.add(key); out.push(combo); }
+  }
+  return out;
+}
+
+/**
+ * What makes two CROSS vectors comparable, and it carries a digest of the rungs.
+ *
+ * `arity1/v3` says two vectors came from ladders with the same NAME. Across two
+ * languages that is not enough — the whole hazard is two lists that were meant to hold
+ * the same values and quietly stopped. The digest is over the rungs themselves, so a
+ * ladder that changed by one character produces a different key and `compareCross`
+ * refuses the pair through the branch that already refuses a mismatched arity.
+ */
+export function crossKey(arity) {
+  const rungs = JSON.stringify(crossLadder(arity));
+  const digest = createHash('sha1').update(rungs).digest('hex').slice(0, 12);
+  return `cross${arity}/${LADDER_VERSION}/${digest}`;
+}
+
+/**
+ * A value in the interlingua, or null if it cannot be said in both languages.
+ *
+ * JSON IS THE VOCABULARY, and the boundary is drawn where JSON's is because that is
+ * the only notation both languages already agree on. Everything inside it renders
+ * canonically — object keys sorted, no incidental whitespace — so two implementations
+ * differing only in insertion order are not reported as differing.
+ *
+ * THE LOSSY MAPPINGS ARE THE INTERESTING PART, and each one is a deliberate choice
+ * about which mistake to make:
+ *
+ *   * A Python `int` and a Python `float` of the same value render alike, because
+ *     JavaScript has ONE number type. Refusing to merge them would make every
+ *     arithmetic function differ across the boundary for a reason internal to one
+ *     language.
+ *   * `undefined` and `null` both become `null`. Python has one absence and JavaScript
+ *     has two, so the interlingua carries the one both can state. It merges, and
+ *     merging can only ever produce a `same` — which is the verdict that FAILS here —
+ *     so it is the direction that needs saying out loud: a JavaScript function
+ *     returning `undefined` where a Python one returns `None` is treated as agreement,
+ *     and that is a judgment rather than a measurement.
+ *   * A Python `tuple` renders as an array. JavaScript has no tuple, and a function
+ *     that returns one is answering the question an array answers here.
+ *
+ * NaN and the infinities are spelled out because JSON cannot hold them and
+ * `JSON.stringify` turns all three into `null` — three different answers reported as
+ * one absence.
+ *
+ * Anything else — a Map, a Set, a class instance, a function, a symbol, a BigInt —
+ * returns null, and the caller turns that into an outcome that makes the whole
+ * comparison a `look`. Rendering it approximately would be inventing a fact about a
+ * value this cannot read.
+ */
+export function crossRender(value, depth = 0) {
+  if (depth > 6) return '...';
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) return 'NaN';
+    if (value === Infinity) return 'Infinity';
+    if (value === -Infinity) return '-Infinity';
+    // `-0` is `0` here: Python's `-0.0` and `0.0` compare equal and print differently,
+    // and a sign on a zero is not an answer either language gives on purpose.
+    if (Object.is(value, -0)) return '0';
+    return String(value);
+  }
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    const parts = value.map((v) => crossRender(v, depth + 1));
+    return parts.some((p) => p === null) ? null : `[${parts.join(',')}]`;
+  }
+  // A PLAIN OBJECT ONLY. A Map, a Set, a Date or a class instance is not something
+  // Python has the same way, and `JSON.stringify` would flatten several of them into
+  // `{}` — one answer standing in for four.
+  const proto = Object.getPrototypeOf(value);
+  if (typeof value !== 'object' || (proto !== Object.prototype && proto !== null)) {
+    return null;
+  }
+  const pairs = [];
+  for (const key of Object.keys(value).sort()) {
+    const rendered = crossRender(value[key], depth + 1);
+    if (rendered === null) return null;
+    pairs.push(`${JSON.stringify(key)}:${rendered}`);
+  }
+  return `{${pairs.join(',')}}`;
+}
+
+/** The kind of a value the interlingua cannot state, for the `X:` outcome. */
+function kindOf(value) {
+  if (value === null) return 'null';
+  if (typeof value !== 'object') return typeof value;
+  return (value.constructor && value.constructor.name) || 'object';
+}
+
+/**
+ * 'V:<interlingua>' | 'X:<kind>' | 'E:*'. One rung of a CROSS vector.
+ *
+ * A THROW CARRIES NO NAME, and that is the load-bearing decision. The two languages'
+ * error taxonomies genuinely diverge — `d['x']` is a `KeyError` in Python and
+ * `undefined` here — so naming them would make every honest pair `differs`. Declaring
+ * them equal is worse: `same` is the verdict that FAILS here, so a wrong equality
+ * manufactures findings.
+ *
+ * `compareCross` therefore MASKS a rung where both sides threw: it tells you nothing.
+ * A rung where one threw and the other answered stays a witness, and it is the most
+ * interesting kind there is.
+ *
+ * `X:` is an outcome the interlingua cannot say. It is not compared; it makes the pair
+ * a `look`, because a value this cannot read is one it must not pronounce on.
+ */
+export async function crossOutcome(fn, args, perInput = PER_INPUT_MS) {
+  let value;
+  let timer;
+  try {
+    value = fn(...args);
+    if (value && typeof value.then === 'function') {
+      value = await Promise.race([value, new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('per-input limit')), perInput);
+      })]);
+    }
+  } catch {
+    return 'E:*';
+  } finally {
+    clearTimeout(timer);
+  }
+  const text = crossRender(value);
+  if (text === null) return `X:${kindOf(value)}`;
+  if (text.length > REPR_INLINE) {
+    return `V#${createHash('sha1').update(text).digest('hex')}`;
+  }
+  return `V:${text}`;
+}
+
+/**
+ * The vectors a function that does NOTHING with its arguments would give.
+ *
+ * DEFINED ON THE DATA, not by either language's semantics, and that is what makes it
+ * the same guard on both sides. `dict(x)` raises for an int in Python while `{...x}`
+ * answers `{}` here, so mirroring "what the language does" would give the two halves
+ * different vacuity guards for one ladder. The rule here is the interlingua's own:
+ * hand the argument back, or copy it through when it is an object and refuse
+ * otherwise.
+ */
+export function crossProjections(rungs) {
+  if (!rungs.length) return [];
+  const arity = rungs[0].length;
+  const out = [];
+  for (let i = 0; i < arity; i += 1) {
+    const identity = [];
+    const copied = [];
+    for (const args of rungs) {
+      const value = args[i];
+      identity.push(`V:${crossRender(value)}`);
+      const isObject = value !== null && typeof value === 'object'
+        && !Array.isArray(value);
+      copied.push(isObject ? `V:${crossRender({ ...value })}` : 'E:*');
+    }
+    out.push(identity);
+    out.push(copied);
+  }
+  return out;
+}
+
+/**
+ * Did this ladder tell this function apart from a constant? (counts, or null.)
+ *
+ * The same two guards `discriminating` applies, over the interlingua. `E:*` rungs are
+ * not returned values, for the reason they are not there either: one return plus one
+ * throw is two distinct OUTCOMES and rewards a probe that found the function's type
+ * errors and never reached its behaviour.
+ */
+export function crossDiscriminating(vector, rungs) {
+  const returned = vector.filter((o) => !o.startsWith('E:'));
+  if (new Set(returned).size < MIN_DISTINCT) return null;
+  const live = [];
+  vector.forEach((o, i) => { if (!o.startsWith('E:')) live.push(i); });
+  for (const proj of crossProjections(rungs)) {
+    if (live.length && live.every((i) => vector[i] === proj[i])) return null;
+  }
+  return { returned: returned.length, distinct: new Set(returned).size };
+}
+
+/**
+ * ['same'|'differs'|'look', detail] across the language boundary.
+ *
+ * A RUNG WHERE BOTH SIDES THREW IS MASKED, AND THERE IS NO BRANCH FOR IT. A throw
+ * carries no name here, so both sides render one as the same `E:*` and two of them can
+ * never be a witness; `crossDiscriminating` counts only RETURNED values, so two of them
+ * can never be evidence either. The masking is real and it lives in the rendering
+ * rather than here — a branch would be a second statement of it, and one that says
+ * nothing.
+ *
+ * That is worth writing down because the earlier version DID have the branch, with a
+ * comment explaining what it did, and a mutation that removed it changed nothing: the
+ * guard and its absence produced the same observable, which is precisely the failure
+ * this package exists to report.
+ *
+ * A RUNG WHERE ONE THREW AND THE OTHER ANSWERED IS A WITNESS, and it is the most
+ * interesting one there is: one implementation has a case the other does not.
+ */
+export function compareCross(aVec, bVec, aKey, bKey, rungs) {
+  if (aKey !== bKey) return ['look', `not comparable: ${aKey} vs ${bKey}`];
+  if (aVec.length !== bVec.length || aVec.length !== rungs.length) {
+    return ['look', 'vector length disagrees with the ladder'];
+  }
+  for (let i = 0; i < aVec.length; i += 1) {
+    const [x, y] = [aVec[i], bVec[i]];
+    if (x.startsWith('X:') || y.startsWith('X:')) {
+      return ['look', 'an outcome the interlingua cannot state: '
+        + `${JSON.stringify(rungs[i])} -> ${x} vs ${y}`];
+    }
+    if (x !== y) {
+      return ['differs', `${JSON.stringify(rungs[i])} -> ${x} vs ${y}`];
+    }
+  }
+  if (crossDiscriminating(aVec, rungs) === null) {
+    return ['look', 'not discriminated by the ladder'];
+  }
+  return ['same', `no input in ${rungs.length} told them apart`];
+}
+
 /**
  * A stable, order-insensitive rendering.
  *
@@ -631,6 +914,41 @@ export function discriminating(vector, inputs = null) {
   return { returned: returned.length, distinct: new Set(returned).size };
 }
 
+/**
+ * Why this ladder did not tell this function apart, or null if it did.
+ *
+ * `discriminating()` answers yes or no, because yes or no is all a scan needs: the
+ * census counts one reason and moves on. Somebody who expected a PARTICULAR function
+ * to be probed needs the other thing — which of the two guards refused it, since a
+ * constant and a projection are different problems with different answers.
+ *
+ * IT DOES NOT NAME WHICH ARGUMENT a projection handed back. Doing so would need a
+ * second copy of the vacuous table beside `projections()`, kept in step by hand, and
+ * two tables that must agree is the exact duplication this package exists to report.
+ * The shape is named; the index is left to the reader, who has the function open.
+ */
+export function discriminationDetail(vector, inputs) {
+  if (discriminating(vector, inputs) !== null) return null;
+  const answered = vector.filter((o) => o.slice(0, 2) !== 'E:');
+  if (!answered.length) {
+    return `it threw on all ${vector.length} rungs — the ladder reached its type `
+      + 'errors and never its behaviour';
+  }
+  const seen = new Set(answered).size;
+  if (seen < MIN_DISTINCT) {
+    return `${seen} distinct returned value across the ${answered.length} rungs `
+      + `that answered, and ${MIN_DISTINCT} is the minimum — as far as this ladder `
+      + 'can see it is a constant';
+  }
+  // THE LAST BRANCH IS DEDUCED, not re-decided. `discriminating` already said no and
+  // the two counting branches above did not explain it, so the projection guard is
+  // what refused this vector. Asking `isProjection` again would be a SECOND decider
+  // for one question, and two deciders that can disagree is the shape of defect this
+  // package exists to report.
+  return 'a projection: everywhere it answered it did nothing with its arguments '
+    + '— handed one back, or copied one through';
+}
+
 /** ['same'|'differs'|'look', detail]. Refuses two vectors from different ladders. */
 export function compare(aVec, bVec, aKey, bKey, inputs) {
   if (aKey !== bKey) return ['look', `not comparable: ${aKey} vs ${bKey}`];
@@ -648,8 +966,14 @@ export function compare(aVec, bVec, aKey, bKey, inputs) {
   return ['same', `no input in ${inputs.length} told them apart`];
 }
 
-/** Probe every exported function of one file, in a child process. */
-export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null) {
+/**
+ * Probe every exported function of one file, in a child process.
+ *
+ * `cross` swaps the native ladder for the shared one and the native rendering for the
+ * interlingua — see `crossOutcome`. It is the same child doing the same gating; only
+ * what goes in and what comes out change.
+ */
+export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null, cross = false) {
   return new Promise((resolve) => {
     const worker = path.join(HERE, 'probe.js');
     // The source travels WITH the path. The child loads by path, so relative imports
@@ -727,8 +1051,10 @@ export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null) {
       resolve({ functions });
     });
     const ladders = {};
-    for (let arity = 1; arity <= MAX_ARITY; arity += 1) ladders[arity] = ladder(arity);
-    child.stdin.end(JSON.stringify({ file, source, ladders }));
+    for (let arity = 1; arity <= MAX_ARITY; arity += 1) {
+      ladders[arity] = cross ? crossLadder(arity) : ladder(arity);
+    }
+    child.stdin.end(JSON.stringify({ file, source, ladders, cross }));
   });
 }
 

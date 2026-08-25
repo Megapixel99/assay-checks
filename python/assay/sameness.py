@@ -82,6 +82,10 @@ PROBE_TIMEOUT = 20            # seconds for one function's whole ladder
 PER_INPUT_SECONDS = 1         # SIGALRM inside the worker, where available
 HELPER_DEPTH = 3              # how far a free name may resolve into sibling functions
 LADDER_VERSION = "v3"
+# The shape of an `assay probe` record, versioned apart from the tool. One half writes
+# it and the other reads it, which makes it a published interface with the same claim
+# on stability as the exit codes.
+PROBE_SCHEMA = 1
 # What a snippet read from stdin is called. It collides with nothing a
 # tree can contain, so `search` excluding the query by REFERENCE needs no
 # special case for it.
@@ -380,14 +384,282 @@ def ladder_key(func):
 
 
 # --------------------------------------------------------------------------- #
+# THE CROSS LADDER, and the outcome INTERLINGUA.
+#
+# `assay cross` compares a Python function to a JavaScript one, and two things have to
+# be true before that means anything.
+#
+# 1. THE TWO LADDERS MUST HOLD IDENTICAL VALUES, not merely identically-versioned
+#    ones. `BASE_VALUES` cannot: Python has a tuple and JavaScript does not, `None` and
+#    `null` are written differently, and the two lists are hand-kept in step by a test
+#    that compares SHAPES because comparing lengths would fail for a correct reason. A
+#    shape check is enough for two runs of one language and nothing like enough here.
+#
+#    So the cross ladder is ONE JSON DOCUMENT, carried verbatim by both halves and
+#    parsed by each. `test_parity.py` compares the two texts, so the VALUES are
+#    identical by construction rather than by inspection — and the rungs' digest goes
+#    into the ladder key, so a comparison across a changed ladder is refused by the
+#    same branch that already refuses a mismatched arity.
+#
+#    Excluded on purpose: a tuple (JavaScript has none), an integral float written
+#    `2.0` (Python renders it `2.0` and JavaScript renders it `2`), and exponents.
+#
+# 2. THE OUTCOMES MUST BE COMPARABLE. The README's own example prints `V:False` on one
+#    side and `V:false` on the other, which is not a disagreement about behaviour: it
+#    is two spellings of one answer. `cross_outcome` renders a value as canonical JSON,
+#    so both spellings become `true`/`false` and both absences become `null`.
+# --------------------------------------------------------------------------- #
+
+# ONE DOCUMENT, BYTE FOR BYTE. Both halves carry this text and `test_parity.py`
+# compares them; nothing here is a value one language wrote down and the other tried
+# to match.
+CROSS_VALUES_JSON = (
+    '[0, 1, 2, -1, 7, 255, 3.5, -0.5, true, false, null, "", "a", "abc", '
+    '"Hello, World!", "ATTACK AT DAWN, at dawn!", "  padded  ", "10", "aeiou", '
+    '"\\u00bd", "\\u00e9", "\\t\\n", [], [1, 2, 3], [3, 1, 2], ["a", "b"], {}, '
+    '{"a": 1}, {"a": 1, "b": 2}]')
+
+CROSS_VALUES = json.loads(CROSS_VALUES_JSON)
+
+
+def cross_ladder(arity):
+    """The argument lists for `arity`, as VALUES. The same stride walk `ladder` uses.
+
+    It returns parsed values rather than source strings because the two languages have
+    no shared source syntax — which is the whole reason this ladder exists.
+    """
+    if arity == 1:
+        return [[v] for v in CROSS_VALUES]
+    n = len(CROSS_VALUES)
+    combos = []
+    for i in range(MAX_PAIRS_PER_INPUT):
+        idx = [(i * (k + 1) + k * 5) % n for k in range(arity)]
+        combos.append([CROSS_VALUES[j] for j in idx])
+    for i in range(n):
+        combos.append([CROSS_VALUES[i]] * arity)
+    seen, out = set(), []
+    for combo in combos:
+        key = json.dumps(combo, ensure_ascii=False, separators=(",", ":"))
+        if key not in seen:
+            seen.add(key)
+            out.append(combo)
+    return out
+
+
+def cross_key(arity):
+    """What makes two CROSS vectors comparable, and it carries a digest of the rungs.
+
+    `arity1/v3` says two vectors came from ladders with the same NAME. Across two
+    languages that is not enough — the whole hazard is two lists that were meant to
+    hold the same values and quietly stopped. The digest is over the rungs themselves,
+    so a ladder that changed by one character produces a different key and `compare`
+    refuses the pair through the branch that already refuses a mismatched arity.
+    """
+    rungs = json.dumps(cross_ladder(arity), ensure_ascii=False, separators=(",", ":"))
+    digest = hashlib.sha1(rungs.encode("utf-8")).hexdigest()[:12]
+    return "cross%d/%s/%s" % (arity, LADDER_VERSION, digest)
+
+
+def cross_render(value, _depth=0):
+    """A value in the interlingua, or None if it cannot be said in both languages.
+
+    JSON IS THE VOCABULARY, and the boundary is drawn where JSON's is because that is
+    the only notation both languages already agree on. Everything inside it renders
+    canonically — object keys sorted, no incidental whitespace — so two implementations
+    differing only in insertion order are not reported as differing.
+
+    THE LOSSY MAPPINGS ARE THE INTERESTING PART, and each one is a deliberate choice
+    about which mistake to make:
+
+      * A Python `int` and a Python `float` of the same value render alike, because
+        JavaScript has ONE number type. Refusing to merge them would make every
+        arithmetic function differ across the boundary for a reason internal to one
+        language.
+      * JavaScript's `undefined` and `null` both become `null`. Python has one absence
+        and JavaScript has two, so the interlingua carries the one both can state. It
+        merges, and merging can only ever produce a `same` — which is the verdict that
+        FAILS here — so it is the direction that needs saying out loud: a Python
+        function returning `None` where a JavaScript one returns `undefined` is treated
+        as agreement, and that is a judgment rather than a measurement.
+      * A Python `tuple` renders as an array. JavaScript has no tuple, and a function
+        that returns one is answering the question an array answers there.
+
+    NaN and the infinities are spelled out because JSON cannot hold them and
+    `JSON.stringify` turns all three into `null` — three different answers reported as
+    one absence.
+
+    Anything else — bytes, a Map, a class instance, a function, a symbol — returns
+    None, and the caller turns that into an outcome that makes the whole comparison a
+    `look`. Rendering it approximately would be inventing a fact about a value this
+    cannot read.
+    """
+    if _depth > 6:
+        return "..."
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value != value:
+            return "NaN"
+        if value == float("inf"):
+            return "Infinity"
+        if value == float("-inf"):
+            return "-Infinity"
+        # An INTEGRAL float is an integer here, because JavaScript has one number type
+        # and `2.0` is `2` there. Python's own int/float distinction is a difference
+        # inside one language, not between two.
+        if value.is_integer():
+            return "%d" % int(value)
+        return repr(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, (list, tuple)):
+        parts = [cross_render(v, _depth + 1) for v in value]
+        if any(p is None for p in parts):
+            return None
+        return "[%s]" % ",".join(parts)
+    if isinstance(value, dict):
+        pairs = []
+        for key in sorted(value, key=repr):
+            if not isinstance(key, str):
+                return None            # JavaScript object keys are strings.
+            rendered = cross_render(value[key], _depth + 1)
+            if rendered is None:
+                return None
+            pairs.append("%s:%s" % (json.dumps(key, ensure_ascii=False), rendered))
+        return "{%s}" % ",".join(pairs)
+    return None
+
+
+def cross_outcome_of(fn, args):
+    """'V:<interlingua>' | 'X:<kind>' | 'E:*'. One rung of a CROSS vector.
+
+    A RAISE CARRIES NO NAME, and that is the load-bearing decision. The two languages'
+    error taxonomies genuinely diverge — `d['x']` is a `KeyError` in Python and
+    `undefined` in JavaScript — so naming them would make every honest pair `differs`.
+    Declaring them equal is worse: `same` is the verdict that FAILS here, so a wrong
+    equality manufactures findings.
+
+    `compare_cross` therefore MASKS a rung where both sides raised: it tells you
+    nothing. A rung where one raised and the other answered stays a witness, and it is
+    the most interesting kind there is.
+
+    `X:` is an outcome the interlingua cannot say. It is not compared; it makes the
+    pair a `look`, because a value this cannot read is one it must not pronounce on.
+    """
+    try:
+        value = fn(*args)
+        if inspect.iscoroutine(value):
+            value = asyncio.run(value)
+    except BaseException:                                     # noqa: BLE001
+        return "E:*"
+    text = cross_render(value)
+    if text is None:
+        return "X:%s" % type(value).__name__
+    if len(text) > REPR_INLINE:
+        return "V#%s" % hashlib.sha1(text.encode("utf-8")).hexdigest()
+    return "V:%s" % text
+
+
+def cross_projections(rungs):
+    """The vectors a function that does NOTHING with its arguments would give.
+
+    DEFINED ON THE DATA, not by either language's semantics, and that is what makes it
+    the same guard on both sides. `dict(x)` raises for an int in Python while `{...x}`
+    answers `{}` in JavaScript, so mirroring "what the language does" would give the
+    two halves different vacuity guards for one ladder. The rule here is the
+    interlingua's own: hand the argument back, or copy it through when it is an object
+    and refuse otherwise.
+    """
+    if not rungs:
+        return []
+    arity = len(rungs[0])
+    out = []
+    for i in range(arity):
+        identity, copied = [], []
+        for args in rungs:
+            value = args[i]
+            identity.append("V:%s" % cross_render(value))
+            if isinstance(value, dict):
+                copied.append("V:%s" % cross_render(dict(value)))
+            else:
+                copied.append("E:*")
+        out.append(identity)
+        out.append(copied)
+    return out
+
+
+def cross_discriminating(vector, rungs):
+    """Did this ladder tell this function apart from a constant? (counts, or None.)
+
+    The same two guards `discriminating` applies, over the interlingua. `E:*` rungs are
+    not returned values, for the reason they are not there either: one return plus one
+    raise is two distinct OUTCOMES and rewards a probe that found the function's type
+    errors and never reached its behaviour.
+    """
+    returned = [o for o in vector if not o.startswith("E:")]
+    if len(set(returned)) < MIN_DISTINCT:
+        return None
+    live = [i for i, o in enumerate(vector) if not o.startswith("E:")]
+    for proj in cross_projections(rungs):
+        if live and all(vector[i] == proj[i] for i in live):
+            return None
+    return (len(returned), len(set(returned)))
+
+
+def compare_cross(a_vec, b_vec, a_key, b_key, rungs):
+    """('same'|'differs'|'look', detail) across the language boundary.
+
+    A RUNG WHERE BOTH SIDES RAISED IS MASKED, AND THERE IS NO BRANCH FOR IT. A raise
+    carries no name here, so both sides render one as the same `E:*` and two of them
+    can never be a witness; `cross_discriminating` counts only RETURNED values, so two
+    of them can never be evidence either. The masking is real and it lives in the
+    rendering rather than here — a branch would be a second statement of it, and one
+    that says nothing.
+
+    That is worth writing down because the earlier version DID have the branch, with a
+    comment explaining what it did, and a mutation that removed it changed nothing: the
+    guard and its absence produced the same observable, which is precisely the failure
+    this package exists to report.
+
+    A RUNG WHERE ONE RAISED AND THE OTHER ANSWERED IS A WITNESS, and it is the most
+    interesting one there is: one implementation has a case the other does not.
+    """
+    if a_key != b_key:
+        return "look", "not comparable: %s vs %s" % (a_key, b_key)
+    if len(a_vec) != len(b_vec) or len(a_vec) != len(rungs):
+        return "look", "vector length disagrees with the ladder"
+    for i, (x, y) in enumerate(zip(a_vec, b_vec)):
+        if x.startswith("X:") or y.startswith("X:"):
+            return "look", ("an outcome the interlingua cannot state: %s -> %s vs %s"
+                            % (json.dumps(rungs[i], ensure_ascii=False), x, y))
+        if x != y:
+            return "differs", "%s -> %s vs %s" % (
+                json.dumps(rungs[i], ensure_ascii=False), x, y)
+    if cross_discriminating(a_vec, rungs) is None:
+        return "look", "not discriminated by the ladder"
+    return "same", "no input in %d told them apart" % len(rungs)
+
+
+# --------------------------------------------------------------------------- #
 # probe() — run one function over the ladder in a subprocess.
 # --------------------------------------------------------------------------- #
 
-def probe(func, python=None):
+def probe(func, python=None, mode="native"):
     """(vector, None) or (None, reason). A vector is a list of outcome strings.
 
     One subprocess per FUNCTION, not per pair: n probes and then a hash bucket, rather
     than n-squared executions.
+
+    `mode="cross"` runs the CROSS ladder and renders the interlingua, which is what
+    `assay probe` hands to the other half. Same gate, same subprocess, same timeouts —
+    only the inputs and the rendering change, so a function this half refuses is
+    refused for the same reason either way.
     """
     why = purity(func)
     if why:
@@ -395,9 +667,10 @@ def probe(func, python=None):
     pre, why = preamble_for(func)
     if pre is None:
         return None, why
-    inputs = ladder(len(func.params))
+    inputs = (cross_ladder(len(func.params)) if mode == "cross"
+              else ladder(len(func.params)))
     payload = {"preamble": pre, "source": ast.unparse(func.node),
-               "name": func.name, "inputs": inputs,
+               "name": func.name, "inputs": inputs, "mode": mode,
                "per_input": PER_INPUT_SECONDS}
     worker_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "worker.py")
     try:
@@ -649,6 +922,64 @@ def resolve(ref):
     path, _, name = ref.rpartition("::")
     mod = parse(path)
     return mod.funcs.get(name) if mod else None
+
+
+def resolve_why(ref):
+    """(Func, None), or (None, the reason this reference names nothing).
+
+    THREE DIFFERENT ANSWERS, and `resolve` collapses them into None because a scan does
+    not care which. `assay why` is the command that does: no such file, a file that
+    does not parse, and a file with no such function send you to three different places,
+    and "cannot resolve" sends you to none of them.
+    """
+    if "::" not in ref:
+        return None, "not a FILE::NAME reference: %s" % ref
+    path, _, name = ref.rpartition("::")
+    if not os.path.exists(path):
+        return None, "no such file: %s" % path
+    mod = parse(path)
+    if mod is None:
+        return None, ("%s does not parse, or cannot be read as UTF-8 — nothing in it "
+                      "is reachable" % path)
+    func = mod.funcs.get(name)
+    if func is None:
+        known = ", ".join(sorted(mod.funcs)) or "no module-level functions at all"
+        return None, ("%s defines no module-level function named %s (it defines: %s)"
+                      % (path, name, known))
+    return func, None
+
+
+def discrimination_detail(vector, inputs):
+    """Why this ladder did not tell this function apart, or None if it did.
+
+    `discriminating()` answers yes or no, because yes or no is all a scan needs: the
+    census counts one reason and moves on. Somebody who expected a PARTICULAR function
+    to be probed needs the other thing — which of the two guards refused it, since a
+    constant and a projection are different problems with different answers.
+
+    IT DOES NOT NAME WHICH ARGUMENT a projection handed back. Doing so would need a
+    second copy of the vacuous table beside `projections()`, kept in step by hand, and
+    two tables that must agree is the exact duplication this package exists to report.
+    The shape is named; the index is left to the reader, who has the function open.
+    """
+    if discriminating(vector, inputs) is not None:
+        return None
+    answered = [o for o in vector if o[:2] != "E:"]
+    if not answered:
+        return ("it raised on all %d rungs — the ladder reached its type errors and "
+                "never its behaviour" % len(vector))
+    seen = len(set(answered))
+    if seen < MIN_DISTINCT:
+        return ("%d distinct returned value across the %d rungs that answered, and %d "
+                "is the minimum — as far as this ladder can see it is a constant"
+                % (seen, len(answered), MIN_DISTINCT))
+    # THE LAST BRANCH IS DEDUCED, not re-decided. `discriminating` already said no and
+    # the two counting branches above did not explain it, so the projection guard is
+    # what refused this vector. Asking `is_projection` again would be a SECOND decider
+    # for one question, and two deciders that can disagree is the shape of defect this
+    # package exists to report.
+    return ("a projection: everywhere it answered it did nothing with its "
+            "arguments — handed one back, or copied one through")
 
 
 def resolve_source(text, name=None):

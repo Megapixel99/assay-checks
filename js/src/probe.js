@@ -21,7 +21,9 @@ import { writeSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { ANSWER_FD, declaredArity, functionRefusal, probeOutcome } from './sameness.js';
+import {
+  ANSWER_FD, crossOutcome, declaredArity, functionRefusal, probeOutcome,
+} from './sameness.js';
 
 /**
  * Every exported function of a module, with its exported name — each function ONCE.
@@ -89,7 +91,7 @@ function say(payload) {
   while (off < buf.length) off += writeSync(ANSWER_FD, buf, off, buf.length - off);
 }
 
-export async function probeFunction(fn, name, ladders) {
+export async function probeFunction(fn, name, ladders, cross = false) {
   let source = '';
   try {
     source = Function.prototype.toString.call(fn);
@@ -112,6 +114,19 @@ export async function probeFunction(fn, name, ladders) {
   if (why) return { name, skip: why };
   const inputs = ladders[String(arity)];
   if (!inputs) return { name, skip: `no ladder for arity ${arity}` };
+  // TWO MODES, and only the inputs and the rendering differ. In `cross` mode the rungs
+  // arrive as VALUES — the two languages share no source syntax, which is the reason
+  // that ladder exists — and the outcomes are rendered in the interlingua. Same gate,
+  // same child, same timeouts, so a function this half refuses is refused for the same
+  // reason either way.
+  if (cross) {
+    const crossVector = [];
+    for (const args of inputs) {
+      // eslint-disable-next-line no-await-in-loop
+      crossVector.push(await crossOutcome(fn, args));
+    }
+    return { name, arity, vector: crossVector };
+  }
   // ONE RUNG AT A TIME, never `Promise.all`. The ladder is a fixed sequence and the
   // vector has to come back in it; running the rungs concurrently would also let one
   // function's pending work overlap the next rung's, so a probe that hangs would take
@@ -222,7 +237,7 @@ async function main() {
   say({ roster: found.map(([name]) => name) });
   for (const [name, fn] of found) {
     // eslint-disable-next-line no-await-in-loop
-    say({ entry: await probeFunction(fn, name, request.ladders) });
+    say({ entry: await probeFunction(fn, name, request.ladders, request.cross === true) });
   }
 }
 
