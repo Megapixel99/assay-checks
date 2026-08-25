@@ -30,6 +30,17 @@ as a catch, no scratch state written into the tree, and a digest taken before th
 first write and compared after the last restore — because a restore that RAN is not a
 restore that WORKED.
 
+An EIGHTH property, from exp 183, which `assay runners` does not audit for and which
+this runner needs anyway — because restoring the SOURCE is not enough on its own. The
+modules mutated here are IMPORTED by the Python suite, and a `.pyc` is judged valid by
+source SIZE plus mtime-SECONDS. `MIN_DISTINCT = 2` -> `MIN_DISTINCT = 1` below is the
+same LENGTH, so the restore leaves an identical size in the same second, CPython's
+cache check passes, and the NEXT run executes bytecode compiled from the MUTATED file
+— failing on a line that exists in no source file on disk, which reads exactly like a
+real defect in the tool rather than an instrument fault. So the suites run with
+`PYTHONDONTWRITEBYTECODE=1`, and `__pycache__` beside the mutated package is dropped
+before the baseline, before each mutation and inside every restore.
+
     python3 mutations_assay.py              # the whole table
     python3 mutations_assay.py --only same  # substring filter (PARTIAL RUN)
 """
@@ -151,6 +162,21 @@ def language(name):
 
 def target(name):
     return os.path.join(language(name)["sources"], name)
+
+
+def drop_bytecode():
+    """Clear cached bytecode beside the Python sources this runner mutates.
+
+    Belt to `PYTHONDONTWRITEBYTECODE`'s braces; see the module docstring. Not a
+    per-half answer like the four above, because it is not a question both halves
+    have: node compiles nothing to disk, so this is a fact about ONE of them.
+    """
+    cache = os.path.join(LANGUAGES[".py"]["sources"], "__pycache__")
+    if not os.path.isdir(cache):
+        return
+    for name in os.listdir(cache):
+        if name.endswith(".pyc"):
+            os.remove(os.path.join(cache, name))
 
 
 # (label, file, old, new)
@@ -1201,6 +1227,11 @@ MUTATIONS += [
 
 SUITE_TIMEOUT = 1800
 
+# See the module docstring: a `.pyc` compiled from a mutated module can outlive the
+# restore and decide the NEXT run. Handed to both halves because `node` ignores it and
+# a second environment to keep in step is a second thing that can fall out of step.
+SUITE_ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+
 
 def run_suite(lang):
     """(ran, failures). Positive evidence required, per the property this audits for.
@@ -1216,7 +1247,7 @@ def run_suite(lang):
     """
     try:
         proc = subprocess.run(lang["suite"], capture_output=True, text=True,
-                              timeout=SUITE_TIMEOUT)
+                              timeout=SUITE_TIMEOUT, env=SUITE_ENV)
     except subprocess.TimeoutExpired:
         return False, ["DID NOT RUN (the %s suite hung for %ds)"
                        % (lang["name"], SUITE_TIMEOUT)]
@@ -1276,6 +1307,7 @@ def main(argv=None):
         for name, text in originals.items():
             with open(target(name), "w", encoding="utf-8") as fh:
                 fh.write(text)
+        drop_bytecode()
         wrong = []
         for name in sorted(originals):
             with open(target(name), "rb") as fh:
@@ -1296,6 +1328,10 @@ def main(argv=None):
         signal.signal(sig, _bail)
 
     try:
+        # BEFORE THE BASELINE, because a `.pyc` left by an earlier run would fail the
+        # baseline itself — and this runner then refuses to score anything, pointing
+        # at code that is correct in every source file on disk.
+        drop_bytecode()
         # A BASELINE PER HALF, and only for the halves this run touches. Scoring a
         # JavaScript mutation against a green Python baseline would be evidence about
         # a suite that was never going to see the mutation — and a `--only` filter
@@ -1327,6 +1363,7 @@ def main(argv=None):
             # the only place a `.js` mutant can be parsed honestly is where it lives.
             # The write is therefore inside the same `try` whose `finally` restores —
             # an invalid mutant leaves the tree exactly as clean as a valid one.
+            drop_bytecode()
             with open(target(name), "w", encoding="utf-8") as fh:
                 fh.write(mutated)
             try:
