@@ -12,6 +12,47 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### `assay anchors` runs under Node, by IMPORT rather than by parse
+
+It used to exit 2 and point at PyPI, and the reason was sound: pulling a mutation table
+out of source needs a real parser, JavaScript has none in its standard library, this
+package has no dependencies, and **a regex reporting confident nonsense about which
+strings are anchors would be worse than the gap**.
+
+The gap closes from the other side. The JavaScript half already loads modules, so a
+table that is **exported** is readable as *data*:
+
+```javascript
+export const MUTATIONS = [
+  ['the negative guard stops firing', "if (x < 0) throw new RangeError('x');", 'if (false) {}'],
+];
+```
+
+A property access. No parser, no dependency, no approximation anywhere in the path. The
+rule is the same one the Python half enforces and `test_parity.py` pins it: the anchor is
+the **second-to-last string**, which follows from `replace(old, new)` rather than from a
+convention about column order, and both halves bound the readable shapes identically so
+an entry one offers as unreadable is not silently guessed at by the other.
+
+**The cost is stated rather than hidden.** The harness gets imported, so guard `main()`
+behind the entry-point check every program in this package already carries — a harness
+that does work at import time will do that work, in a child process that cannot reach
+your session but on the real tree. In exchange a **computed** anchor is simply a string
+here, where the Python half can only report it as a shape it cannot read. A harness that
+exports no table is a `look`, never a finding.
+
+**Every harness leaves the corpus, in either language.** `find_runners` answers which
+harnesses a half can *read*; what has to leave the corpus is *all* of them. A polyglot
+repository has a `mutations-x.js` beside a `mutations_a.py`, and a JavaScript harness
+left in the Python corpus is a file full of anchor strings for that audit to match its
+own anchors against — a confident finding about a file the harness has nothing to do
+with. Reading and excluding are two different questions, and answering both with one
+walk was the mistake.
+
+**Under Node, `assay all` can now call a baseline line stale.** No JavaScript run used
+to perform every audit able to produce one, so the half said so instead of printing a
+`0 stale` that reads as "nothing is stale". It performs them all now.
+
 ### `assay why FILE::NAME`: the census, for one name
 
 The census prints refusal reasons with counts, which is the right shape for a tree and

@@ -462,8 +462,12 @@ MUTATIONS = [
     # ---- anchors -------------------------------------------------------------- #
     ("anchors: harnesses rejoin the corpus, so anchors match themselves",
      "anchors.py",
-     '''    skip = {os.path.realpath(os.path.join(root, rel)) for rel in runners}''',
+     '''    skip = harness_paths(root)''',
      '''    skip = set()'''),
+    ("anchors: only THIS language's harnesses leave the corpus",
+     "anchors.py",
+     '''            if name.startswith("mutations") and name.endswith(SOURCE_EXTS):''',
+     '''            if name.startswith("mutations") and name.endswith(".py"):'''),
     ("anchors: an ambiguous anchor stops being a finding",
      "anchors.py",
      '''            elif worst > 1:''',
@@ -619,6 +623,50 @@ MUTATIONS += [
      "probe.js",
      """  const seen = new Set(inherited);""",
      """  const seen = new Set();"""),
+
+    # ---- anchors, read by IMPORT rather than by parse ------------------------- #
+    ("js anchors: the anchor moves off the second-to-last column",
+     "anchors.js",
+     """    if (parts.length >= 2 && parts.length <= 4) found.push(parts[parts.length - 2]);""",
+     """    if (parts.length >= 2 && parts.length <= 4) found.push(parts[0]);"""),
+    ("js anchors: a table shape it cannot read is guessed at rather than offered",
+     "anchors.js",
+     """    else if (parts.length > 4) unreadable.push(parts[0]);""",
+     """    else if (parts.length > 4) found.push(parts[parts.length - 2]);"""),
+    ("js anchors: an anchor matching NOTHING stops being a finding",
+     "anchors.js",
+     """      if (worst === 0) dead.push(anchor);""",
+     """      if (false) dead.push(anchor);"""),
+    ("js anchors: an ambiguous anchor stops being a finding",
+     "anchors.js",
+     """      else if (worst > 1) ambiguous.push([anchor, worst]);""",
+     """      else if (false) ambiguous.push([anchor, worst]);"""),
+    ("js anchors: ambiguity is counted across files rather than PER file",
+     "anchors.js",
+     """        if (hits > worst) worst = hits;""",
+     """        worst += hits;"""),
+    ("js anchors: harnesses rejoin the corpus, so anchors match themselves",
+     "anchors.js",
+     """  const skip = harnessPaths(root);""",
+     """  const skip = new Set();"""),
+    ("js anchors: only THIS language's harnesses leave the corpus",
+     "anchors.js",
+     """      else if (name.startsWith(RUNNER_PREFIX) && SOURCE.test(name)) {""",
+     """      else if (name.startsWith(RUNNER_PREFIX) && /\\.(mjs|cjs|js)$/.test(name)) {"""),
+    ("js anchors: a harness with no exported table is guessed at rather than offered",
+     "anchor-probe.js",
+     """  if (!named) { say({ absent: true }); return; }""",
+     """  if (!named) { say({ table: [] }); return; }"""),
+    ("js anchors: a table that would not import comes back empty rather than as an error",
+     "anchor-probe.js",
+     """    say({ error: `could not import (${(err && err.message) || err})`.slice(0, 140) });
+    return;""",
+     """    say({ table: [] });
+    return;"""),
+    ("js anchors: the table answer shares stdout with whatever the harness printed",
+     "anchors.js",
+     """    child.stdio[ANSWER_FD].on('data', (d) => { answer += d; });""",
+     """    child.stdout.on('data', (d) => { answer += d; });"""),
 
     # ---- `why`: which gate refused THIS function ------------------------------ #
     ("js sameness: a PROJECTION is explained as a constant",
@@ -793,13 +841,8 @@ MUTATIONS += [
     # ---- the baseline, and the cry-wolf failure ------------------------------- #
     ("js cli: a PARTIAL run calls a baseline entry stale (cries wolf at itself)",
      "cli.js",
-     """    const [still] = applyBaseline(report.findings, config.baseline);
-    const accepted = report.findings.length - still.length;
-    report.items = report.items.filter((i) => i.verdict !== FINDING).concat(still);""",
-     """    const [still, stale] = applyBaseline(report.findings, config.baseline);
-    const accepted = report.findings.length - still.length;
-    report.items = report.items.filter((i) => i.verdict !== FINDING).concat(still);
-    for (const line of stale) report.finding(`no longer fires: ${line}`);"""),
+     """function finish(report, config, write, verbose, complete = false) {""",
+     """function finish(report, config, write, verbose, complete = true) {"""),
 ]
 
 

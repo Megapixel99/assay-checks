@@ -2,7 +2,7 @@
 /**
  * assay — one command for two questions ordinary CI does not answer.
  *
- *     could those checks have failed?      assay runners | diff | all
+ *     could those checks have failed?      assay runners | anchors | diff | all
  *     does the tree already answer this?   assay scan | pair | search
  *     why was my function not probed?      assay why FILE::NAME
  *
@@ -17,10 +17,15 @@
  * separate verdict: a check that reports things a person then has to dismiss stops
  * being read, and an unread check occupies the place where a working one would go.
  *
- * `anchors` is Python-only and this CLI says so rather than shipping a weak version.
- * Pulling a mutation table out of source needs a real parser; the Python half has one
- * in its standard library and this package has no dependencies. A regex that reports
- * confident nonsense about which strings are anchors would be worse than the gap.
+ * `anchors` READS THE TABLE AS DATA rather than parsing source, which is the one thing
+ * this half can do that the Python half cannot. Python lifts the table out with `ast`
+ * and executes nothing; there is no parser in the JavaScript standard library and this
+ * package has no dependencies, so the alternative here was a regex — and a regex cannot
+ * tell a label from an anchor, so it would report confident nonsense. A harness opts in
+ * by EXPORTING its table (`export const MUTATIONS = [...]`), which makes reading it a
+ * property access with no approximation anywhere in the path. One that exports none is
+ * a `look`, never a finding: it has not opted in, and inventing a reading of it is the
+ * thing this deliberately does not do.
  */
 
 import { readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -29,6 +34,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { auditAnchors } from './anchors.js';
 import { auditDiff, auditRunners, checkExemptions } from './checks.js';
 import { applyBaseline, ConfigError, load } from './config.js';
 import {
@@ -42,16 +48,15 @@ import { FINDING, Report, render } from './verdicts.js';
 const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
 
   runners                     audit mutation runners against seven properties
+  anchors                     every mutation anchor matches exactly once
   diff [--base REF]           does this change carry the checks it needs?
-  all  [--base REF]           runners + diff
+  all  [--base REF]           runners + anchors + diff
        [--scan PATH...]       ...and the sameness half over these paths
   scan PATH...                discover functions that answer the same question
   pair FILE::NAME FILE::NAME  compare two named functions
   search FILE::NAME --in DIR  does the tree already answer this?
          --stdin [--name N]   ...about a function that is not a file yet
   why FILE::NAME              which gate refused this function, or that it was probed
-
-  anchors                     Python only — see \`assay\` on PyPI
 
 exit: 0 nothing to read, 1 findings, 2 could not run
 `;
@@ -91,31 +96,35 @@ export function parseArgs(argv) {
 /**
  * Apply the baseline, render, and return the exit code.
  *
- * STALE DETECTION NEEDS A COMPLETE RUN, and this half can never have one. A baseline
- * line records a finding you have read and accepted, and it goes stale when it stops
- * firing — but `runners` cannot produce a finding that only `diff` reports, so calling
- * a line stale from a partial run marks every other command's lines as fixed. That is
- * the audit reporting a problem with its own config, on a clean tree, on every run,
- * and it was caught on this tool's own repository. The Python half therefore calls a
- * line stale only from `assay all`, the one command that performs every audit able to
- * produce one.
+ * STALE DETECTION NEEDS A COMPLETE RUN, and getting this wrong made the tool cry wolf
+ * at itself. A baseline line records a finding you have read and accepted; it goes
+ * stale when it stops firing. But `runners` cannot produce a finding that only `diff`
+ * reports, so checking staleness there flags every `diff` line as fixed — the audit
+ * reporting a problem with its own config, on a clean tree, every run.
  *
- * `anchors` is Python-only, so NO command here performs them all and this half never
- * calls a line stale. It says so, rather than printing `0 stale` and letting that read
- * as "nothing is stale" — a gap stated is a limit, a gap unstated is a bug report
- * waiting to happen.
+ * So a line that does not fire is only called stale when the run performed EVERY audit
+ * that can produce one, which is `assay all`. Every command still suppresses accepted
+ * findings, because that direction is safe from any command: a line that fires is a
+ * line that fires.
  *
- * Suppression still works, from any command, because that direction is safe from a
- * partial run: a line that fires is a line that fires.
+ * THIS HALF USED TO BE UNABLE TO HAVE A COMPLETE RUN AT ALL, because `anchors` was
+ * Python-only, and it said so rather than printing `0 stale`. It now reads a mutation
+ * table by importing it, so `assay all` here performs every audit and the caveat is
+ * the same one the Python half carries.
  */
-function finish(report, config, write, verbose) {
+function finish(report, config, write, verbose, complete = false) {
   if (config.baseline.length) {
-    const [still] = applyBaseline(report.findings, config.baseline);
+    const [still, stale] = applyBaseline(report.findings, config.baseline);
     const accepted = report.findings.length - still.length;
     report.items = report.items.filter((i) => i.verdict !== FINDING).concat(still);
+    if (complete) {
+      for (const line of stale) {
+        report.finding(`baseline line no longer fires (fixed? then delete it): ${line}`);
+      }
+    }
     if (verbose) {
       write(`\nBASELINE ${config.path} — ${accepted} accepted, ${still.length} new, `
-        + 'staleness needs the Python `assay all` (this half cannot run `anchors`)\n');
+        + `${complete ? `${stale.length} stale` : 'staleness needs `assay all`'}\n`);
     }
   }
   if (verbose) write(`\n${'-'.repeat(72)}\n`);
@@ -320,11 +329,8 @@ export async function run(argv, write = (s) => process.stdout.write(s),
 
   switch (opts.cmd) {
     case 'anchors':
-      write('assay: `anchors` is implemented in the Python package only.\n'
-        + '       Pulling a mutation table out of source needs a real parser, and a\n'
-        + '       regex version would report confident nonsense. Use `pip install\n'
-        + '       assay` for that command.\n');
-      return 2;
+      await auditAnchors(root, config, report);
+      return finish(report, config, write, verbose);
 
     case 'why': {
       if (opts.positional.length !== 1) {
@@ -348,6 +354,7 @@ export async function run(argv, write = (s) => process.stdout.write(s),
     case 'all': {
       auditRunners(root, config, report);
       checkExemptions(root, config, report);
+      await auditAnchors(root, config, report);
       auditDiff(root, opts.base, config, report);
       // `--scan PATH` folds the sameness half into the same run and the same report,
       // as it does on the Python side. Without it `all` covers the check half only.
@@ -356,7 +363,7 @@ export async function run(argv, write = (s) => process.stdout.write(s),
         group(scan);
         reportScan(scan, report);
       }
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, verbose, true);
     }
 
     case 'scan': {

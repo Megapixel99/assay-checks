@@ -26,7 +26,7 @@ PY_ROOT = os.path.dirname(HERE)              # python/ — what `import assay` n
 REPO = os.path.dirname(PY_ROOT)              # the repository, which holds both halves
 sys.path.insert(0, PY_ROOT)
 
-from assay import checks, sameness  # noqa: E402
+from assay import anchors, checks, sameness  # noqa: E402
 from assay.config import CONFIG_NAMES  # noqa: E402
 from assay.verdicts import FINDING, LOOK, OK  # noqa: E402
 
@@ -392,10 +392,45 @@ class TheTwoHalvesAgree(unittest.TestCase):
             source = js(name)
             self.assertIn("0 nothing to read, 1 findings, 2 could not run", source)
 
-    def test_the_javascript_half_NAMES_the_command_it_does_not_implement(self):
-        """A gap stated is a limit; a gap unstated is a bug report waiting to happen."""
-        self.assertIn("Python", js("cli.js"))
-        self.assertIn("anchors", js("cli.js"))
+    def test_both_halves_read_a_mutation_table_by_the_SAME_RULE(self):
+        """`anchors` is the one command whose halves work by different MECHANISMS —
+        Python lifts the table out with `ast` and the JavaScript half imports it and
+        reads the value — so what has to match is the rule, not the code.
+
+        THE ANCHOR IS THE SECOND-TO-LAST STRING, and both halves say so in the same
+        place. That is a consequence of `replace(old, new)` rather than a convention:
+        whatever else an entry carries, `old` and `new` are adjacent and in that order,
+        because that is the call they feed. A half that took a different column would
+        report a different set of dead anchors for one repository.
+        """
+        self.assertIn("found.append(parts[-2].value)", py("anchors.py"))
+        self.assertIn("found.push(parts[parts.length - 2])", js("anchors.js"))
+        # ...and both bound the readable shapes the same way, so an entry one half
+        # offers as unreadable is not silently guessed at by the other.
+        self.assertIn("if 2 <= len(parts) <= 4:", py("anchors.py"))
+        self.assertIn("if (parts.length >= 2 && parts.length <= 4)", js("anchors.js"))
+
+    def test_both_halves_keep_EVERY_harness_out_of_the_corpus(self):
+        """In either language, which is the part a single-language audit gets wrong. A
+        polyglot repository has a `mutations-x.js` beside a `mutations_a.py`; each half
+        can only READ its own, and both must be kept out of the corpus or one half's
+        anchors are counted inside the other half's harness."""
+        self.assertIn("skip = harness_paths(root)", py("anchors.py"))
+        self.assertIn("const skip = harnessPaths(root);", js("anchors.js"))
+        # ...over the same set of source extensions, or one half walks past a harness
+        # the other excludes. Compared as SETS: the two are spelled differently on
+        # purpose (a tuple here, one regex alternation there) and pinning the spelling
+        # would fail for a correct reason.
+        found = set(re.search(r"const SOURCE = /\\\.\(([a-z|]+)\)\$/;",
+                              js("anchors.js")).group(1).split("|"))
+        self.assertEqual(found, set(e.lstrip(".") for e in anchors.SOURCE_EXTS))
+
+    def test_the_javascript_half_no_longer_REFUSES_anchors(self):
+        """The gap it used to state is closed, and the statement has to go with it. A
+        CLI that still points at PyPI for a command it now implements is documentation
+        that is wrong in the direction people act on."""
+        self.assertNotIn("Python package only", js("cli.js"))
+        self.assertIn("auditAnchors(root, config, report)", js("cli.js"))
 
 
 if __name__ == "__main__":

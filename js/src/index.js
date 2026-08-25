@@ -13,6 +13,9 @@
 export { FINDING, LOOK, OK, Item, Report, render } from './verdicts.js';
 export { Config, ConfigError, applyBaseline, load as loadConfig } from './config.js';
 export {
+  anchorsOf, auditAnchors, harnessPaths, readTable, sourceFiles,
+} from './anchors.js';
+export {
   PROPERTIES, PROPERTY_KEYS, THREE_QUESTIONS,
   auditDiff, auditRunners, changedFiles, checkExemptions, findRunners,
   guardsPerFile, targetsMentioned,

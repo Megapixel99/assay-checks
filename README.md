@@ -235,8 +235,9 @@ find.
 Paths are relative to `--root`, and **the language of the path is not a category**:
 `runner_exempt` and `baseline` take Python and JavaScript entries side by side,
 because a polyglot repository has one root and the audit that reads this file may be
-either binary. `anchor_exempt` is the one exception: it only affects `assay anchors`,
-which is Python-only, so a JavaScript-only project never needs an entry there.
+either binary. `anchor_exempt` affects only `assay anchors`, which both halves now
+run — the Python half by parsing the table out with `ast`, the JavaScript half by
+importing the harness and reading the exported table as data.
 
 **A `baseline` line is the exact text of a `finding`, and only a `finding`.** It is
 matched whole, never as a prefix, so the line above is what `assay` printed rather
@@ -272,12 +273,9 @@ accepted findings, because that direction is safe from any command: a line that 
 is a line that fires. **Run `assay all` in CI**, not the subcommands separately, or an
 accepted finding can be fixed and its record left behind forever.
 
-**Under Node, no command calls a line stale**, and the run says so instead of printing
-a zero. `assay anchors` is Python-only, so no JavaScript run performs every audit that
-can produce a baseline line, and claiming completeness there would flag every anchor
-line as fixed. A polyglot project should point the **Python** `assay all` at the root
-for that one job; the JavaScript half still suppresses accepted findings exactly as
-the Python half does.
+**Under Node this used to be impossible**, because `assay anchors` was Python-only and
+no JavaScript run performed every audit that can produce a baseline line. It does now,
+so `assay all` under Node calls a line stale on the same terms the Python half does.
 
 ## What `same` is worth
 
@@ -384,13 +382,33 @@ your tree, point the tool at the files you trust rather than at the whole reposi
 | `why` | yes | yes, and the answer is often the FILE gate |
 | `runners` | yes | yes, with a weaker `dead-vs-real` (see below) |
 | `diff` | yes | yes |
-| `anchors` | yes | **no, and the CLI says so** |
+| `anchors` | yes, by **parse** | yes, by **import** |
 
-`anchors` needs to pull a mutation table out of source, which needs a real parser.
-Python has one in its standard library; this package has no dependencies, so the JS half
-would need a regex, and **a regex that reports confident nonsense about which strings are
-anchors would be worse than the gap**. `assay anchors` under Node exits 2 and points at
-the Python package rather than doing something approximate quietly.
+**`anchors` is the one command whose halves work by different mechanisms**, and the
+difference is worth knowing before you rely on either. Python lifts the table out with
+`ast` and executes nothing. JavaScript has no parser in its standard library and this
+package has no dependencies, so for a long time the honest answer here was a gap: a
+regex cannot tell a label from an anchor, and **a check reporting confident nonsense
+about which strings are anchors is worse than no check**.
+
+But the JavaScript half already loads modules. A table that is **exported** is readable
+as *data* — a property access, no parser, no dependency, no approximation anywhere in
+the path:
+
+```javascript
+export const MUTATIONS = [
+  ['the negative guard stops firing', "if (x < 0) throw new RangeError('x');", 'if (false) {}'],
+];
+```
+
+Two consequences, one in each direction. The harness **gets imported**, so guard your
+`main()` behind the entry-point check every program in this package already carries — a
+harness that does work at import time will do that work, in a child process that cannot
+reach your session but on the real tree. In exchange, a **computed** anchor is simply a
+string here, where the Python half can only report it as a shape it cannot read.
+
+A harness that exports no table is a `look`, never a finding: it has not opted into
+being read this way, and inventing a reading of it is the thing this declines to do.
 
 The JS `dead-vs-real` detector is textual where Python's reads an AST. The consequence is
 one-directional and worth knowing: it will not produce a false FINDING, it will miss a

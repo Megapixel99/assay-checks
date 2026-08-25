@@ -224,12 +224,15 @@ test('a broken config exits 2 rather than auditing without it', async () => {
   assert.match(text, /not valid JSON/);
 });
 
-test('anchors names itself as Python-only rather than shipping a weak version', async () => {
-  // A regex that reports confident nonsense about which strings are anchors would be
-  // worse than the gap, and a silent no-op would be worse still.
-  const { code, text } = await cli('anchors');
-  assert.equal(code, 2);
-  assert.match(text, /Python/);
+test('anchors runs here now, and says so when there is nothing to audit', async () => {
+  // It used to exit 2 and point at PyPI. The table is read by IMPORT rather than by
+  // parse, so there is no regex and no approximation — and a project with no harness
+  // is reported rather than passing silently.
+  const { code, text } = await cli('--root', tree({ 'm.js': 'export const x = 1;\n' }),
+    'anchors');
+  assert.equal(code, 0, text);
+  assert.match(text, /no mutation runners found/);
+  assert.doesNotMatch(text, /Python package only/);
 });
 
 // --------------------------------------------------------------------------- //
@@ -264,17 +267,18 @@ test('a PARTIAL run does not call a baseline entry stale', async () => {
   assert.match(text, /staleness needs/);
 });
 
-test('and NAMES the half that can, rather than printing 0 stale', async () => {
-  // No command here performs every audit able to produce a baseline line, because
-  // `anchors` is Python-only. `0 stale` would read as "nothing is stale", which is a
-  // different claim from "this half never looked".
+test('...and `all` DOES call one stale, now that this half can run every audit', async () => {
+  // The gap that used to make this impossible is closed: `anchors` reads a mutation
+  // table by importing it, so `assay all` here performs every audit able to produce a
+  // baseline line. A line that no longer fires is somebody's fixed problem with the
+  // record still claiming otherwise.
   const root = tree({
     'assay.json': JSON.stringify({ baseline: ['a finding long gone'] }),
     'm.js': 'export function a(n) { return n * 2; }\n',
   });
-  const { text } = await cli('--root', root, 'scan', root);
-  assert.match(text, /staleness needs the Python `assay all`/);
-  assert.match(text, /anchors/);
+  const { code, text } = await cli('--root', root, 'all', '--base', 'HEAD');
+  assert.equal(code, 1, text);
+  assert.match(text, /no longer fires/);
 });
 
 test('all folds in the sameness half when asked', async () => {
