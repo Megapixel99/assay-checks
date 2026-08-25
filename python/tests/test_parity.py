@@ -207,34 +207,51 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertIn("self.params = [a.arg for a in node.args.args]", py("sameness.py"))
 
     def test_ONE_version_in_every_place_that_states_it(self):
-        """Four places carry it, and the release only ever compared two of them.
+        """Six places carry it, and the release only ever compared two of them.
 
         `pyproject.toml` and `package.json` are each a registry's source of truth, and
-        `release.yml` refuses to publish if they disagree. But `assay.__version__` and
-        the string the JavaScript CLI prints are separate literals, so a bump that
-        touched the two manifests and missed these would publish a package whose
-        `--version` names the release before it. That is not a broken build — it is a
-        tool lying about which build you are running, which is worse, because the
-        number is what you would quote in a bug report.
+        `release.yml` refuses to publish if they disagree. The other four are literals
+        nothing compared. `assay.__version__` and the string the JavaScript CLI prints
+        would publish a package whose `--version` names the release before it: not a
+        broken build, but a tool lying about which build you are running, which is
+        worse, because that number is what you would quote in a bug report. The two
+        README pins name a tag in the `uses:` line somebody copies into their workflow,
+        and a pin naming a tag that was never cut fails in their CI rather than in ours.
 
         Kept as literals rather than read at runtime on purpose: `importlib.metadata`
         needs the package installed, and this one is meant to run from a checkout with
         nothing but `PYTHONPATH`. So the duplication stays and is CHECKED, which is the
         same bargain every other table in this package makes.
+
+        THE PINS ARE DISCOVERED, NOT COUNTED. Asserting that there are two would fail
+        the day a third example is added, which trains whoever hits it to edit the
+        number rather than read the check. Finding NONE is the failure that matters,
+        because a pattern that matches nothing agrees with everything.
         """
         import json                                          # noqa: PLC0415
 
-        pyproject = pyproject_version()
-        self.assertIsNotNone(pyproject, "no [project] version in pyproject.toml")
+        sites = {}
+        sites["pyproject.toml"] = pyproject_version()
         with open(os.path.join(REPO, "package.json"), encoding="utf-8") as fh:
-            package_json = json.load(fh)["version"]
-        module = re.search(r'__version__ = "([^"]+)"', py("__init__.py")).group(1)
-        printed = re.search(r"write\('assay ([0-9][^\\']*)\\n'\)",
-                            js("cli.js")).group(1)
+            sites["package.json"] = json.load(fh)["version"]
+        sites["assay.__version__"] = re.search(
+            r'__version__ = "([^"]+)"', py("__init__.py")).group(1)
+        sites["js --version"] = re.search(
+            r"write\('assay ([0-9][^\\']*)\\n'\)", js("cli.js")).group(1)
 
-        self.assertEqual({pyproject, package_json, module, printed}, {pyproject},
-                         "pyproject=%s package.json=%s assay.__version__=%s "
-                         "js --version=%s" % (pyproject, package_json, module, printed))
+        with open(os.path.join(REPO, "README.md"), encoding="utf-8") as fh:
+            readme = fh.read()
+        pins = re.findall(r"Megapixel99/assay-checks@v([0-9][^\s`]*)", readme)
+        self.assertTrue(pins, "no `uses:` pin found in README.md, so this check "
+                              "matched nothing and would agree with any version")
+        for number, pin in enumerate(pins, 1):
+            sites["README pin %d" % number] = pin
+
+        for name, value in sites.items():
+            self.assertIsNotNone(value, "%s states no version" % name)
+        self.assertEqual(len(set(sites.values())), 1,
+                         "the version sites disagree: %s"
+                         % ", ".join("%s=%s" % kv for kv in sorted(sites.items())))
 
     def test_the_verdict_names_are_identical(self):
         source = js("verdicts.js")

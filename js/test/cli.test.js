@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -327,6 +327,17 @@ test('it runs through a SYMLINK, which is how npm installs the command', () => {
     status = err.status;
   }
   assert.equal(status, 1, 'a findings run through the link must still exit 1');
+});
+
+test('the version it prints is the version the manifest publishes', () => {
+  // `cli.js` carries the number as a LITERAL, separate from `package.json`, so the two
+  // can drift. The Python half's parity test compares all six places a version is
+  // written and would catch it, but a suite that cannot check its own half leaves the
+  // literal guarded only by the other language: a bump that missed this file would go
+  // red in Python and green in everything the JavaScript mutations are scored against.
+  const manifest = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const printed = execFileSync(process.execPath, [CLI, '--version'], { encoding: 'utf8' });
+  assert.equal(printed.trim(), `assay ${manifest.version}`);
 });
 
 test('the package scans ITSELF clean', async () => {
