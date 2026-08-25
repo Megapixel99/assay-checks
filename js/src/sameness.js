@@ -1100,6 +1100,25 @@ export class Scan {
    * is what it hid — how much of the tree was never opened at all.
    */
   fileCensus() { return tally(this.unloadable.values()); }
+
+  /**
+   * The census as data, so a consumer never has to parse the printed equation.
+   *
+   * `probed + not_probed` equals `functions`, and FILES ARE A SEPARATE POPULATION: a
+   * file nobody opened holds an unknown number of functions, so adding the two totals
+   * together prints a number nobody measured. Both halves are here with their own
+   * totals, which is what makes that checkable rather than merely stated.
+   */
+  toDict() {
+    return {
+      files: this.files,
+      unloadable: Object.fromEntries(this.fileCensus()),
+      functions: this.functions,
+      probed: this.probed.size,
+      not_probed: this.skipped.size,
+      skipped: Object.fromEntries(this.census()),
+    };
+  }
 }
 
 export async function collect(targets, scan = new Scan()) {

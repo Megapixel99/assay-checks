@@ -230,9 +230,32 @@ class TheProbeRecord(unittest.TestCase):
         self.assertIn("look", record)
         self.assertNotIn("vector", record)
 
-    def test_a_reference_that_names_nothing_IS_exit_2(self):
-        code, _text = run("probe", "nowhere.py::x")
+    def test_a_reference_that_names_nothing_is_exit_2_AND_STILL_A_RECORD(self):
+        """ONE SHAPE, ALWAYS, and `--json` is not what decides it here: this command's
+        output IS JSON, so there is no prose form to switch away from. A consumer never
+        has to ask which of two shapes it received, and `2` still means the tool could
+        not run — prose on the failure path would hand it a parse error at exactly the
+        moment the tool could not run."""
+        code, text = run("probe", "nowhere.py::x")
         self.assertEqual(code, 2)
+        record = json.loads(text)
+        self.assertEqual(record["assay_probe"], PROBE_SCHEMA)
+        self.assertIn("no such file", record["error"])
+        self.assertNotIn("vector", record)
+
+    def test_a_record_that_SUCCEEDED_carries_a_null_error(self):
+        """The same keys on both paths, so `error` is the one a consumer reads."""
+        record = json.loads(self.probe()[1])
+        self.assertIsNone(record["error"])
+
+    def test_json_changes_NOTHING_about_probe(self):
+        """It is already the JSON command. A `--json` that produced a second shape here
+        would be the thing `--json` exists to prevent."""
+        plain = self.probe()[1]
+        root = tree({"api.py": SHOUT})
+        _code, flagged = run("--json", "probe",
+                             os.path.join(root, "api.py") + "::shout")
+        self.assertEqual(json.loads(plain)["vector"], json.loads(flagged)["vector"])
 
 
 class Crossing(unittest.TestCase):
@@ -344,6 +367,23 @@ class Crossing(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("assay probe", text)
         self.assertIn("--with", text)
+
+    def test_cross_answers_in_JSON_when_asked(self):
+        """`cross` builds a Report like every other audit, so it emits the envelope —
+        and a refusal emits it too, with `error` set and `items` empty."""
+        root = tree({})
+        ref, vector = self.python_vector(root)
+        other = self.js_record(root, vector)
+        _code, text = run("--json", "cross", ref, other)
+        data = json.loads(text)
+        self.assertIsNone(data["error"])
+        self.assertEqual(data["exit_code"], 1)
+        self.assertEqual(data["items"][0]["verdict"], "finding")
+        _code, refused = run("--json", "cross", ref, "notes.txt::x")
+        broken = json.loads(refused)
+        self.assertEqual(broken["exit_code"], 2)
+        self.assertIn("no language", broken["error"])
+        self.assertEqual(broken["items"], [])
 
     def test_a_reference_in_NO_KNOWN_LANGUAGE_exits_2(self):
         root = tree({"api.py": SHOUT})

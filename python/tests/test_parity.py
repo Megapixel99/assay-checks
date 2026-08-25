@@ -266,8 +266,11 @@ class TheTwoHalvesAgree(unittest.TestCase):
             sites["package.json"] = json.load(fh)["version"]
         sites["assay.__version__"] = re.search(
             r'__version__ = "([^"]+)"', py("__init__.py")).group(1)
-        sites["js --version"] = re.search(
-            r"write\('assay ([0-9][^\\']*)\\n'\)", js("cli.js")).group(1)
+        # ONE constant rather than the printed string: the JavaScript half now states
+        # its version once and `--version` interpolates it, so this reads the source
+        # of truth instead of one of its readers.
+        sites["js VERSION"] = re.search(
+            r"const VERSION = '([0-9][^']*)';", js("cli.js")).group(1)
 
         with open(os.path.join(REPO, "README.md"), encoding="utf-8") as fh:
             readme = fh.read()
@@ -282,6 +285,36 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertEqual(len(set(sites.values())), 1,
                          "the version sites disagree: %s"
                          % ", ".join("%s=%s" % kv for kv in sorted(sites.items())))
+
+    def test_the_JSON_SCHEMA_NUMBER_is_the_same_in_both_halves(self):
+        """It is versioned separately from the tool, so it is one number in two files
+        and therefore a thing that can drift. A consumer parsing this output has the
+        same claim on stability as a script reading the exit code."""
+        from assay.verdicts import SCHEMA                  # noqa: PLC0415
+
+        printed = re.search(r"export const SCHEMA = (\d+);", js("verdicts.js"))
+        self.assertIsNotNone(printed, "no SCHEMA constant in verdicts.js")
+        self.assertEqual(SCHEMA, int(printed.group(1)))
+
+    def test_both_suites_pin_the_SAME_JSON_KEYS(self):
+        """Each half's suite asserts its own output has exactly these keys, so the
+        thing left to check is that the two suites are asking for the same set.
+
+        READ AS TEXT, like everything else in this file: running the JavaScript would
+        need Node, and a suite that silently skips when a runtime is missing reports a
+        pass for a check that never ran.
+        """
+        py_test = os.path.join(HERE, "test_cli.py")
+        with open(py_test, encoding="utf-8") as fh:
+            py_block = re.search(r"KEYS = \{(.*?)\}", fh.read(), re.S).group(1)
+        js_test = os.path.join(REPO, "js", "test", "cli.test.js")
+        with open(js_test, encoding="utf-8") as fh:
+            js_block = re.search(r"const JSON_KEYS = \[(.*?)\]", fh.read(), re.S).group(1)
+        def names(block):
+            return set(re.findall(r"['\"]([a-z_]+)['\"]", block))
+
+        self.assertEqual(names(py_block), names(js_block))
+        self.assertIn("exit_code", names(py_block))
 
     def test_the_verdict_names_are_identical(self):
         source = js("verdicts.js")
@@ -461,6 +494,30 @@ class TheTwoHalvesAgree(unittest.TestCase):
         """
         self.assertIn('return "E:*"', py("sameness.py"))
         self.assertIn("return 'E:*';", js("sameness.js"))
+
+    def test_both_halves_report_the_BASELINE_the_same_way_in_JSON(self):
+        """`stale` alone is not the answer, and the shape says so in both halves.
+
+        A consumer reading `stale: []` and nothing else reads "nothing is stale",
+        which is a different claim from "this run never looked". So the payload carries
+        `performed` — what this run audited — and `unchecked`, each entry it could not
+        have seen fire. There is no `complete` boolean any more, because completeness
+        stopped being a property of the RUN when an entry learned to name the command
+        that fires it, and a half still emitting one would answer a question the other
+        half no longer asks.
+        """
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn('"performed"' if "def " in source else "performed:", source)
+            self.assertIn('"unchecked"' if "def " in source else "unchecked:", source)
+            self.assertNotIn("incomplete_because", source)
+
+    def test_a_probe_RECORD_has_one_shape_on_both_paths_in_both_halves(self):
+        """`--json` is not what decides it: `assay probe` writes JSON either way, so a
+        reference that names nothing emits the SAME record with `error` where `vector`
+        would be. A consumer never has to ask which of two shapes it received, and `2`
+        still means the tool could not run."""
+        self.assertIn('"error": unresolved', py("cli.py"))
+        self.assertIn("error: found.unresolved,", js("cli.js"))
 
     def test_both_halves_use_the_same_PROBE_RECORD_SCHEMA(self):
         """One half writes the record and the other reads it, which makes it a

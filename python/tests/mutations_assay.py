@@ -155,6 +155,35 @@ def target(name):
 
 # (label, file, old, new)
 MUTATIONS = [
+    # ---- the JSON report says the same thing the prose one does -------------- #
+    ("verdicts: the JSON exit code is computed apart from the Report's",
+     "verdicts.py",
+     """        "exit_code": 2 if error else report.exit_code(),""",
+     """        "exit_code": 2 if error else 0,"""),
+    ("verdicts: keys stop being sorted, so the two halves print different documents",
+     "verdicts.py",
+     """    json.dump(payload, out, indent=2, sort_keys=True, ensure_ascii=False)""",
+     """    json.dump(payload, out, indent=2, sort_keys=False, ensure_ascii=False)"""),
+    ("verdicts: a run that could not start emits a DIFFERENT SHAPE from one that ran",
+     "verdicts.py",
+     """    report = report if report is not None else Report()""",
+     """    report = report if report is not None else Report()
+    if error:
+        return 2"""),
+    ("cli: --json falls back to prose on the failure path",
+     "cli.py",
+     """    if getattr(args, "as_json", False):
+        return render_json(None, out, meta=_meta(args), error=message)""",
+     """    if False:
+        return render_json(None, out, meta=_meta(args), error=message)"""),
+    ("cli: the JSON baseline hides the lines this run could not check",
+     "cli.py",
+     '''            "unchecked": [{"line": e.line, "from": e.produced_by} for e in unchecked],''',
+     '''            "unchecked": [],'''),
+    ("cli: the JSON baseline claims it performed every audit",
+     "cli.py",
+     '''            "performed": sorted(performed),''',
+     '''            "performed": ["runners", "anchors", "diff", "scan"],'''),
     # ---- a snippet's function is never guessed at ---------------------------- #
     ("sameness: an ambiguous snippet silently picks a function instead of refusing",
      "sameness.py",
@@ -307,8 +336,20 @@ MUTATIONS = [
         return 2'''),
     ("cli: the probe record stops sorting its keys, so two halves write two documents",
      "cli.py",
-     '''    json.dump(record, out, indent=2, sort_keys=True, ensure_ascii=False)''',
-     '''    json.dump(record, out, indent=2, sort_keys=False, ensure_ascii=False)'''),
+     '''    vector, refused = probe(func, mode="cross")
+    if vector is None:
+        record["look"] = refused
+    else:
+        record["ladder"] = cross_key(arity)
+        record["vector"] = vector
+    json.dump(record, out, indent=2, sort_keys=True, ensure_ascii=False)''',
+     '''    vector, refused = probe(func, mode="cross")
+    if vector is None:
+        record["look"] = refused
+    else:
+        record["ladder"] = cross_key(arity)
+        record["vector"] = vector
+    json.dump(record, out, indent=2, sort_keys=False, ensure_ascii=False)'''),
 
     # ---- comparison, and the wrong-baseline defect -------------------------- #
     ("sameness: two different ladders are zipped together",
@@ -688,18 +729,18 @@ MUTATIONS = [
                         help="print findings only")'''),
     ("cli: an unresolvable reference exits 0 rather than 2",
      "cli.py",
-     '''            out.write("assay: cannot resolve %s\\n" % ref)
-            return 2''',
-     '''            out.write("assay: cannot resolve %s\\n" % ref)
-            return 0'''),
+     '''    out.write("assay: %s\\n" % message)
+    return 2''',
+     '''    out.write("assay: %s\\n" % message)
+    return 0'''),
     ("cli: a `differs` verdict is reported as a finding",
      "cli.py",
      '''        report.ok("differs: %s — %s" % (pair, detail), first.ref)''',
      '''        report.finding("differs: %s — %s" % (pair, detail), first.ref)'''),
     ("cli: a command claims it performed every audit (cries wolf at itself)",
      "cli.py",
-     '''    return _finish(report, config, out, args.verbose, ("runners",))''',
-     '''    return _finish(report, config, out, args.verbose,
+     '''    return _finish(args, report, config, out, ("runners",))''',
+     '''    return _finish(args, report, config, out,
                    ("runners", "anchors", "diff", "scan"))'''),
     ("cli: `all` without --scan claims it performed the sameness half",
      "cli.py",
@@ -722,8 +763,7 @@ MUTATIONS = [
     ("cli: a broken config is ignored rather than exiting 2",
      "cli.py",
      '''    except ConfigError as exc:
-        out.write("assay: %s\\n" % exc)
-        return 2''',
+        return _fail(args, out, str(exc))''',
      '''    except ConfigError:
         from .config import Config
         config = Config()'''),
@@ -745,6 +785,23 @@ MUTATIONS = [
 # --------------------------------------------------------------------------- #
 
 MUTATIONS += [
+    # ---- the JSON report says the same thing the prose one does -------------- #
+    ("js verdicts: the JSON exit code is computed apart from the Report's",
+     "verdicts.js",
+     """    exit_code: error ? 2 : built.exitCode(),""",
+     """    exit_code: error ? 2 : 0,"""),
+    ("js verdicts: keys stop being sorted, so the two halves print different documents",
+     "verdicts.js",
+     """  for (const key of Object.keys(value).sort()) out[key] = sorted(value[key]);""",
+     """  for (const key of Object.keys(value)) out[key] = sorted(value[key]);"""),
+    ("js cli: the JSON baseline hides the lines this run could not check",
+     "cli.js",
+     """      unchecked: unchecked.map((e) => ({ line: e.line, from: e.producedBy })),""",
+     """      unchecked: [],"""),
+    ("js cli: the JSON baseline claims it performed every audit",
+     "cli.js",
+     """      performed: [...performed].sort(),""",
+     """      performed: ['runners', 'anchors', 'diff', 'scan'],"""),
     # ---- a snippet's function is never guessed at ---------------------------- #
     ("js cli: an ambiguous snippet silently picks a function instead of refusing",
      "cli.js",
@@ -841,8 +898,8 @@ MUTATIONS += [
      """  if (entry.skip) return { unresolved: entry.skip };"""),
     ("js cli: the probe record stops sorting its keys, so two halves write two documents",
      "cli.js",
-     """      write(`${JSON.stringify(sortedKeys(found.record), null, 2)}\\n`);""",
-     """      write(`${JSON.stringify(found.record, null, 2)}\\n`);"""),
+     """        write(`${JSON.stringify(sortedKeys(record), null, 2)}\\n`);""",
+     """        write(`${JSON.stringify(record, null, 2)}\\n`);"""),
 
     # ---- anchors, read by IMPORT rather than by parse ------------------------- #
     ("js anchors: the anchor moves off the second-to-last column",
@@ -1099,8 +1156,8 @@ MUTATIONS += [
     # ---- the baseline, and the cry-wolf failure ------------------------------- #
     ("js cli: a command claims it performed every audit (cries wolf at itself)",
      "cli.js",
-     """      return finish(report, config, write, verbose, ['runners']);""",
-     """      return finish(report, config, write, verbose,
+     """      return finish(report, config, write, opts, ['runners']);""",
+     """      return finish(report, config, write, opts,
         ['runners', 'anchors', 'diff', 'scan']);"""),
     ("js cli: `all` without --scan claims it performed the sameness half",
      "cli.js",

@@ -16,6 +16,12 @@
  * the place where a working one would go.
  */
 
+// THE JSON SCHEMA IS VERSIONED SEPARATELY FROM THE TOOL, because a consumer parsing
+// this output has the same claim on stability as a script reading the exit code, and
+// the two do not move together. A release that adds a check does not change this
+// number; a release that renames a key does. The Python half carries the same one.
+export const SCHEMA = 1;
+
 export const FINDING = 'finding';
 export const LOOK = 'look';
 export const OK = 'ok';
@@ -32,6 +38,13 @@ export class Item {
     this.where = where;
     this.detail = detail;
   }
+
+  toDict() {
+    return {
+      verdict: this.verdict, message: this.message, where: this.where,
+      detail: this.detail,
+    };
+  }
 }
 
 /**
@@ -46,6 +59,13 @@ export class Report {
     this.title = title;
     this.items = [];
     this.sections = [];
+    // The census as DATA, set by a command that ran the sameness half. It is also in
+    // `sections` as prose, and a machine reading it back out of that prose would be a
+    // parser of our own output — one more thing that can be wrong about what happened.
+    this.scan = null;
+    // Set by whoever applied the baseline, because that is the only place that knows
+    // whether the run was COMPLETE enough to call a line stale.
+    this.baseline = null;
   }
 
   add(verdict, message, where = null, detail = null) {
@@ -80,6 +100,55 @@ export class Report {
    * printed.
    */
   exitCode() { return this.findings.length ? 1 : 0; }
+}
+
+/**
+ * Keys in sorted order, all the way down.
+ *
+ * `JSON.stringify` emits insertion order and Python's `json.dump` is asked for sorted
+ * keys, so without this the two halves print the same data as two different documents.
+ * One contract, two implementations, is the duplication this package exists to find —
+ * so the byte-level shape is made the same rather than left to how each language
+ * happens to build an object.
+ */
+function sorted(value) {
+  if (Array.isArray(value)) return value.map(sorted);
+  if (value === null || typeof value !== 'object') return value;
+  const out = {};
+  for (const key of Object.keys(value).sort()) out[key] = sorted(value[key]);
+  return out;
+}
+
+/**
+ * Print a Report as one JSON object, and the second thing here that writes.
+ *
+ * IT LIVES BESIDE `render` SO THIS FILE'S CLAIM STAYS TRUE with two renderers in it:
+ * everything either one shows comes off the same Report, and a second source of the
+ * same numbers would be a second answer to the same question.
+ *
+ * ONE SHAPE, ALWAYS. A run that could not start emits the same keys as one that
+ * finished, with `error` set and `items` empty, so a consumer never has to ask which
+ * of two shapes it received. The failure this guards against is the one this package
+ * exists to report: a broken invocation that a sloppy parser reads as a clean audit.
+ */
+export function renderJson(report, write, meta = {}, error = null) {
+  const built = report || new Report();
+  const payload = {
+    ...meta,
+    schema: SCHEMA,
+    tool: 'assay',
+    error,
+    // `look` GETS NO SEVERITY. Mapping the three verdicts onto somebody else's
+    // error/warning/note is the collapse this whole file is written against; the
+    // verdict travels by its own name and the consumer decides what it means.
+    items: built.items.map((i) => i.toDict()),
+    notes: [...built.sections],
+    baseline: built.baseline,
+    scan: built.scan,
+    exit_code: error ? 2 : built.exitCode(),
+  };
+  write(`${JSON.stringify(sorted(payload), null, 2)}\n`);
+  return payload.exit_code;
 }
 
 /** Print a Report. The only place in this package that writes to a stream. */

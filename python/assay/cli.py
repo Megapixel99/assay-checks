@@ -40,7 +40,32 @@ from .sameness import (PROBE_SCHEMA, collect, compare, compare_cross,
                        cross_key, cross_ladder, discriminating,
                        discrimination_detail, group, ladder, ladder_key, probe,
                        report_scan, resolve, resolve_source, resolve_why)
-from .verdicts import FINDING, Report, render
+from .verdicts import FINDING, Report, render, render_json
+
+
+def _meta(args):
+    """What a machine reading this output needs in order to know whose it is.
+
+    `language` is here because a polyglot repository runs both halves over one root,
+    and a consumer merging two reports has no other way to tell which produced which.
+    """
+    return {"version": __version__, "language": "python",
+            "command": getattr(args, "cmd", None), "root": getattr(args, "root", None)}
+
+
+def _fail(args, out, message):
+    """Exit 2, in whichever shape the caller asked for. Always returns 2.
+
+    UNDER `--json` A BROKEN INVOCATION STILL EMITS JSON. Prose on the failure path and
+    JSON everywhere else gives a consumer a parse error exactly when the tool could not
+    run, and a sloppy consumer reads that as no findings. "Could not run" and "found
+    nothing" are opposite situations; this is the one place where letting the second
+    swallow the first is easiest to do by accident.
+    """
+    if getattr(args, "as_json", False):
+        return render_json(None, out, meta=_meta(args), error=message)
+    out.write("assay: %s\n" % message)
+    return 2
 
 
 def _baseline_summary(accepted, still, stale, unchecked):
@@ -63,7 +88,7 @@ def _baseline_summary(accepted, still, stale, unchecked):
     return ", ".join(parts)
 
 
-def _finish(report, config, out, verbose=True, performed=()):
+def _finish(args, report, config, out, performed=()):
     """Apply the baseline, render, and return the exit code.
 
     STALENESS IS PER LINE, and getting it wrong in either direction is a defect this
@@ -81,6 +106,7 @@ def _finish(report, config, out, verbose=True, performed=()):
     Suppression is unconditional, because that direction is safe from any run: a line
     that fires is a line that fires.
     """
+    verbose = args.verbose and not args.as_json
     if config.baseline:
         still, stale, unchecked = apply_baseline(report.findings, config.baseline,
                                                  performed)
@@ -89,10 +115,24 @@ def _finish(report, config, out, verbose=True, performed=()):
         for entry in stale:
             report.finding("baseline line no longer fires (fixed? then delete "
                            "it): %s" % entry.line)
+        # THE CAVEAT TRAVELS AS DATA rather than as a sentence a human has to notice.
+        # `unchecked` is the caveat: a line this run could not have seen fire, which is
+        # a different claim from one it checked and found still firing. There is no
+        # `complete` boolean any more because completeness stopped being a property of
+        # the RUN — `performed` says what this run audited, and each entry names the
+        # command that can answer it.
+        report.baseline = {
+            "path": config.path, "accepted": accepted, "new": len(still),
+            "performed": sorted(performed),
+            "stale": [e.line for e in stale],
+            "unchecked": [{"line": e.line, "from": e.produced_by} for e in unchecked],
+        }
         if verbose:
             out.write("\nBASELINE %s — %s\n"
                       % (config.path,
                          _baseline_summary(accepted, still, stale, unchecked)))
+    if args.as_json:
+        return render_json(report, out, meta=_meta(args))
     if verbose:
         out.write("\n%s\n" % ("-" * 72))
     return render(report, out, verbose=verbose)
@@ -102,19 +142,19 @@ def cmd_runners(args, config, out):
     report = Report()
     audit_runners(args.root, config, report)
     check_exemptions(args.root, config, report)
-    return _finish(report, config, out, args.verbose, ("runners",))
+    return _finish(args, report, config, out, ("runners",))
 
 
 def cmd_anchors(args, config, out):
     report = Report()
     audit_anchors(args.root, config, report)
-    return _finish(report, config, out, args.verbose, ("anchors",))
+    return _finish(args, report, config, out, ("anchors",))
 
 
 def cmd_diff(args, config, out):
     report = Report()
     audit_diff(args.root, args.base, config, report)
-    return _finish(report, config, out, args.verbose, ("diff",))
+    return _finish(args, report, config, out, ("diff",))
 
 
 def _audit_everything(args, config, report):
@@ -157,6 +197,10 @@ def _audit_everything(args, config, report):
         scan = collect(args.scan)
         group(scan)
         report_scan(scan, rep)
+        # The census as DATA travels on the SHARED report, because that is the one a
+        # renderer sees. A sub-report is only ever a way to attribute findings to the
+        # audit that produced them.
+        report.scan = scan.to_dict()
 
     perform("runners", runners)
     perform("anchors", lambda rep: audit_anchors(args.root, config, rep))
@@ -170,7 +214,7 @@ def cmd_all(args, config, out):
     """Every audit in one run — and, with `--scan`, the complete one."""
     report = Report()
     _families, performed = _audit_everything(args, config, report)
-    return _finish(report, config, out, args.verbose, performed)
+    return _finish(args, report, config, out, performed)
 
 
 def cmd_accept(args, config, out):
@@ -194,10 +238,10 @@ def cmd_accept(args, config, out):
     is the one that can later call it stale.
     """
     if not args.reason:
-        out.write("assay: accept needs --reason. An acceptance without one cannot be "
-                  "told from an oversight,\n       and the baseline is the table that "
-                  "accumulates most and rots first.\n")
-        return 2
+        return _fail(args, out,
+                     "accept needs --reason. An acceptance without one cannot be told "
+                     "from an oversight,\n       and the baseline is the table that "
+                     "accumulates most and rots first.")
     report = Report()
     families, _performed = _audit_everything(args, config, report)
     known = set(config.baseline_lines)
@@ -205,34 +249,42 @@ def cmd_accept(args, config, out):
 
     if args.line is not None:
         if args.line in known:
-            out.write("assay: already in the baseline: %s\n" % args.line)
-            return 2
+            return _fail(args, out, "already in the baseline: %s" % args.line)
         if args.line in {i.message for i in report.looks}:
-            out.write(
-                "assay: that line is a `look`. A `look` never fails the run, so there "
-                "is nothing\n       to accept: baselining one writes a record that can "
-                "never match and\n       never expire.\n")
-            return 2
+            return _fail(
+                args, out,
+                "that line is a `look`. A `look` never fails the run, so there is "
+                "nothing\n       to accept: baselining one writes a record that can "
+                "never match and\n       never expire.")
         if args.line not in fired:
-            out.write(
-                "assay: nothing in this run printed that line. Accepting it would "
-                "write an entry\n       that is stale the moment it lands — paste a "
-                "`finding` exactly as it was\n       printed.\n")
-            return 2
+            return _fail(
+                args, out,
+                "nothing in this run printed that line. Accepting it would write an "
+                "entry\n       that is stale the moment it lands — paste a `finding` "
+                "exactly as it was\n       printed.")
         chosen = [args.line]
     else:
         chosen = [i.message for i in report.findings if i.message not in known]
 
+    # WHAT IT WROTE IS REPORTED AS `ok` ITEMS, and this deliberately does NOT go
+    # through `_finish`. `_finish` applies the baseline, and the baseline it would
+    # apply is the one loaded BEFORE these lines were written — so every entry already
+    # in the file would be measured against a report that holds no findings at all and
+    # come back stale. An audit reading its own writing is not an audit.
+    written = Report()
     if not chosen:
-        out.write("assay: nothing new to accept.\n")
-        return 0
-    path = config.path or os.path.join(args.root, CONFIG_NAMES[0])
-    write_baseline(path, [(line, args.reason, families.get(line))
-                          for line in chosen])
-    out.write("assay: wrote %d entr%s to %s\n"
-              % (len(chosen), "y" if len(chosen) == 1 else "ies", path))
-    for line in chosen:
-        out.write("  + [%s] %s\n" % (families.get(line) or "no from", line))
+        written.note("assay: nothing new to accept.")
+    else:
+        path = config.path or os.path.join(args.root, CONFIG_NAMES[0])
+        write_baseline(path, [(line, args.reason, families.get(line))
+                              for line in chosen])
+        written.note("assay: wrote %d entr%s to %s"
+                     % (len(chosen), "y" if len(chosen) == 1 else "ies", path))
+        for line in chosen:
+            written.ok("[%s] %s" % (families.get(line) or "no from", line))
+    if args.as_json:
+        return render_json(written, out, meta=_meta(args))
+    render(written, out, verbose=args.verbose)
     return 0
 
 
@@ -240,9 +292,10 @@ def cmd_scan(args, config, out):
     scan = collect(args.paths)
     group(scan)
     report = report_scan(scan)
+    report.scan = scan.to_dict()
     if not scan.groups:
         report.note("\nsame   none — no two probed functions share an outcome vector")
-    return _finish(report, config, out, args.verbose, ("scan",))
+    return _finish(args, report, config, out, ("scan",))
 
 
 def cmd_pair(args, config, out):
@@ -251,8 +304,7 @@ def cmd_pair(args, config, out):
     for ref in (args.a, args.b):
         func = resolve(ref)
         if func is None:
-            out.write("assay: cannot resolve %s\n" % ref)
-            return 2
+            return _fail(args, out, "cannot resolve %s" % ref)
         funcs.append(func)
     first, second = funcs
     vectors = []
@@ -260,7 +312,7 @@ def cmd_pair(args, config, out):
         vector, why = probe(func)
         if vector is None:
             report.look("%s — %s" % (func.ref, why), func.ref)
-            return _finish(report, config, out, args.verbose)
+            return _finish(args, report, config, out)
         vectors.append(vector)
     verdict, detail = compare(vectors[0], vectors[1], ladder_key(first),
                               ladder_key(second), ladder(len(first.params)))
@@ -271,7 +323,7 @@ def cmd_pair(args, config, out):
         report.ok("differs: %s — %s" % (pair, detail), first.ref)
     else:
         report.look("%s — %s" % (pair, detail), first.ref)
-    return _finish(report, config, out, args.verbose)
+    return _finish(args, report, config, out)
 
 
 def cmd_why(args, config, out):
@@ -291,25 +343,24 @@ def cmd_why(args, config, out):
     """
     func, unresolved = resolve_why(args.ref)
     if func is None:
-        out.write("assay: %s\n" % unresolved)
-        return 2
+        return _fail(args, out, unresolved)
     report = Report()
     vector, refused = probe(func)
     if vector is None:
         report.look("%s — %s" % (func.ref, refused), func.ref,
                     "refused before the ladder, so it is in no bucket and can pair "
                     "with nothing")
-        return _finish(report, config, out, args.verbose)
+        return _finish(args, report, config, out)
     inputs = ladder(len(func.params))
     detail = discrimination_detail(vector, inputs)
     if detail is not None:
         report.look("%s — not discriminated by the ladder" % func.ref, func.ref, detail)
-        return _finish(report, config, out, args.verbose)
+        return _finish(args, report, config, out)
     answered, distinct = discriminating(vector, inputs)
     report.ok("%s — probed on %s: %d of %d rungs answered, %d distinct value(s)"
               % (func.ref, ladder_key(func), answered, len(vector), distinct),
               func.ref)
-    return _finish(report, config, out, args.verbose)
+    return _finish(args, report, config, out)
 
 
 # The suffix decides which half a reference belongs to. Inferred rather than declared,
@@ -345,11 +396,19 @@ def cmd_probe(args, config, out):
     """
     func, unresolved = resolve_why(args.ref)
     if func is None:
-        out.write("assay: %s\n" % unresolved)
+        # ONE SHAPE, ALWAYS, AND `--json` IS NOT WHAT DECIDES IT. This command's output
+        # IS JSON — there is no prose form to switch away from — so a reference that
+        # names nothing emits the same record with `error` where `vector` would be,
+        # and exits 2. A consumer never has to ask which of two shapes it received,
+        # and `2` still means the tool could not run.
+        record = {"assay_probe": PROBE_SCHEMA, "ref": args.ref, "language": "python",
+                  "error": unresolved}
+        json.dump(record, out, indent=2, sort_keys=True, ensure_ascii=False)
+        out.write("\n")
         return 2
     arity = len(func.params)
     record = {"assay_probe": PROBE_SCHEMA, "ref": func.ref, "language": "python",
-              "arity": arity}
+              "arity": arity, "error": None}
     vector, refused = probe(func, mode="cross")
     if vector is None:
         record["look"] = refused
@@ -382,7 +441,7 @@ def _read_record(path):
     return record, None
 
 
-def _cross_side(ref, with_cmd, out):
+def _cross_side(ref, with_cmd):
     """One side of a cross comparison: (record, None) or (None, why).
 
     THREE WAYS IN, and the third exists because the first two are not always enough.
@@ -395,11 +454,16 @@ def _cross_side(ref, with_cmd, out):
         return _read_record(ref)
     language = language_of(ref)
     if language == "python":
-        args = argparse.Namespace(ref=ref)
+        # PROBED THROUGH THE COMMAND, not around it. `cmd_probe` is what decides what a
+        # record is, and a second path to the same record is a second answer to one
+        # question. It emits one shape on both paths, so the failure is read out of the
+        # record rather than out of prose that would have to be parsed back.
         buf = io.StringIO()
-        if cmd_probe(args, None, buf) != 0:
-            return None, buf.getvalue().strip().replace("assay: ", "")
-        return json.loads(buf.getvalue()), None
+        code = cmd_probe(argparse.Namespace(ref=ref, as_json=False), None, buf)
+        record = json.loads(buf.getvalue())
+        if code != 0:
+            return None, record.get("error") or "cannot probe %s" % ref
+        return record, None
     if language is None:
         return None, ("%s names no language this understands — a reference is "
                       "FILE::NAME and the suffix says which half" % ref)
@@ -447,10 +511,9 @@ def cmd_cross(args, config, out):
     report = Report()
     sides = []
     for ref in (args.a, args.b):
-        record, why = _cross_side(ref, args.with_cmd, out)
+        record, why = _cross_side(ref, args.with_cmd)
         if record is None:
-            out.write("assay: %s\n" % why)
-            return 2
+            return _fail(args, out, why)
         sides.append(record)
     first, second = sides
     pair = "%s [%s]  vs  %s [%s]" % (first["ref"], first["language"],
@@ -459,12 +522,12 @@ def cmd_cross(args, config, out):
         if "look" in side:
             report.look("%s — %s could not be probed: %s"
                         % (pair, side["ref"], side["look"]), first["ref"])
-            return _finish(report, config, out, args.verbose)
+            return _finish(args, report, config, out)
     if first["language"] == second["language"]:
         report.look("%s — both sides are %s; `pair` compares two functions of one "
                     "language on its own ladder, which is stronger"
                     % (pair, first["language"]), first["ref"])
-        return _finish(report, config, out, args.verbose)
+        return _finish(args, report, config, out)
     rungs = cross_ladder(first["arity"])
     verdict, detail = compare_cross(first["vector"], second["vector"],
                                     first["ladder"], second["ladder"], rungs)
@@ -477,7 +540,7 @@ def cmd_cross(args, config, out):
         report.ok("differs: %s — %s" % (pair, detail), first["ref"])
     else:
         report.look("%s — %s" % (pair, detail), first["ref"])
-    return _finish(report, config, out, args.verbose)
+    return _finish(args, report, config, out)
 
 
 def _query(args, out):
@@ -493,26 +556,23 @@ def _query(args, out):
     accepting it quietly would leave a flag that is documented, parsed and inert.
     """
     if args.name is not None and not args.stdin:
-        out.write("assay: --name selects a function inside a --stdin snippet; a "
-                  "FILE::NAME already names one\n")
-        return None, 2
+        return None, _fail(
+            args, out,
+            "--name selects a function inside a --stdin snippet; a FILE::NAME "
+            "already names one")
     if args.stdin:
         if args.ref:
-            out.write("assay: --stdin and a FILE::NAME are two different queries; "
-                      "give one\n")
-            return None, 2
+            return None, _fail(args, out, "--stdin and a FILE::NAME are two "
+                                          "different queries; give one")
         query, why = resolve_source(sys.stdin.read(), args.name)
         if query is None:
-            out.write("assay: %s\n" % why)
-            return None, 2
+            return None, _fail(args, out, why)
         return query, None
     if not args.ref:
-        out.write("assay: search needs a FILE::NAME or --stdin\n")
-        return None, 2
+        return None, _fail(args, out, "search needs a FILE::NAME or --stdin")
     query = resolve(args.ref)
     if query is None:
-        out.write("assay: cannot resolve %s\n" % args.ref)
-        return None, 2
+        return None, _fail(args, out, "cannot resolve %s" % args.ref)
     return query, None
 
 
@@ -526,7 +586,7 @@ def cmd_search(args, config, out):
         report.look("%s — %s" % (query.ref, why), query.ref)
         report.note("       the tree was not searched, because this function could "
                     "not be probed")
-        return _finish(report, config, out, args.verbose)
+        return _finish(args, report, config, out)
     scan = collect(args.into)
     key = ladder_key(query)
     hits = sorted(ref for ref, vec in scan.probed.items()
@@ -540,7 +600,8 @@ def cmd_search(args, config, out):
                     % query.ref)
         report.note("       which is not proof that nothing answers it; see Limits")
     report_scan(scan, report)
-    return _finish(report, config, out, args.verbose)
+    report.scan = scan.to_dict()
+    return _finish(args, report, config, out)
 
 
 CROSS_TIMEOUT = 120     # seconds for the OTHER half's `probe`, run through --with
@@ -583,6 +644,9 @@ def _common(defaults=False):
     common.add_argument("-q", "--quiet", action="store_true",
                         default=False if defaults else nothing,
                         help="print findings only")
+    common.add_argument("--json", action="store_true", dest="as_json",
+                        default=False if defaults else nothing,
+                        help="one JSON object instead of the prose report")
     common.add_argument("--config", default=None if defaults else nothing,
                         help="path to assay.json (default: found in --root)")
     common.add_argument("--root", default="." if defaults else nothing,
@@ -660,6 +724,8 @@ def main(argv=None, out=None):
     ap = build_parser()
     args = ap.parse_args(argv)
     if not args.cmd:
+        if args.as_json:
+            return _fail(args, out, "no subcommand")
         ap.print_help(out)
         return 2
     args.verbose = not args.quiet
@@ -667,8 +733,7 @@ def main(argv=None, out=None):
     try:
         config = load(args.config, args.root)
     except ConfigError as exc:
-        out.write("assay: %s\n" % exc)
-        return 2
+        return _fail(args, out, str(exc))
     return COMMANDS[args.cmd](args, config, out)
 
 

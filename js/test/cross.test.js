@@ -211,6 +211,34 @@ test('its KEYS are SORTED', () => {
   });
 });
 
+test('a reference that names nothing is exit 2 AND STILL A RECORD', async () => {
+  // ONE SHAPE, ALWAYS, and `--json` is not what decides it here: this command's output
+  // IS JSON, so there is no prose form to switch away from. A consumer never has to ask
+  // which of two shapes it received, and `2` still means the tool could not run.
+  const { code, text } = await cli('probe', 'nowhere.js::x');
+  assert.equal(code, 2);
+  const record = JSON.parse(text);
+  assert.equal(record.assay_probe, PROBE_SCHEMA);
+  assert.ok(record.error);
+  assert.equal(record.vector, undefined);
+});
+
+test('a record that SUCCEEDED carries a null error', async () => {
+  const root = tree({ 'ui.mjs': YELL });
+  const { text } = await cli('probe', `${path.join(root, 'ui.mjs')}::yell`);
+  assert.equal(JSON.parse(text).error, null);
+});
+
+test('--json changes NOTHING about probe', async () => {
+  // It is already the JSON command. A `--json` that produced a second shape here would
+  // be the thing `--json` exists to prevent.
+  const root = tree({ 'ui.mjs': YELL });
+  const ref = `${path.join(root, 'ui.mjs')}::yell`;
+  const plain = JSON.parse((await cli('probe', ref)).text);
+  const flagged = JSON.parse((await cli('--json', 'probe', ref)).text);
+  assert.deepEqual(plain.vector, flagged.vector);
+});
+
 test('a REFUSED function is a record with a look, not an error', async () => {
   // The reference resolved and the tool ran, so this is not exit 2 — and a consumer
   // gets one shape either way.
@@ -315,6 +343,22 @@ test('a PYTHON reference without --with says exactly what to run', async () => {
   assert.equal(code, 2);
   assert.match(text, /assay probe/);
   assert.match(text, /--with/);
+});
+
+test('cross answers in JSON when asked', async () => {
+  // `cross` builds a Report like every other audit, so it emits the envelope — and a
+  // refusal emits it too, with `error` set and `items` empty.
+  const root = tree({ 'ui.mjs': YELL });
+  const other = pythonRecord(root, await jsVector(root));
+  const ref = `${path.join(root, 'ui.mjs')}::yell`;
+  const data = JSON.parse((await cli('--json', 'cross', ref, other)).text);
+  assert.equal(data.error, null);
+  assert.equal(data.exit_code, 1);
+  assert.equal(data.items[0].verdict, 'finding');
+  const refused = JSON.parse((await cli('--json', 'cross', ref, 'notes.txt::x')).text);
+  assert.equal(refused.exit_code, 2);
+  assert.match(refused.error, /no language/);
+  assert.deepEqual(refused.items, []);
 });
 
 test('a reference in NO KNOWN LANGUAGE exits 2', async () => {

@@ -297,6 +297,62 @@ run. `2` is never suppressible: "could not run" and "found nothing" are opposite
 situations, and letting the second silence the first is how a broken invocation reads
 as a clean audit for months.
 
+## `--json`, for the thing reading this instead of you
+
+Every subcommand takes `--json`, on either side of the subcommand name, and emits one
+object instead of the prose report:
+
+```json
+{
+  "baseline": null,
+  "command": "scan",
+  "error": null,
+  "exit_code": 1,
+  "items": [
+    {"verdict": "finding", "message": "same answer (arity1/v3): …",
+     "where": "src/slug.js::slugify", "detail": "…"}
+  ],
+  "language": "python",
+  "notes": ["…the census, verbatim…"],
+  "root": "/abs/path",
+  "scan": {"files": 247, "functions": 1412, "probed": 137, "not_probed": 1275,
+           "skipped": {"no arguments": 274}, "unloadable": {"reads the clock": 19}},
+  "schema": 1,
+  "tool": "assay",
+  "version": "0.2.2"
+}
+```
+
+**One shape, always.** A run that could not start emits the same keys as one that
+finished, with `error` set and `items` empty. Prose on the failure path and JSON
+everywhere else hands you a parse error at exactly the moment the tool could not run,
+and a sloppy consumer reads a parse error as *no findings* — the same collapse `2` is
+never suppressible to prevent.
+
+**`look` gets no severity.** The three verdicts are not mapped onto somebody else's
+error/warning/note; that mapping is the collapse the vocabulary exists to prevent. The
+verdict travels by its own name and you decide what it means.
+
+**The census is data, not the printed equation.** `probed + not_probed == functions` is
+yours to check rather than something you parse back out of `notes`, and files stay a
+separate population from functions. A command that ran no scan emits `null` rather than
+`0`, because zero probed functions and no sameness half at all are different claims.
+
+**The baseline's caveat travels as data.** `performed` says what this run audited and
+`unchecked` names every entry it could not have seen fire, rather than an empty `stale`
+list that reads as "checked, found none". There is no `complete` boolean: completeness
+stopped being a property of the run when an entry learned to name the command that
+fires it.
+
+**Keys are sorted all the way down, in both halves**, so one contract prints as one
+document rather than two. `language` is in the payload because a polyglot repository
+runs both halves over one root and a consumer merging two reports has no other way to
+tell which produced which.
+
+**`schema` is versioned separately from the tool.** A consumer parsing this has the
+same claim on stability as a script reading the exit code, and the two do not move
+together.
+
 ## Configuration
 
 `assay.json` in your project root. One file serves both languages, deliberately: two
@@ -709,9 +765,9 @@ are what is already published and do not change. `pyproject.toml` bridges the tw
 Working from a checkout rather than an install, `python/` is what goes on the path:
 
 ```bash
-python3 python/tests/run_tests.py        # 271 tests, ~25 s
-npm test                                 # 258 tests, ~35 s
-python3 python/tests/mutations_assay.py  # 167 mutations, both halves
+python3 python/tests/run_tests.py        # 291 tests, ~35 s
+npm test                                 # 276 tests, ~40 s
+python3 python/tests/mutations_assay.py  # 177 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master --scan python/assay
 ```

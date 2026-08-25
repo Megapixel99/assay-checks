@@ -48,9 +48,11 @@ import {
   probeFile, PROBE_SCHEMA, reportScan, Scan, SNIPPET_PATH, stripNonCode,
 } from './sameness.js';
 import { relativeSpecifiers } from './probe.js';
-import { FINDING, Report, render } from './verdicts.js';
+import { FINDING, Report, render, renderJson } from './verdicts.js';
 
-const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
+const VERSION = '0.2.2';
+
+const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] [--json] <command>
 
   runners                     audit mutation runners against seven properties
   anchors                     every mutation anchor matches exactly once
@@ -66,6 +68,8 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
   probe FILE::NAME            one function's cross-language vector, as JSON on stdout
   cross A B [--with CMD]      compare a JavaScript function to a Python one
 
+  --json                      one JSON object instead of the prose report
+
 exit: 0 nothing to read, 1 findings, 2 could not run
 `;
 
@@ -77,13 +81,14 @@ exit: 0 nothing to read, 1 findings, 2 could not run
 export function parseArgs(argv) {
   const opts = {
     root: '.', config: null, quiet: false, base: 'origin/main',
-    cmd: null, positional: [], into: [], scan: [], stdin: false, name: null,
-    reason: null, withCmd: null,
+    cmd: null, positional: [], into: [], scan: [], asJson: false,
+    stdin: false, name: null, reason: null, withCmd: null,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '-q' || arg === '--quiet') opts.quiet = true;
+    else if (arg === '--json') opts.asJson = true;
     else if (arg === '--stdin') opts.stdin = true;
     else if (arg === '--root') { i += 1; opts.root = argv[i]; }
     else if (arg === '--config') { i += 1; opts.config = argv[i]; }
@@ -141,7 +146,8 @@ function baselineSummary(accepted, still, stale, unchecked) {
   return parts.join(', ');
 }
 
-function finish(report, config, write, verbose, performed = []) {
+function finish(report, config, write, opts, performed = []) {
+  const verbose = !opts.quiet && !opts.asJson;
   if (config.baseline.length) {
     const [still, stale, unchecked] = applyBaseline(report.findings, config.baseline,
       performed);
@@ -151,13 +157,56 @@ function finish(report, config, write, verbose, performed = []) {
       report.finding('baseline line no longer fires (fixed? then delete it): '
         + `${entry.line}`);
     }
+    // THE CAVEAT TRAVELS AS DATA rather than as a sentence a human has to notice.
+    // `unchecked` is the caveat: a line this run could not have seen fire, which is a
+    // different claim from one it checked and found still firing. There is no
+    // `complete` boolean any more because completeness stopped being a property of the
+    // RUN — `performed` says what this run audited, and each entry names the command
+    // that can answer it.
+    report.baseline = {
+      path: config.path,
+      accepted,
+      new: still.length,
+      performed: [...performed].sort(),
+      stale: stale.map((e) => e.line),
+      unchecked: unchecked.map((e) => ({ line: e.line, from: e.producedBy })),
+    };
     if (verbose) {
       write(`\nBASELINE ${config.path} — `
         + `${baselineSummary(accepted, still, stale, unchecked)}\n`);
     }
   }
+  if (opts.asJson) return renderJson(report, write, meta(opts));
   if (verbose) write(`\n${'-'.repeat(72)}\n`);
   return render(report, write, { verbose });
+}
+
+/**
+ * What a machine reading this output needs in order to know whose it is.
+ *
+ * `language` is here because a polyglot repository runs both halves over one root, and
+ * a consumer merging two reports has no other way to tell which produced which.
+ */
+function meta(opts) {
+  return {
+    version: VERSION, language: 'node', command: opts.cmd || null,
+    root: path.resolve(opts.root),
+  };
+}
+
+/**
+ * Exit 2, in whichever shape the caller asked for. Always returns 2.
+ *
+ * UNDER `--json` A BROKEN INVOCATION STILL EMITS JSON. Prose on the failure path and
+ * JSON everywhere else gives a consumer a parse error exactly when the tool could not
+ * run, and a sloppy consumer reads that as no findings. "Could not run" and "found
+ * nothing" are opposite situations; this is the one place where letting the second
+ * swallow the first is easiest to do by accident.
+ */
+function fail(opts, write, message) {
+  if (opts.asJson) return renderJson(null, write, meta(opts), message);
+  write(`assay: ${message}\n`);
+  return 2;
 }
 
 /**
@@ -527,33 +576,41 @@ async function probeStdin(text, wanted) {
 export async function run(argv, write = (s) => process.stdout.write(s),
   readStdin = () => readFileSync(0, 'utf8')) {
   const opts = parseArgs(argv);
-  if (opts.version) { write('assay 0.2.2\n'); return 0; }
-  if (opts.help || !opts.cmd) { write(USAGE); return 2; }
+  if (opts.version) { write(`assay ${VERSION}\n`); return 0; }
+  if (opts.help) { write(USAGE); return 2; }
+  // The usage text is what a person typing nothing needs; a consumer that asked for
+  // JSON needs the failure in the shape it can read. Same exit code either way.
+  if (!opts.cmd) {
+    if (opts.asJson) return fail(opts, write, 'no subcommand');
+    write(USAGE);
+    return 2;
+  }
 
   let config;
   try {
     config = load(opts.config, opts.root);
   } catch (err) {
-    if (err instanceof ConfigError) { write(`assay: ${err.message}\n`); return 2; }
+    if (err instanceof ConfigError) return fail(opts, write, err.message);
     throw err;
   }
   const root = path.resolve(opts.root);
   const report = new Report();
-  const verbose = !opts.quiet;
+  // `--json` silences the prose, exactly as `finish` does. `accept` renders its own
+  // report rather than going through `finish`, so it needs the same rule stated here.
+  const verbose = !opts.quiet && !opts.asJson;
 
   switch (opts.cmd) {
     case 'anchors':
       await auditAnchors(root, config, report);
-      return finish(report, config, write, verbose, ['anchors']);
+      return finish(report, config, write, opts, ['anchors']);
 
     case 'why': {
       if (opts.positional.length !== 1) {
-        write('assay why needs one FILE::NAME\n');
-        return 2;
+        return fail(opts, write, 'why needs one FILE::NAME');
       }
       const found = await whyRef(opts.positional[0], report);
-      if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
-      return finish(report, config, write, verbose);
+      if (found.unresolved) return fail(opts, write, found.unresolved);
+      return finish(report, config, write, opts);
     }
 
     case 'probe': {
@@ -563,27 +620,41 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       // that shells out to a binary that may not exist fails in a way that reads like
       // the code being wrong. So one half writes a record and the other reads it.
       //
-      // IT WRITES JSON ON STDOUT, so redirecting it is the point.
+      // ONE SHAPE, ALWAYS, AND `--json` IS NOT WHAT DECIDES IT. This command's output
+      // IS JSON — there is no prose form to switch away from — so a reference that
+      // names nothing emits the same record with `error` where `vector` would be, and
+      // exits 2. A consumer never has to ask which of two shapes it received, and `2`
+      // still means the tool could not run.
+      const ref = opts.positional[0];
+      const said = (record, code) => {
+        write(`${JSON.stringify(sortedKeys(record), null, 2)}\n`);
+        return code;
+      };
       if (opts.positional.length !== 1) {
-        write('assay probe needs one FILE::NAME\n');
-        return 2;
+        return said({
+          assay_probe: PROBE_SCHEMA, ref: ref || null, language: 'javascript',
+          error: 'probe needs one FILE::NAME',
+        }, 2);
       }
-      const found = await crossRecord(opts.positional[0]);
-      if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
-      write(`${JSON.stringify(sortedKeys(found.record), null, 2)}\n`);
-      return 0;
+      const found = await crossRecord(ref);
+      if (found.unresolved) {
+        return said({
+          assay_probe: PROBE_SCHEMA, ref, language: 'javascript',
+          error: found.unresolved,
+        }, 2);
+      }
+      return said({ ...found.record, error: null }, 0);
     }
 
     case 'cross': {
       if (opts.positional.length !== 2) {
-        write('assay cross needs two references\n');
-        return 2;
+        return fail(opts, write, 'cross needs two references');
       }
       const sides = [];
       for (const ref of opts.positional) {
         // eslint-disable-next-line no-await-in-loop
         const found = await crossSide(ref, opts.withCmd);
-        if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
+        if (found.unresolved) return fail(opts, write, found.unresolved);
         sides.push(found.record);
       }
       const [first, second] = sides;
@@ -592,12 +663,12 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       if (refused) {
         report.look(`${pair} — ${refused.ref} could not be probed: ${refused.look}`,
           first.ref);
-        return finish(report, config, write, verbose);
+        return finish(report, config, write, opts);
       }
       if (first.language === second.language) {
         report.look(`${pair} — both sides are ${first.language}; \`pair\` compares two `
           + 'functions of one language on its own ladder, which is stronger', first.ref);
-        return finish(report, config, write, verbose);
+        return finish(report, config, write, opts);
       }
       const rungs = crossLadder(first.arity);
       const [verdict, detail] = compareCross(first.vector, second.vector, first.ladder,
@@ -612,29 +683,28 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       } else {
         report.look(`${pair} — ${detail}`, first.ref);
       }
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, opts);
     }
 
     case 'runners':
       auditRunners(root, config, report);
       checkExemptions(root, config, report);
-      return finish(report, config, write, verbose, ['runners']);
+      return finish(report, config, write, opts, ['runners']);
 
     case 'diff':
       auditDiff(root, opts.base, config, report);
-      return finish(report, config, write, verbose, ['diff']);
+      return finish(report, config, write, opts, ['diff']);
 
     case 'all': {
       const { performed } = await auditEverything(root, opts, config, report);
-      return finish(report, config, write, verbose, performed);
+      return finish(report, config, write, opts, performed);
     }
 
     case 'accept': {
       if (!opts.reason) {
-        write('assay: accept needs --reason. An acceptance without one cannot be told '
-          + 'from an oversight,\n       and the baseline is the table that accumulates '
-          + 'most and rots first.\n');
-        return 2;
+        return fail(opts, write, 'accept needs --reason. An acceptance without one '
+          + 'cannot be told from an oversight,\n       and the baseline is the table '
+          + 'that accumulates most and rots first.');
       }
       const { families } = await auditEverything(root, opts, config, report);
       const known = new Set(config.baselineLines);
@@ -642,58 +712,68 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       const line = opts.positional[0];
       let chosen;
       if (line !== undefined) {
-        if (known.has(line)) { write(`assay: already in the baseline: ${line}\n`); return 2; }
+        if (known.has(line)) return fail(opts, write, `already in the baseline: ${line}`);
         if (report.looks.some((i) => i.message === line)) {
-          write('assay: that line is a `look`. '
+          return fail(opts, write, 'that line is a `look`. '
             + 'A `look` never fails the run, so there is nothing\n'
             + '       to accept: baselining one writes a record that can never match '
-            + 'and\n       never expire.\n');
-          return 2;
+            + 'and\n       never expire.');
         }
         if (!fired.has(line)) {
-          write('assay: nothing in this run printed that line. Accepting it would '
-            + 'write an entry\n'
+          return fail(opts, write, 'nothing in this run printed that line. Accepting '
+            + 'it would write an entry\n'
             + '       that is stale the moment it lands — paste a `finding` exactly '
-            + 'as it was\n       printed.\n');
-          return 2;
+            + 'as it was\n       printed.');
         }
         chosen = [line];
       } else {
         chosen = report.findings.map((i) => i.message).filter((m) => !known.has(m));
       }
-      if (!chosen.length) { write('assay: nothing new to accept.\n'); return 0; }
-      const file = config.path || path.join(root, CONFIG_NAMES[0]);
-      writeBaseline(file, chosen.map((l) => ({
-        line: l, reason: opts.reason, producedBy: families.get(l) || null,
-      })));
-      write(`assay: wrote ${chosen.length} `
-        + `${chosen.length === 1 ? 'entry' : 'entries'} to ${file}\n`);
-      for (const l of chosen) write(`  + [${families.get(l) || 'no from'}] ${l}\n`);
+      // WHAT IT WROTE IS REPORTED AS `ok` ITEMS, and this deliberately does NOT go
+      // through `finish`. `finish` applies the baseline, and the baseline it would
+      // apply is the one loaded BEFORE these lines were written — so every entry
+      // already in the file would be measured against a report holding no findings at
+      // all and come back stale. An audit reading its own writing is not an audit.
+      const written = new Report();
+      if (!chosen.length) {
+        written.note('assay: nothing new to accept.');
+      } else {
+        const file = config.path || path.join(root, CONFIG_NAMES[0]);
+        writeBaseline(file, chosen.map((l) => ({
+          line: l, reason: opts.reason, producedBy: families.get(l) || null,
+        })));
+        written.note(`assay: wrote ${chosen.length} `
+          + `${chosen.length === 1 ? 'entry' : 'entries'} to ${file}`);
+        for (const l of chosen) written.ok(`[${families.get(l) || 'no from'}] ${l}`);
+      }
+      if (opts.asJson) return renderJson(written, write, meta(opts));
+      render(written, write, { verbose });
       return 0;
     }
 
     case 'scan': {
-      if (!opts.positional.length) { write('assay scan needs a path\n'); return 2; }
+      if (!opts.positional.length) return fail(opts, write, 'scan needs a path');
       const scan = await collect(opts.positional);
       group(scan);
       reportScan(scan, report);
+      report.scan = scan.toDict();
       if (!scan.groups.length) {
         report.note('\nsame   none — no two probed functions share an outcome vector');
       }
-      return finish(report, config, write, verbose, ['scan']);
+      return finish(report, config, write, opts, ['scan']);
     }
 
     case 'pair': {
-      if (opts.positional.length !== 2) { write('assay pair needs two refs\n'); return 2; }
+      if (opts.positional.length !== 2) return fail(opts, write, 'pair needs two refs');
       const probes = [];
       for (const ref of opts.positional) {
         // eslint-disable-next-line no-await-in-loop
         const found = await probeRef(ref);
-        if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
+        if (found.unresolved) return fail(opts, write, found.unresolved);
         if (found.unprobed) {
           // A function this tool may not execute is a `look`, not a failed run.
           report.look(`${found.display} — ${found.unprobed}`, found.display);
-          return finish(report, config, write, verbose);
+          return finish(report, config, write, opts);
         }
         probes.push([found.display, found.entry]);
       }
@@ -705,36 +785,35 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       if (verdict === 'same') report.finding(`same answer: ${pair}`, refA, detail);
       else if (verdict === 'differs') report.ok(`differs: ${pair} — ${detail}`, refA);
       else report.look(`${pair} — ${detail}`, refA);
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, opts);
     }
 
     case 'search': {
-      if (!opts.into.length) { write('assay search needs --in DIR\n'); return 2; }
+      if (!opts.into.length) return fail(opts, write, 'search needs --in DIR');
       // A FLAG THAT DOES NOT APPLY IS AN ERROR RATHER THAN A NO-OP. `--name` picks one
       // definition out of a snippet, so with a FILE::NAME it has nothing to pick, and
       // accepting it quietly leaves a flag that is documented, parsed and inert.
       if (opts.name !== null && !opts.stdin) {
-        write('assay: --name selects a function inside a --stdin snippet; a '
-          + 'FILE::NAME already names one\n');
-        return 2;
+        return fail(opts, write,
+          '--name selects a function inside a --stdin snippet; '
+          + 'a FILE::NAME already names one');
       }
       if (opts.stdin && opts.positional.length) {
-        write('assay: --stdin and a FILE::NAME are two different queries; give one\n');
-        return 2;
+        return fail(opts, write,
+          '--stdin and a FILE::NAME are two different queries; give one');
       }
       if (!opts.stdin && !opts.positional.length) {
-        write('assay: search needs a FILE::NAME or --stdin\n');
-        return 2;
+        return fail(opts, write, 'search needs a FILE::NAME or --stdin');
       }
       const found = opts.stdin
         ? await probeStdin(readStdin(), opts.name)
         : await probeRef(opts.positional[0]);
-      if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
+      if (found.unresolved) return fail(opts, write, found.unresolved);
       if (found.unprobed) {
         report.look(`${found.display} — ${found.unprobed}`, found.display);
         report.note('       the tree was not searched, because this function could '
           + 'not be probed');
-        return finish(report, config, write, verbose);
+        return finish(report, config, write, opts);
       }
       const { entry, display: ref } = found;
       const scan = await collect(opts.into);
@@ -755,10 +834,12 @@ export async function run(argv, write = (s) => process.stdout.write(s),
         report.note('       which is not proof that nothing answers it; see Limits');
       }
       reportScan(scan, report);
-      return finish(report, config, write, verbose);
+      report.scan = scan.toDict();
+      return finish(report, config, write, opts);
     }
 
     default:
+      if (opts.asJson) return fail(opts, write, `unknown command ${opts.cmd}`);
       write(`assay: unknown command ${opts.cmd}\n\n${USAGE}`);
       return 2;
   }
