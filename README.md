@@ -117,12 +117,22 @@ ladder is the absence of one. See *What `same` is worth* below: it is one charac
 assay scan src/                                            # discover
 assay pair src/format.py::humanize src/report.py::pretty   # the declared route, one pair
 assay search src/format.py::humanize --in src/ lib/        # search before you generate
+assay search --stdin --in src/ lib/ < draft.py             # ...before it is a file
 
-# JavaScript: the same three commands, and a reference is FILE::NAME in either language
+# JavaScript: the same commands, and a reference is FILE::NAME in either language
 assay scan src/
 assay pair src/slug.js::slugify src/url.js::toSlug
 assay search src/slug.js::slugify --in src/ lib/
+assay search --stdin --in src/ lib/ < draft.js
 ```
+
+**`--stdin` is what "search before you generate" actually needs.** A `FILE::NAME`
+names something that already exists, so a command taking only one asks you to write
+the file first, which is the thing you were trying to find out whether to write. What
+arrives on stdin is a **snippet parsed as a module**, not a bare function: it may carry
+the imports and helpers the function needs, exactly as the file it is about to become
+would. Two definitions in one snippet and `--name` says which, because picking one
+would make the tool answer about code nobody asked about.
 
 ---
 
@@ -431,6 +441,19 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
   wall timeout for work that finished in a fraction of a second. This is not an async
   problem: a file of ordinary synchronous functions pays it too if its module opened
   something on the way in.
+- **A `--stdin` snippet may not import from the tree.** Python already refuses one:
+  free names resolve from the snippet's own constants, its own gated functions and the
+  stdlib allowlist, and nothing else. JavaScript refuses one for a different reason
+  worth stating, because a module has to be **on disk to be imported at all**: outside
+  the root a relative import resolves to nothing, and inside the root the snippet would
+  be scratch state beside the code under test, which is what `no-tree-writes` audits
+  harnesses for. A snippet that already imports half the tree is a file, so point
+  `search` at the file.
+- **A JavaScript snippet that exports nothing needs `--name`.** A module's functions
+  reach the probe through its exports, so an unexported declaration is invisible, and
+  finding it anyway would mean reading declarations out of source with a regex — the
+  same thing `anchors` declines to do. The name is asked for instead. Python has no
+  such gap: a top-level `def` is a top-level `def`.
 - **The six properties are about mutation harnesses.** If your project has none, that
   half has nothing to say about it and says so rather than reporting a pass.
 - **`targets_mentioned` under-reports.** A harness that merely mentions a filename counts

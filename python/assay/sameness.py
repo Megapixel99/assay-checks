@@ -82,6 +82,10 @@ PROBE_TIMEOUT = 20            # seconds for one function's whole ladder
 PER_INPUT_SECONDS = 1         # SIGALRM inside the worker, where available
 HELPER_DEPTH = 3              # how far a free name may resolve into sibling functions
 LADDER_VERSION = "v3"
+# What a snippet read from stdin is called. It collides with nothing a
+# tree can contain, so `search` excluding the query by REFERENCE needs no
+# special case for it.
+SNIPPET_PATH = "<stdin>"
 
 # IMPORTS WITH NO SIDE EFFECT AND NO AMBIENT STATE. `random` and `time` are absent on
 # purpose: both import cleanly and both make a function's outcome depend on something
@@ -172,13 +176,27 @@ class Module:
                 self.funcs[node.name] = Func(path, node, self)
 
 
+def parse_source(text, path):
+    """A Module built from source TEXT, or None if it does not parse.
+
+    Split out from `parse` so a snippet that never became a file can be probed by the
+    same machinery a file is. `path` is carried only for display: nothing here opens
+    it, and for a snippet it is not a path at all.
+    """
+    try:
+        return Module(path, ast.parse(text))
+    except (SyntaxError, ValueError):
+        return None
+
+
 def parse(path):
     """A Module, or None if the file does not parse. Never imports anything."""
     try:
         with open(path, encoding="utf-8") as fh:
-            return Module(path, ast.parse(fh.read()))
-    except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
+            text = fh.read()
+    except (OSError, ValueError, UnicodeDecodeError):
         return None
+    return parse_source(text, path)
 
 
 def python_files(paths):
@@ -614,6 +632,36 @@ def resolve(ref):
     path, _, name = ref.rpartition("::")
     mod = parse(path)
     return mod.funcs.get(name) if mod else None
+
+
+def resolve_source(text, name=None):
+    """A snippet on its way to being written -> (Func, None) or (None, reason).
+
+    A SNIPPET IS PARSED AS A MODULE, not as a function, because a function alone
+    cannot carry what it needs: `preamble_for` resolves free names from the file's own
+    constants, its other gated functions and the stdlib allowlist, and a bare `def`
+    has none of those. So the text may hold the imports and helpers the function
+    depends on, exactly as the file it is about to become would.
+
+    WHICH FUNCTION IS NEVER GUESSED. One definition is unambiguous; several without
+    `name` is a question this cannot answer, and picking the last one would make the
+    tool answer about code nobody asked about. That is a refusal, not a default.
+    """
+    mod = parse_source(text, SNIPPET_PATH)
+    if mod is None:
+        return None, "the snippet does not parse"
+    if not mod.funcs:
+        return None, "the snippet defines no top-level function"
+    if name is not None:
+        func = mod.funcs.get(name)
+        if func is None:
+            return None, ("the snippet defines no function named %s (it defines %s)"
+                          % (name, ", ".join(sorted(mod.funcs))))
+        return func, None
+    if len(mod.funcs) > 1:
+        return None, ("the snippet defines %d functions (%s) — name one with --name"
+                      % (len(mod.funcs), ", ".join(sorted(mod.funcs))))
+    return next(iter(mod.funcs.values())), None
 
 
 def report_scan(scan, report=None):

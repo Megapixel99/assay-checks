@@ -22,7 +22,8 @@
  * confident nonsense about which strings are anchors would be worse than the gap.
  */
 
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -30,9 +31,10 @@ import { fileURLToPath } from 'node:url';
 import { auditDiff, auditRunners, checkExemptions } from './checks.js';
 import { applyBaseline, ConfigError, load } from './config.js';
 import {
-  collect, compare, displayPath, group, jsFiles, ladder, ladderKey, probeFile,
-  reportScan, Scan,
+  collect, compare, displayPath, fileRefusal, group, jsFiles, ladder, ladderKey,
+  probeFile, reportScan, Scan, SNIPPET_PATH, stripNonCode,
 } from './sameness.js';
+import { relativeSpecifiers } from './probe.js';
 import { FINDING, Report, render } from './verdicts.js';
 
 const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
@@ -44,6 +46,7 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
   scan PATH...                discover functions that answer the same question
   pair FILE::NAME FILE::NAME  compare two named functions
   search FILE::NAME --in DIR  does the tree already answer this?
+         --stdin [--name N]   ...about a function that is not a file yet
 
   anchors                     Python only — see \`assay\` on PyPI
 
@@ -58,15 +61,17 @@ exit: 0 nothing to read, 1 findings, 2 could not run
 export function parseArgs(argv) {
   const opts = {
     root: '.', config: null, quiet: false, base: 'origin/main',
-    cmd: null, positional: [], into: [], scan: [],
+    cmd: null, positional: [], into: [], scan: [], stdin: false, name: null,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '-q' || arg === '--quiet') opts.quiet = true;
+    else if (arg === '--stdin') opts.stdin = true;
     else if (arg === '--root') { i += 1; opts.root = argv[i]; }
     else if (arg === '--config') { i += 1; opts.config = argv[i]; }
     else if (arg === '--base') { i += 1; opts.base = argv[i]; }
+    else if (arg === '--name') { i += 1; opts.name = argv[i]; }
     else if (arg === '--in' || arg === '--scan') {
       const target = arg === '--in' ? opts.into : opts.scan;
       i += 1;
@@ -142,7 +147,97 @@ async function probeRef(ref) {
   return { entry, display };
 }
 
-export async function run(argv, write = (s) => process.stdout.write(s)) {
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+
+/**
+ * One function of a snippet that is not a file yet, read from stdin.
+ *
+ * SEARCH BEFORE YOU GENERATE cannot mean "first write the file", which is what a
+ * FILE::NAME-only command asks for. The same three shapes come back as `probeRef`
+ * returns — probed, unresolved, or a real function this tool may not execute — and
+ * they stay three for the same reason: a refused function is a `look`, and only a
+ * query this tool cannot make sense of at all is exit 2.
+ *
+ * A SNIPPET MAY NOT IMPORT FROM THE TREE, and that is a limit rather than an
+ * oversight. A module has to be on disk to be imported, so the snippet is written to a
+ * temp file; outside the root its relative imports resolve to nothing, and inside the
+ * root it would be scratch state beside the code under test, which is the thing
+ * `no-tree-writes` audits harnesses for. A snippet that already imports half the tree
+ * is a file, so point this at the file.
+ */
+async function probeStdin(text, wanted) {
+  // Named only when the caller named it: the module has not been loaded at this point,
+  // so a snippet refused by the file gate has no roster and therefore no name. A
+  // placeholder name would be a name this tool made up.
+  const unnamed = wanted ? `${SNIPPET_PATH}::${wanted}` : SNIPPET_PATH;
+  const why = fileRefusal(text);
+  if (why) return { display: unnamed, unprobed: why };
+  if (relativeSpecifiers(text).length) {
+    return {
+      display: unnamed,
+      unprobed: 'the snippet imports from the tree — point search at the file instead',
+    };
+  }
+  // A snippet with no `export` puts its functions nowhere the module system can reach,
+  // and finding them anyway would mean reading declarations out of source with a
+  // regex. `--name` is asked for instead: the user knows the name, and guessing at it
+  // is how a tool starts reporting confident nonsense about code it never parsed.
+  const stripped = stripNonCode(text, true);
+  let source = text;
+  if (stripped === null || !/(^|\n)\s*export[\s{]/.test(stripped)) {
+    if (!wanted) {
+      return {
+        unresolved: 'the snippet exports nothing, so name the function with --name '
+          + '(or add `export` to it)',
+      };
+    }
+    if (!IDENTIFIER.test(wanted)) {
+      return { unresolved: `not a function name: ${wanted}` };
+    }
+    source = `${text}\nexport { ${wanted} };\n`;
+  }
+  const file = path.join(tmpdir(), `assay-stdin-${process.pid}-${Date.now()}.mjs`);
+  let result;
+  try {
+    writeFileSync(file, source);
+    result = await probeFile(file, undefined, source);
+  } finally {
+    try { unlinkSync(file); } catch { /* the probe may have been killed mid-write */ }
+  }
+  if (result.error) return { unresolved: result.error };
+  const roster = result.functions || [];
+  if (!roster.length) return { unresolved: 'the snippet defines no top-level function' };
+  let entry;
+  if (wanted) {
+    entry = roster.find((f) => f.name === wanted);
+    if (!entry) {
+      return {
+        unresolved: `the snippet defines no function named ${wanted} (it defines `
+          + `${roster.map((f) => f.name).sort().join(', ')})`,
+      };
+    }
+  } else if (roster.length > 1) {
+    // NEVER GUESSED. Picking one would make the tool answer about code nobody asked
+    // about, which reads exactly like an answer about the code they did ask about.
+    return {
+      unresolved: `the snippet defines ${roster.length} functions `
+        + `(${roster.map((f) => f.name).sort().join(', ')}) — name one with --name`,
+    };
+  } else {
+    [entry] = roster;
+  }
+  const display = `${SNIPPET_PATH}::${entry.name}`;
+  if (entry.skip) return { display, unprobed: entry.skip };
+  return { entry, display };
+}
+
+/**
+ * `readStdin` is injected for the same reason `write` is: a CLI whose only interface
+ * is the process it runs in cannot be tested except by spawning one, and a test that
+ * spawns is a test that cannot see the Report the run built.
+ */
+export async function run(argv, write = (s) => process.stdout.write(s),
+  readStdin = () => readFileSync(0, 'utf8')) {
   const opts = parseArgs(argv);
   if (opts.version) { write('assay 0.2.2\n'); return 0; }
   if (opts.help || !opts.cmd) { write(USAGE); return 2; }
@@ -226,9 +321,26 @@ export async function run(argv, write = (s) => process.stdout.write(s)) {
     }
 
     case 'search': {
-      if (!opts.positional.length) { write('assay search needs a ref\n'); return 2; }
       if (!opts.into.length) { write('assay search needs --in DIR\n'); return 2; }
-      const found = await probeRef(opts.positional[0]);
+      // A FLAG THAT DOES NOT APPLY IS AN ERROR RATHER THAN A NO-OP. `--name` picks one
+      // definition out of a snippet, so with a FILE::NAME it has nothing to pick, and
+      // accepting it quietly leaves a flag that is documented, parsed and inert.
+      if (opts.name !== null && !opts.stdin) {
+        write('assay: --name selects a function inside a --stdin snippet; a '
+          + 'FILE::NAME already names one\n');
+        return 2;
+      }
+      if (opts.stdin && opts.positional.length) {
+        write('assay: --stdin and a FILE::NAME are two different queries; give one\n');
+        return 2;
+      }
+      if (!opts.stdin && !opts.positional.length) {
+        write('assay: search needs a FILE::NAME or --stdin\n');
+        return 2;
+      }
+      const found = opts.stdin
+        ? await probeStdin(readStdin(), opts.name)
+        : await probeRef(opts.positional[0]);
       if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
       if (found.unprobed) {
         report.look(`${found.display} — ${found.unprobed}`, found.display);

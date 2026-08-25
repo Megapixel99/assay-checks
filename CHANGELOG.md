@@ -10,6 +10,36 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## Unreleased
+
+### `assay search --stdin`: ask about a function before it is a file
+
+`search` took a `FILE::NAME`, which names something that already exists — so the
+command sold as **search before you generate** required you to write the file first,
+which is the thing you were trying to find out whether to write. `--stdin` takes the
+function on its way to being written.
+
+What arrives is a **snippet parsed as a module**, not a bare function. A function alone
+cannot carry what it needs: free names resolve from the file's own constants, its other
+gated functions and the stdlib allowlist, and a bare `def` has none of those. So the
+snippet may hold its imports and helpers, exactly as the file it is about to become
+will.
+
+**Which function is never guessed.** One definition is unambiguous; several without
+`--name` is a refusal rather than a default, because picking one would make the tool
+answer about code nobody asked about — and that reads exactly like an answer about the
+code you did ask about.
+
+`--name` without `--stdin` is an **error**, not a silently ignored flag. A flag that is
+accepted, documented and inert is the shape of the `-q` defect this CLI already carries
+a docstring about.
+
+Two limits, both in the README: a snippet may not import from the tree, and a
+JavaScript snippet that exports nothing needs `--name`. The second is a real difference
+between the halves rather than an oversight — a module's functions reach the probe
+through its exports, and finding an unexported declaration would mean reading source
+with a regex, which is the thing `anchors` declines to do.
+
 ## 0.2.2
 
 Documentation only. No behaviour changed: with docstrings stripped, every shipped

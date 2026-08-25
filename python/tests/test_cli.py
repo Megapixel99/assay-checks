@@ -38,6 +38,16 @@ def run(*argv):
     return code, buf.getvalue()
 
 
+def run_stdin(text, *argv):
+    """The CLI in-process with `text` on stdin. Returns (code, text)."""
+    saved = sys.stdin
+    sys.stdin = io.StringIO(text)
+    try:
+        return run(*argv)
+    finally:
+        sys.stdin = saved
+
+
 def tree(files):
     root = tempfile.mkdtemp(prefix="assay-cli-")
     for name, body in files.items():
@@ -148,6 +158,103 @@ class ExitCodes(unittest.TestCase):
         code, text = run("--root", root, "runners")
         self.assertEqual(code, 2)
         self.assertIn("not valid JSON", text)
+
+
+class SearchFromStdin(unittest.TestCase):
+    """`search` for a function that is not a file yet.
+
+    SEARCH BEFORE YOU GENERATE cannot mean "first write the file", which is what a
+    command taking only a FILE::NAME asks for. Everything downstream of resolving the
+    query is the same code path, so these tests are about the query: which function it
+    picked, and what it does when it cannot pick one.
+    """
+
+    def test_a_snippet_the_tree_already_answers_is_a_finding(self):
+        root = tree({"m.py": TWINS})
+        snippet = ('def c(s):\n'
+                   '    if not isinstance(s, str):\n        raise TypeError("str")\n'
+                   '    return s[::-1]\n')
+        code, text = run_stdin(snippet, "search", "--stdin", "--in", root)
+        self.assertEqual(code, 1, text)
+        self.assertIn("<stdin>::c", text)
+
+    def test_a_snippet_nothing_answers_exits_0_and_says_so(self):
+        root = tree({"m.py": "def only(n):\n    return n * 3 + 1\n"})
+        code, text = run_stdin("def q(n):\n    return n - 17\n",
+                               "search", "--stdin", "--in", root)
+        self.assertEqual(code, 0, text)
+        self.assertIn("none", text)
+
+    def test_the_query_is_named_stdin_rather_than_a_path_it_does_not_have(self):
+        """It is excluded from its own hits by REFERENCE, and `<stdin>` collides with
+        nothing a tree can contain, so that exclusion needs no special case."""
+        root = tree({"m.py": TWINS})
+        code, text = run_stdin("def c(s):\n    return s[::-1]\n",
+                               "search", "--stdin", "--in", root)
+        self.assertIn("<stdin>::c", text)
+        self.assertNotIn("<stdin>.py", text)
+
+    def test_several_functions_and_no_name_is_a_REFUSAL_not_a_guess(self):
+        """Picking one would make the tool answer about code nobody asked about,
+        which reads exactly like an answer about the code they did."""
+        code, text = run_stdin("def a(x):\n    return x + 1\n\n"
+                               "def b(x):\n    return x * 2\n",
+                               "search", "--stdin", "--in", ".")
+        self.assertEqual(code, 2)
+        self.assertIn("a, b", text)
+
+    def test_name_picks_one_out_of_several(self):
+        root = tree({"m.py": "def only(n):\n    return n * 3 + 1\n"})
+        code, text = run_stdin("def a(x):\n    return x + 1\n\n"
+                               "def b(x):\n    return n_o_p_e\n",
+                               "search", "--stdin", "--name", "a", "--in", root)
+        self.assertEqual(code, 0, text)
+        self.assertIn("<stdin>::a", text)
+
+    def test_a_name_that_is_not_in_the_snippet_exits_2(self):
+        code, text = run_stdin("def a(x):\n    return x + 1\n",
+                               "search", "--stdin", "--name", "zzz", "--in", ".")
+        self.assertEqual(code, 2)
+        self.assertIn("no function named zzz", text)
+
+    def test_a_snippet_that_does_not_parse_exits_2(self):
+        code, text = run_stdin("def a(x: return\n", "search", "--stdin", "--in", ".")
+        self.assertEqual(code, 2)
+        self.assertIn("does not parse", text)
+
+    def test_a_snippet_with_no_function_exits_2(self):
+        code, text = run_stdin("X = 1\n", "search", "--stdin", "--in", ".")
+        self.assertEqual(code, 2)
+        self.assertIn("no top-level function", text)
+
+    def test_a_snippet_this_tool_may_not_RUN_is_a_look_and_never_exit_2(self):
+        """A function that exists and is refused is not a query that could not be
+        read. Collapsing those two is how exit 2 starts meaning `found nothing`."""
+        code, text = run_stdin("import time\n\ndef t(x):\n    return time.time() + x\n",
+                               "search", "--stdin", "--in", ".")
+        self.assertEqual(code, 0)
+        self.assertIn("the tree was not searched", text)
+
+    def test_stdin_and_a_reference_are_two_queries_and_exit_2(self):
+        root = tree({"m.py": TWINS})
+        code, text = run_stdin("def c(s):\n    return s\n", "search", "--stdin",
+                               os.path.join(root, "m.py") + "::a", "--in", root)
+        self.assertEqual(code, 2)
+        self.assertIn("two different queries", text)
+
+    def test_neither_stdin_nor_a_reference_exits_2(self):
+        code, text = run("search", "--in", ".")
+        self.assertEqual(code, 2)
+        self.assertIn("FILE::NAME or --stdin", text)
+
+    def test_name_without_stdin_is_an_ERROR_rather_than_ignored(self):
+        """A flag that is accepted, documented and inert is the shape of the `-q`
+        defect this CLI already carries a docstring about."""
+        root = tree({"m.py": TWINS})
+        code, text = run("search", "--name", "a", os.path.join(root, "m.py") + "::a",
+                         "--in", root)
+        self.assertEqual(code, 2)
+        self.assertIn("--name", text)
 
 
 class ConfigWiring(unittest.TestCase):

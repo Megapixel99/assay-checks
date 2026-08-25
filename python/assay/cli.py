@@ -29,7 +29,7 @@ from .anchors import audit_anchors
 from .checks import audit_diff, audit_runners, check_exemptions
 from .config import ConfigError, apply_baseline, load
 from .sameness import (collect, compare, group, ladder, ladder_key, probe,
-                       report_scan, resolve)
+                       report_scan, resolve, resolve_source)
 from .verdicts import FINDING, Report, render
 
 
@@ -142,11 +142,46 @@ def cmd_pair(args, config, out):
     return _finish(report, config, out, args.verbose)
 
 
-def cmd_search(args, config, out):
+def _query(args, out):
+    """The function `search` is asking about: (Func, None) or (None, exit code).
+
+    Two ways in, and they are not interchangeable. A FILE::NAME names something that
+    already exists; `--stdin` takes something that does not exist yet, which is the
+    case the command is named for — SEARCH BEFORE YOU GENERATE cannot mean "first
+    write the file".
+
+    A FLAG THAT DOES NOT APPLY IS AN ERROR RATHER THAN A NO-OP. `--name` picks one
+    definition out of a snippet, so with a FILE::NAME it has nothing to pick and
+    accepting it quietly would leave a flag that is documented, parsed and inert.
+    """
+    if args.name is not None and not args.stdin:
+        out.write("assay: --name selects a function inside a --stdin snippet; a "
+                  "FILE::NAME already names one\n")
+        return None, 2
+    if args.stdin:
+        if args.ref:
+            out.write("assay: --stdin and a FILE::NAME are two different queries; "
+                      "give one\n")
+            return None, 2
+        query, why = resolve_source(sys.stdin.read(), args.name)
+        if query is None:
+            out.write("assay: %s\n" % why)
+            return None, 2
+        return query, None
+    if not args.ref:
+        out.write("assay: search needs a FILE::NAME or --stdin\n")
+        return None, 2
     query = resolve(args.ref)
     if query is None:
         out.write("assay: cannot resolve %s\n" % args.ref)
-        return 2
+        return None, 2
+    return query, None
+
+
+def cmd_search(args, config, out):
+    query, code = _query(args, out)
+    if query is None:
+        return code
     report = Report()
     vector, why = probe(query)
     if vector is None:
@@ -245,8 +280,12 @@ def build_parser():
 
     p = sub.add_parser("search", parents=[_common()],
                        help="does the tree already answer this?")
-    p.add_argument("ref", metavar="FILE::NAME")
+    p.add_argument("ref", metavar="FILE::NAME", nargs="?")
     p.add_argument("--in", dest="into", nargs="+", required=True)
+    p.add_argument("--stdin", action="store_true",
+                   help="read the function from stdin, before it is a file")
+    p.add_argument("--name", default=None,
+                   help="which function in a --stdin snippet to ask about")
     return ap
 
 
