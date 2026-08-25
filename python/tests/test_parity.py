@@ -13,6 +13,7 @@ silently skips when a runtime is missing reports a pass for a check that never r
 Reading is enough for the questions asked here, and it always runs.
 """
 
+import json
 import os
 import re
 import sys
@@ -392,6 +393,92 @@ class TheTwoHalvesAgree(unittest.TestCase):
         # third call site would be a third opinion about what a complete run is.
         self.assertEqual(py("cli.py").count("= _audit_everything("), 2)
         self.assertEqual(js("cli.js").count("= await auditEverything("), 2)
+
+    def test_the_CROSS_LADDER_is_ONE_DOCUMENT_carried_by_BOTH_halves(self):
+        """The proof `assay cross` rests on, and the reason the shape check below is
+        not enough for it.
+
+        `BASE_VALUES` is two hand-written lists and `test_both_ladders_cover_the_same_
+        SHAPES` is the strongest thing that can be said about them: the languages have
+        different primitives, so an equal-length assertion would fail for a correct
+        reason. That is fine for comparing two Python functions and nothing like enough
+        for comparing a Python function to a JavaScript one — there, two lists that
+        were meant to hold the same values and quietly stopped is the entire hazard.
+
+        So the cross ladder is ONE JSON DOCUMENT and this compares the two texts. The
+        values are then identical by construction rather than by inspection, and the
+        digest below follows from the text rather than being a second thing to keep in
+        step.
+        """
+        found = re.search(r"export const CROSS_VALUES_JSON = (.*?);\n",
+                          js("sameness.js"), re.S).group(1)
+        # The JavaScript literal is written as concatenated fragments to stay inside a
+        # line width; joining them is what the runtime does. Nothing else in the
+        # expression may contribute, so anything outside a quoted fragment must be
+        # whitespace or a `+`.
+        fragments = re.findall(r"'((?:[^'\\]|\\.)*)'", found)
+        self.assertTrue(fragments, "the JavaScript cross ladder literal moved")
+        self.assertRegex(re.sub(r"'(?:[^'\\]|\\.)*'", "", found).strip(),
+                         r"^[+\s]*$",
+                         "the JavaScript cross ladder is built from something other "
+                         "than string fragments, so joining them is not what it means")
+        # `\u00bd` in the source is a backslash and four characters in the VALUE, in
+        # both languages, and that is what both `json.loads` and `JSON.parse` decode.
+        joined = "".join(f.replace("\\\\", "\\") for f in fragments)
+        self.assertEqual(joined, sameness.CROSS_VALUES_JSON,
+                         "the two halves carry different cross ladders")
+
+    def test_the_CROSS_LADDER_KEY_is_the_same_in_both_halves(self):
+        """The key carries a digest of the RUNGS, so a ladder that changed by one
+        character produces a different key and `compare_cross` refuses the pair through
+        the branch that already refuses a mismatched arity. Computed here from the
+        JavaScript half's own text, so this is a check rather than a restatement."""
+        found = re.search(r"export const CROSS_VALUES_JSON = (.*?);\n",
+                          js("sameness.js"), re.S).group(1)
+        fragments = re.findall(r"'((?:[^'\\]|\\.)*)'", found)
+        joined = "".join(f.replace("\\\\", "\\") for f in fragments)
+        self.assertEqual(json.loads(joined), sameness.CROSS_VALUES)
+        # ...and the digest both halves put in the key falls out of that text.
+        for arity in (1, 2, 3):
+            self.assertRegex(sameness.cross_key(arity),
+                             r"^cross%d/%s/[0-9a-f]{12}$"
+                             % (arity, re.escape(sameness.LADDER_VERSION)))
+
+    def test_both_halves_render_EVERY_raise_as_the_SAME_token(self):
+        """The load-bearing decision of the interlingua, and the whole of how a rung
+        where both sides raised gets masked.
+
+        The two languages' error taxonomies genuinely diverge, so a name would make
+        every honest pair `differs`, and declaring two names equal is worse because
+        `same` is the verdict that FAILS. Rendering every raise as ONE token settles
+        it: two of them can never be a witness, and `cross_discriminating` counts only
+        returned values so two of them can never be evidence either.
+
+        THIS IS PINNED AT THE RENDERING RATHER THAN AT A BRANCH IN `compare`. There
+        used to be a branch, and a mutation that removed it changed nothing — the guard
+        and its absence produced the same observable, which is the failure this package
+        exists to report, so the branch is gone and this checks the fact it restated.
+        """
+        self.assertIn('return "E:*"', py("sameness.py"))
+        self.assertIn("return 'E:*';", js("sameness.js"))
+
+    def test_both_halves_use_the_same_PROBE_RECORD_SCHEMA(self):
+        """One half writes the record and the other reads it, which makes it a
+        published interface with the same claim on stability as the exit codes. A
+        record from a version that meant something else by `vector` would otherwise be
+        compared anyway."""
+        found = int(re.search(r"export const PROBE_SCHEMA = (\d+);",
+                              js("sameness.js")).group(1))
+        self.assertEqual(found, sameness.PROBE_SCHEMA)
+
+    def test_both_halves_decide_a_reference_LANGUAGE_by_the_same_SUFFIXES(self):
+        """A suffix one half calls JavaScript and the other calls nothing is a
+        reference that `cross` accepts from one binary and refuses from the other."""
+        from assay.cli import LANGUAGE_OF                      # noqa: PLC0415
+
+        table = re.search(r"const LANGUAGE_OF = \{(.*?)\};", js("cli.js"), re.S).group(1)
+        found = dict(re.findall(r"'(\.[a-z]+)': '([a-z]+)'", table))
+        self.assertEqual(found, dict(LANGUAGE_OF))
 
     def test_the_ladder_VERSION_matches(self):
         """A vector produced by one half and compared by the other must come from the

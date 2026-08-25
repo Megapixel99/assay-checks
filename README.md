@@ -128,6 +128,7 @@ assay pair src/format.py::humanize src/report.py::pretty   # the declared route,
 assay search src/format.py::humanize --in src/ lib/        # search before you generate
 assay why src/format.py::humanize                          # ...and if it was not probed, why
 assay accept --reason "read them; merging needs the router change"   # accept what you have read
+assay cross src/format.py::humanize src/ui.mjs::pretty --with assay-js   # across the boundary
 assay search --stdin --in src/ lib/ < draft.py             # ...before it is a file
 
 # JavaScript: the same commands, and a reference is FILE::NAME in either language
@@ -144,6 +145,94 @@ arrives on stdin is a **snippet parsed as a module**, not a bare function: it ma
 the imports and helpers the function needs, exactly as the file it is about to become
 would. Two definitions in one snippet and `--name` says which, because picking one
 would make the tool answer about code nobody asked about.
+
+## The pair no differential test covers: one function, two languages
+
+A validator reimplemented in a Django backend and a Node frontend is the highest-value
+duplication a polyglot repository has, and it is exactly what nobody writes a
+differential test for — because writing one means agreeing, by hand, on what `False` and
+`false` have in common.
+
+```bash
+# both binaries installed
+assay cross src/api.py::shout src/ui.mjs::yell --with assay-js
+
+# or one half writes a record and the other reads it, which needs neither to know
+# the other exists
+assay probe src/ui.mjs::yell > yell.json     # the JavaScript binary
+assay cross src/api.py::shout yell.json      # the Python one
+```
+
+```
+finding  same answer across languages (cross1/v3/d3b2ba61ccb7):
+         src/api.py::shout [python]  vs  src/ui.mjs::yell [javascript]
+```
+
+**Two things have to be true before that means anything**, and the tool asserts both
+rather than assuming them.
+
+**One ladder, not two that resemble each other.** `BASE_VALUES` is a hand-written list
+per language, and the strongest thing that can be said about the pair is that they cover
+the same *shapes* — the languages have different primitives, so comparing lengths would
+fail for a correct reason. That is enough for two Python functions and nothing like
+enough here, where two lists that were meant to hold the same values and quietly stopped
+is the entire hazard. So the cross ladder is **one JSON document**, carried verbatim by
+both halves and parsed by each; `test_parity.py` compares the two texts, and the ladder
+key carries a **digest of the rungs** so a comparison across a changed ladder is refused
+by the branch that already refuses a mismatched arity.
+
+**One vocabulary for outcomes.** `V:False` and `V:false` are two spellings of one answer.
+The interlingua renders every value as canonical JSON, and the three lossy mappings are
+choices about which mistake to make rather than accidents:
+
+| | |
+|---|---|
+| an integral float | renders as an integer — JavaScript has **one** number type, and Python's int/float split is a difference *inside* one language |
+| `undefined` and `null` | are one absence — Python has one and JavaScript has two, so the interlingua carries the one both can state |
+| a Python `tuple` | renders as an array — JavaScript has no tuple, and a function returning one answers the question an array answers there |
+
+Anything JSON cannot hold — bytes, a `Map`, a `Date`, a class instance — is **refused
+rather than approximated**, and one such outcome makes the whole comparison a `look`.
+`NaN` and the infinities are spelled out, because `JSON.stringify` turns all three into
+`null`: three different answers reported as one absence.
+
+**A raise carries no name.** The two languages' error taxonomies genuinely diverge —
+`d['x']` is a `KeyError` in Python and `undefined` in JavaScript — so comparing names
+would make every honest pair `differs`, and declaring them equal is worse, because `same`
+is the verdict that *fails*. Every raise renders as one token, which masks a rung where
+**both** sides raised: two of them can never be a witness, and the vacuity guard counts
+only *returned* values so two of them can never be evidence either. A rung where **one**
+raised and the other answered stays a witness, and it is the most interesting kind there
+is.
+
+Which is how the README's own `½` lesson reads across the boundary:
+
+```python
+def is_wordy(tok):
+    if not isinstance(tok, str):
+        return False
+    return tok[:1].isalnum() or tok[:1] == "_"
+```
+
+```javascript
+export function isWordy(tok) {
+  if (typeof tok !== 'string') return false;
+  return /[A-Za-z0-9_]/.test(tok[0] ?? '');
+}
+```
+
+```
+ok       differs: word.py::is_wordy [python]  vs  word.mjs::isWordy [javascript]
+         ["½"] -> V:true vs V:false
+```
+
+**The two halves do not invoke each other.** `pip install assay-checks` gives you one and
+`npm install assay-checks` gives you the other; neither can assume the other is on the
+machine, and a command that shells out to a binary that may not exist fails in a way that
+reads like the code being wrong. So `assay probe` writes a record and `assay cross` reads
+one — and `--with CMD` runs that first step for you when both are installed. Two
+references in the *same* language are a `look` pointing at `pair`, which compares them on
+their own language's fuller ladder.
 
 ---
 
@@ -447,6 +536,7 @@ your tree, point the tool at the files you trust rather than at the whole reposi
 |---|---|---|
 | `scan` / `pair` / `search` | yes | yes |
 | `why` | yes | yes, and the answer is often the FILE gate |
+| `probe` / `cross` | yes | yes |
 | `accept` | yes | yes |
 | `runners` | yes | yes, with a weaker `dead-vs-real` (see below) |
 | `diff` | yes | yes |
@@ -526,6 +616,16 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
 - **It compares functions, not programs.** Two programs that are the same function under
   a *mapping of their arguments* (a cipher and a special case of a more general one)
   are out of reach. That needs a declared pairing, and this does not replace one.
+- **`assay cross` is a DECLARED pairing, unlike `scan`.** It answers about the two
+  functions you named; it does not discover cross-language pairs the way `scan`
+  discovers same-language ones. Discovery would mean probing every function of both
+  trees on the shared ladder and bucketing across them, which is a bigger machine and
+  a strictly weaker ladder — the cross ladder is the *intersection* of what the two
+  languages can express, so it discriminates less than either native one.
+- **The cross ladder is a subset, and `same` there is worth less than `same` here.**
+  It holds no tuple, no `set`, no `undefined`, and one number type. Two functions it
+  cannot tell apart may well be told apart by a value only one language has — which is
+  why two references in the same language are refused, with a pointer at `pair`.
 - **The ladder is hand-written for three arities.** A domain whose inputs are structured
   (an AST, a socket, a dataframe) gets `not discriminated`, and correctly so.
 - **The JavaScript half inherits Node's module resolution, including its version
@@ -604,11 +704,11 @@ are what is already published and do not change. `pyproject.toml` bridges the tw
 Working from a checkout rather than an install, `python/` is what goes on the path:
 
 ```bash
-python3 python/tests/run_tests.py        # 169 tests, ~21 s
-npm test                                 # 160 tests, ~30 s
-python3 python/tests/mutations_assay.py  # 84 mutations, both halves
+python3 python/tests/run_tests.py        # 271 tests, ~25 s
+npm test                                 # 258 tests, ~35 s
+python3 python/tests/mutations_assay.py  # 167 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
-PYTHONPATH=python python3 -m assay --root . all --base origin/master
+PYTHONPATH=python python3 -m assay --root . all --base origin/master --scan python/assay
 ```
 
 No install step, no virtualenv, no `npm install`: both halves are standard library

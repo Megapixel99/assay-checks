@@ -3,6 +3,7 @@
     could those checks have failed?      assay runners | anchors | diff | all
     does the tree already answer this?   assay scan | pair | search
     why was my function not probed?      assay why FILE::NAME
+    ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
     I have read this one and accept it   assay accept --reason "..." [LINE]
 
 Both halves ask about work that ALREADY PASSES ITS TESTS, which is why neither is a
@@ -23,7 +24,11 @@ read, and an unread check occupies the place where a working one would go.
 """
 
 import argparse
+import io
+import json
 import os
+import shlex
+import subprocess
 import sys
 
 from . import __version__
@@ -31,9 +36,10 @@ from .anchors import audit_anchors
 from .checks import audit_diff, audit_runners, check_exemptions
 from .config import (CONFIG_NAMES, ConfigError, apply_baseline, load,
                      write_baseline)
-from .sameness import (collect, compare, discriminating, discrimination_detail,
-                       group, ladder, ladder_key, probe, report_scan, resolve,
-                       resolve_source, resolve_why)
+from .sameness import (PROBE_SCHEMA, collect, compare, compare_cross,
+                       cross_key, cross_ladder, discriminating,
+                       discrimination_detail, group, ladder, ladder_key, probe,
+                       report_scan, resolve, resolve_source, resolve_why)
 from .verdicts import FINDING, Report, render
 
 
@@ -306,6 +312,174 @@ def cmd_why(args, config, out):
     return _finish(report, config, out, args.verbose)
 
 
+# The suffix decides which half a reference belongs to. Inferred rather than declared,
+# because a flag naming both a file and a language can disagree with itself and the
+# suffix is the fact.
+LANGUAGE_OF = {".py": "python", ".js": "javascript", ".mjs": "javascript",
+               ".cjs": "javascript"}
+
+
+def language_of(ref):
+    """'python' | 'javascript' | None, from a FILE::NAME reference's suffix."""
+    path = ref.rpartition("::")[0] or ref
+    return LANGUAGE_OF.get(os.path.splitext(path)[1])
+
+
+def cmd_probe(args, config, out):
+    """One function's CROSS vector, as JSON on stdout. The thing `cross` compares.
+
+    THE TWO HALVES DO NOT INVOKE EACH OTHER, and that is deliberate rather than lazy.
+    `pip install assay-checks` gives you the Python half and `npm install` gives you
+    the JavaScript one; neither can assume the other is on the machine, and a command
+    that shells out to a binary that may not exist fails in a way that reads like the
+    code being wrong. So one half writes a record and the other reads it:
+
+        assay probe src/slug.js::slugify > slug.json      # the JavaScript binary
+        assay cross src/format.py::humanize slug.json     # the Python one
+
+    `assay cross --with CMD` will run that first step for you when both are installed.
+
+    IT WRITES JSON ON STDOUT, so redirecting it is the point. A refusal is a record
+    with `look` instead of `vector` rather than an error: the reference resolved and
+    the tool ran, so this is not exit 2 — and a consumer gets one shape either way.
+    """
+    func, unresolved = resolve_why(args.ref)
+    if func is None:
+        out.write("assay: %s\n" % unresolved)
+        return 2
+    arity = len(func.params)
+    record = {"assay_probe": PROBE_SCHEMA, "ref": func.ref, "language": "python",
+              "arity": arity}
+    vector, refused = probe(func, mode="cross")
+    if vector is None:
+        record["look"] = refused
+    else:
+        record["ladder"] = cross_key(arity)
+        record["vector"] = vector
+    json.dump(record, out, indent=2, sort_keys=True, ensure_ascii=False)
+    out.write("\n")
+    return 0
+
+
+def _read_record(path):
+    """An `assay probe` record from a file, or (None, why).
+
+    THE SCHEMA IS CHECKED. A record from a version that meant something else by
+    `vector` would be compared anyway, and comparing a new answer against the wrong
+    earlier answer is precisely the defect a difference checker exists to catch.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return None, "cannot read %s as an `assay probe` record (%s)" % (path, exc)
+    if not isinstance(record, dict) or "assay_probe" not in record:
+        return None, "%s is not an `assay probe` record" % path
+    if record["assay_probe"] != PROBE_SCHEMA:
+        return None, ("%s was written by schema %r and this is schema %d — the two do "
+                      "not mean the same thing by `vector`"
+                      % (path, record["assay_probe"], PROBE_SCHEMA))
+    return record, None
+
+
+def _cross_side(ref, with_cmd, out):
+    """One side of a cross comparison: (record, None) or (None, why).
+
+    THREE WAYS IN, and the third exists because the first two are not always enough.
+    A `.json` path is a record somebody already produced. A `.py` reference is probed
+    here. A reference in the OTHER language needs the other binary, and `--with CMD`
+    is how you say where it is — without it this refuses and says exactly what to run,
+    rather than guessing at a command name that is `assay` for both packages.
+    """
+    if ref.endswith(".json") and os.path.exists(ref):
+        return _read_record(ref)
+    language = language_of(ref)
+    if language == "python":
+        args = argparse.Namespace(ref=ref)
+        buf = io.StringIO()
+        if cmd_probe(args, None, buf) != 0:
+            return None, buf.getvalue().strip().replace("assay: ", "")
+        return json.loads(buf.getvalue()), None
+    if language is None:
+        return None, ("%s names no language this understands — a reference is "
+                      "FILE::NAME and the suffix says which half" % ref)
+    if not with_cmd:
+        return None, ("%s is a JavaScript reference and this is the Python half.\n"
+                      "       Run `assay probe %s > side.json` with the JavaScript "
+                      "binary and pass\n       side.json here, or give --with CMD so "
+                      "this can run it for you." % (ref, ref))
+    command = shlex.split(with_cmd) + ["probe", ref]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True,
+                              timeout=CROSS_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, "--with %r could not run (%s)" % (with_cmd, exc)
+    if proc.returncode != 0:
+        tail = (proc.stderr.strip().splitlines()
+                or proc.stdout.strip().splitlines() or ["silent"])[-1][:90]
+        return None, "--with %r exited %d (%s)" % (with_cmd, proc.returncode, tail)
+    try:
+        record = json.loads(proc.stdout)
+    except ValueError:
+        return None, ("--with %r did not print an `assay probe` record" % with_cmd)
+    if record.get("assay_probe") != PROBE_SCHEMA:
+        return None, ("--with %r wrote schema %r and this is schema %d"
+                      % (with_cmd, record.get("assay_probe"), PROBE_SCHEMA))
+    return record, None
+
+
+def cmd_cross(args, config, out):
+    """Does a Python function answer the same question as a JavaScript one?
+
+    A validator reimplemented in a Django backend and a Node frontend is the highest-
+    value duplication a polyglot repository has, and it is exactly what nobody writes a
+    differential test for — because writing one means agreeing, by hand, on what
+    `False` and `false` have in common. That agreement is `cross_render`, and the
+    ladder both sides walk is one JSON document rather than two lists somebody keeps in
+    step.
+
+    THE VERDICTS MEAN WHAT THEY MEAN EVERYWHERE ELSE HERE. `differs` is proof and is
+    an `ok`. `same` is the absence of proof and is a FINDING, because two
+    implementations that no input told apart is something a person has to read. `look`
+    is anything this cannot settle — a refused probe, a ladder mismatch, or an outcome
+    the interlingua cannot state.
+    """
+    report = Report()
+    sides = []
+    for ref in (args.a, args.b):
+        record, why = _cross_side(ref, args.with_cmd, out)
+        if record is None:
+            out.write("assay: %s\n" % why)
+            return 2
+        sides.append(record)
+    first, second = sides
+    pair = "%s [%s]  vs  %s [%s]" % (first["ref"], first["language"],
+                                     second["ref"], second["language"])
+    for side in sides:
+        if "look" in side:
+            report.look("%s — %s could not be probed: %s"
+                        % (pair, side["ref"], side["look"]), first["ref"])
+            return _finish(report, config, out, args.verbose)
+    if first["language"] == second["language"]:
+        report.look("%s — both sides are %s; `pair` compares two functions of one "
+                    "language on its own ladder, which is stronger"
+                    % (pair, first["language"]), first["ref"])
+        return _finish(report, config, out, args.verbose)
+    rungs = cross_ladder(first["arity"])
+    verdict, detail = compare_cross(first["vector"], second["vector"],
+                                    first["ladder"], second["ladder"], rungs)
+    if verdict == "same":
+        report.finding("same answer across languages (%s): %s"
+                       % (first["ladder"], pair), first["ref"],
+                       "no input in the shared ladder told them apart — READ them; "
+                       "only a person decides whether the duplication is a defect")
+    elif verdict == "differs":
+        report.ok("differs: %s — %s" % (pair, detail), first["ref"])
+    else:
+        report.look("%s — %s" % (pair, detail), first["ref"])
+    return _finish(report, config, out, args.verbose)
+
+
 def _query(args, out):
     """The function `search` is asking about: (Func, None) or (None, exit code).
 
@@ -369,8 +543,12 @@ def cmd_search(args, config, out):
     return _finish(report, config, out, args.verbose)
 
 
+CROSS_TIMEOUT = 120     # seconds for the OTHER half's `probe`, run through --with
+
 COMMANDS = {
     "why": cmd_why,
+    "probe": cmd_probe,
+    "cross": cmd_cross,
     "accept": cmd_accept,
     "runners": cmd_runners,
     "anchors": cmd_anchors,
@@ -454,6 +632,17 @@ def build_parser():
     p = sub.add_parser("why", parents=[_common()],
                        help="which gate refused this function, or that it was probed")
     p.add_argument("ref", metavar="FILE::NAME")
+
+    p = sub.add_parser("probe", parents=[_common()],
+                       help="one function's cross-language vector, as JSON on stdout")
+    p.add_argument("ref", metavar="FILE::NAME")
+
+    p = sub.add_parser("cross", parents=[_common()],
+                       help="compare a Python function to a JavaScript one")
+    p.add_argument("a", metavar="FILE::NAME|RECORD.json")
+    p.add_argument("b", metavar="FILE::NAME|RECORD.json")
+    p.add_argument("--with", dest="with_cmd", default=None, metavar="CMD",
+                   help="run CMD `probe REF` for the side this half cannot probe")
 
     p = sub.add_parser("search", parents=[_common()],
                        help="does the tree already answer this?")

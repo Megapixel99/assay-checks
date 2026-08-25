@@ -234,17 +234,91 @@ MUTATIONS = [
     ("sameness: a coroutine is read as an object rather than run",
      "sameness.py",
      """        if inspect.iscoroutine(value):
-            value = asyncio.run(value)""",
+            value = asyncio.run(value)
+    except BaseException as exc:                              # noqa: BLE001""",
      """        if False:
-            value = asyncio.run(value)"""),
+            value = asyncio.run(value)
+    except BaseException as exc:                              # noqa: BLE001"""),
+
+    # ---- the cross-language interlingua -------------------------------------- #
+    ("sameness: a raise carries its NAME across the language boundary again",
+     "sameness.py",
+     '''    except BaseException:                                     # noqa: BLE001
+        return "E:*"''',
+     '''    except BaseException as exc:                              # noqa: BLE001
+        return "E:%s" % type(exc).__name__'''),
+    ("sameness: an outcome the interlingua cannot state is COMPARED anyway",
+     "sameness.py",
+     '''        if x.startswith("X:") or y.startswith("X:"):''',
+     '''        if False:'''),
+    ("sameness: an unstatable value is rendered approximately rather than refused",
+     "sameness.py",
+     '''    text = cross_render(value)
+    if text is None:
+        return "X:%s" % type(value).__name__''',
+     '''    text = cross_render(value)
+    if text is None:
+        text = repr(value)'''),
+    ("sameness: an INTEGRAL float stops rendering as an integer",
+     "sameness.py",
+     '''        if value.is_integer():
+            return "%d" % int(value)''',
+     '''        if False:
+            return "%d" % int(value)'''),
+    ("sameness: NaN and the infinities collapse into one absence",
+     "sameness.py",
+     '''        if value != value:
+            return "NaN"''',
+     '''        if value != value:
+            return "null"'''),
+    ("sameness: cross object keys stop being sorted",
+     "sameness.py",
+     '''        for key in sorted(value, key=repr):''',
+     '''        for key in value:'''),
+    ("sameness: the CROSS ladder key drops the digest of its rungs",
+     "sameness.py",
+     '''    return "cross%d/%s/%s" % (arity, LADDER_VERSION, digest)''',
+     '''    return "cross%d/%s/%s" % (arity, LADDER_VERSION, "")'''),
+    ("sameness: the cross vacuity guard stops consulting the projections",
+     "sameness.py",
+     '''    for proj in cross_projections(rungs):
+        if live and all(vector[i] == proj[i] for i in live):
+            return None''',
+     '''    for proj in cross_projections(rungs):
+        if False:
+            return None'''),
+    ("cli: `cross` reports a `differs` as a finding",
+     "cli.py",
+     '''        report.ok("differs: %s — %s" % (pair, detail), first["ref"])''',
+     '''        report.finding("differs: %s — %s" % (pair, detail), first["ref"])'''),
+    ("cli: `cross` compares a record from ANOTHER schema anyway",
+     "cli.py",
+     '''    if record["assay_probe"] != PROBE_SCHEMA:''',
+     '''    if False:'''),
+    ("cli: `cross` compares two functions of ONE language on the cross ladder",
+     "cli.py",
+     '''    if first["language"] == second["language"]:''',
+     '''    if False:'''),
+    ("cli: `probe` turns a refused function into exit 2 rather than a record",
+     "cli.py",
+     '''    if vector is None:
+        record["look"] = refused''',
+     '''    if vector is None:
+        return 2'''),
+    ("cli: the probe record stops sorting its keys, so two halves write two documents",
+     "cli.py",
+     '''    json.dump(record, out, indent=2, sort_keys=True, ensure_ascii=False)''',
+     '''    json.dump(record, out, indent=2, sort_keys=False, ensure_ascii=False)'''),
 
     # ---- comparison, and the wrong-baseline defect -------------------------- #
     ("sameness: two different ladders are zipped together",
      "sameness.py",
      '''    if a_key != b_key:
-        return "look", "not comparable: %s vs %s" % (a_key, b_key)''',
+        return "look", "not comparable: %s vs %s" % (a_key, b_key)
+    if len(a_vec) != len(b_vec) or len(a_vec) != len(inputs):''',
      '''    if False:
-        return "look", "not comparable: %s vs %s" % (a_key, b_key)'''),
+        return "look", "not comparable: %s vs %s" % (a_key, b_key)
+    if len(a_vec) != len(b_vec) or len(a_vec) != len(inputs):'''),
     ("sameness: a vector that does not match the ladder is compared anyway",
      "sameness.py",
      '''    if len(a_vec) != len(b_vec) or len(a_vec) != len(inputs):
@@ -690,6 +764,86 @@ MUTATIONS += [
      """  const seen = new Set(inherited);""",
      """  const seen = new Set();"""),
 
+    # ---- the cross-language interlingua -------------------------------------- #
+    ("js sameness: a throw carries its NAME across the language boundary again",
+     "sameness.js",
+     """  } catch {
+    return 'E:*';
+  } finally {
+    clearTimeout(timer);
+  }
+  const text = crossRender(value);""",
+     """  } catch (err) {
+    return `E:${(err && err.name) || 'Error'}`;
+  } finally {
+    clearTimeout(timer);
+  }
+  const text = crossRender(value);"""),
+    ("js sameness: an outcome the interlingua cannot state is COMPARED anyway",
+     "sameness.js",
+     """    if (x.startsWith('X:') || y.startsWith('X:')) {""",
+     """    if (false) {"""),
+    ("js sameness: undefined stops being the same absence as null",
+     "sameness.js",
+     """  if (value === null || value === undefined) return 'null';""",
+     """  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';"""),
+    ("js sameness: NaN and the infinities collapse into one absence",
+     "sameness.js",
+     """    if (Number.isNaN(value)) return 'NaN';
+    if (value === Infinity) return 'Infinity';
+    if (value === -Infinity) return '-Infinity';
+    // `-0` is `0` here:""",
+     """    if (Number.isNaN(value)) return 'null';
+    if (value === Infinity) return 'Infinity';
+    if (value === -Infinity) return '-Infinity';
+    // `-0` is `0` here:"""),
+    ("js sameness: a Map or a Date is flattened rather than refused",
+     "sameness.js",
+     """  const proto = Object.getPrototypeOf(value);
+  if (typeof value !== 'object' || (proto !== Object.prototype && proto !== null)) {
+    return null;
+  }""",
+     """  if (typeof value !== 'object') return null;"""),
+    ("js sameness: cross object keys stop being sorted",
+     "sameness.js",
+     """  for (const key of Object.keys(value).sort()) {
+    const rendered = crossRender(value[key], depth + 1);""",
+     """  for (const key of Object.keys(value)) {
+    const rendered = crossRender(value[key], depth + 1);"""),
+    ("js sameness: the CROSS ladder key drops the digest of its rungs",
+     "sameness.js",
+     """  return `cross${arity}/${LADDER_VERSION}/${digest}`;""",
+     """  return `cross${arity}/${LADDER_VERSION}/`;"""),
+    ("js sameness: the cross vacuity guard stops consulting the projections",
+     "sameness.js",
+     """    if (live.length && live.every((i) => vector[i] === proj[i])) return null;""",
+     """    if (false) return null;"""),
+    ("js cli: `cross` reports a `differs` as a finding",
+     "cli.js",
+     """        report.ok(`differs: ${pair} — ${detail}`, first.ref);""",
+     """        report.finding(`differs: ${pair} — ${detail}`, first.ref);"""),
+    ("js cli: `cross` compares a record from ANOTHER schema anyway",
+     "cli.js",
+     """  if (record.assay_probe !== PROBE_SCHEMA) {
+    return {
+      unresolved: `${file} was written by schema ${record.assay_probe} and this is `""",
+     """  if (false) {
+    return {
+      unresolved: `${file} was written by schema ${record.assay_probe} and this is `"""),
+    ("js cli: `cross` compares two functions of ONE language on the cross ladder",
+     "cli.js",
+     """      if (first.language === second.language) {""",
+     """      if (false) {"""),
+    ("js cli: `probe` turns a refused function into exit 2 rather than a record",
+     "cli.js",
+     """  if (entry.skip) return { record: { ...record, arity: 0, look: entry.skip } };""",
+     """  if (entry.skip) return { unresolved: entry.skip };"""),
+    ("js cli: the probe record stops sorting its keys, so two halves write two documents",
+     "cli.js",
+     """      write(`${JSON.stringify(sortedKeys(found.record), null, 2)}\\n`);""",
+     """      write(`${JSON.stringify(found.record, null, 2)}\\n`);"""),
+
     # ---- anchors, read by IMPORT rather than by parse ------------------------- #
     ("js anchors: the anchor moves off the second-to-last column",
      "anchors.js",
@@ -757,8 +911,12 @@ MUTATIONS += [
      """  if (false) return null;"""),
     ("js cli: `why` stops answering at the FILE level for a refused file",
      "cli.js",
-     """  const refused = fileRefusal(source);""",
-     """  const refused = null;"""),
+     """  const refused = fileRefusal(source);
+  if (refused) {
+    report.look(""",
+     """  const refused = null;
+  if (refused) {
+    report.look("""),
     ("js verdicts: a look's DETAIL stops being printed, so `why` answers half",
      "verdicts.js",
      """      if (item.detail) write(`           ${item.detail}\\n`);""",
@@ -808,16 +966,20 @@ MUTATIONS += [
   ];"""),
     ("js sameness: the discrimination threshold stops being consulted",
      "sameness.js",
-     """  if (new Set(returned).size < MIN_DISTINCT) return null;""",
-     """  if (false) return null;"""),
+     """  if (new Set(returned).size < MIN_DISTINCT) return null;
+  if (inputs && isProjection(vector, inputs)) return null;""",
+     """  if (false) return null;
+  if (inputs && isProjection(vector, inputs)) return null;"""),
     ("js sameness: the projection guard stops being consulted",
      "sameness.js",
      """  if (inputs && isProjection(vector, inputs)) return null;""",
      """  if (false) return null;"""),
     ("js sameness: two different ladders are zipped together",
      "sameness.js",
-     """  if (aKey !== bKey) return ['look', `not comparable: ${aKey} vs ${bKey}`];""",
-     """  if (false) return ['look', `not comparable: ${aKey} vs ${bKey}`];"""),
+     """  if (aKey !== bKey) return ['look', `not comparable: ${aKey} vs ${bKey}`];
+  if (aVec.length !== bVec.length || aVec.length !== inputs.length) {""",
+     """  if (false) return ['look', `not comparable: ${aKey} vs ${bKey}`];
+  if (aVec.length !== bVec.length || aVec.length !== inputs.length) {"""),
 
     # ---- the ladder is chosen by the DECLARED parameter list ------------------ #
     ("js probe: arity comes from fn.length again (a shipped defect)",
@@ -850,12 +1012,12 @@ MUTATIONS += [
      "probe.js",
      """  for (const [name, fn] of found) {
     // eslint-disable-next-line no-await-in-loop
-    say({ entry: await probeFunction(fn, name, request.ladders) });
+    say({ entry: await probeFunction(fn, name, request.ladders, request.cross === true) });
   }""",
      """  const all = [];
   for (const [name, fn] of found) {
     // eslint-disable-next-line no-await-in-loop
-    all.push(await probeFunction(fn, name, request.ladders));
+    all.push(await probeFunction(fn, name, request.ladders, request.cross === true));
   }
   for (const entry of all) say({ entry });"""),
     ("js sameness: a function that never answered is dropped rather than reported",
@@ -866,12 +1028,16 @@ MUTATIONS += [
     # ---- coroutines ---------------------------------------------------------- #
     ("js sameness: a promise is read as an object rather than awaited",
      "sameness.js",
-     """    if (value && typeof value.then === 'function') {""",
-     """    if (false) {"""),
+     """    if (value && typeof value.then === 'function') {
+      // THE INTERRUPT THAT DOES EXIST.""",
+     """    if (false) {
+      // THE INTERRUPT THAT DOES EXIST."""),
     ("js sameness: a rejection resolves to its error rather than being an outcome",
      "sameness.js",
-     """      value = await Promise.race([value, new Promise((_resolve, reject) => {""",
-     """      value = await Promise.race([value.catch((e) => e), new Promise((_resolve, reject) => {"""),
+     """      value = await Promise.race([value, new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {""",
+     """      value = await Promise.race([value.catch((e) => e), new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {"""),
 
     # ---- what a pending promise costs ----------------------------------------- #
     ("js sameness: a per-input timeout becomes a VALUE rather than an outcome",

@@ -5,6 +5,7 @@
  *     could those checks have failed?      assay runners | anchors | diff | all
  *     does the tree already answer this?   assay scan | pair | search
  *     why was my function not probed?      assay why FILE::NAME
+ *     ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
  *     I have read this one and accept it   assay accept --reason "..." [LINE]
  *
  * EXIT CODES, identical for every subcommand, because scripts depend on them more than
@@ -29,7 +30,8 @@
  * thing this deliberately does not do.
  */
 
-import { readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -41,9 +43,9 @@ import {
   applyBaseline, CONFIG_NAMES, ConfigError, load, writeBaseline,
 } from './config.js';
 import {
-  collect, compare, discriminating, discriminationDetail, displayPath, fileRefusal,
-  group, jsFiles, ladder, ladderKey, probeFile, reportScan, Scan, SNIPPET_PATH,
-  stripNonCode,
+  collect, compare, compareCross, crossKey, crossLadder, discriminating,
+  discriminationDetail, displayPath, fileRefusal, group, jsFiles, ladder, ladderKey,
+  probeFile, PROBE_SCHEMA, reportScan, Scan, SNIPPET_PATH, stripNonCode,
 } from './sameness.js';
 import { relativeSpecifiers } from './probe.js';
 import { FINDING, Report, render } from './verdicts.js';
@@ -61,6 +63,8 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
   search FILE::NAME --in DIR  does the tree already answer this?
          --stdin [--name N]   ...about a function that is not a file yet
   why FILE::NAME              which gate refused this function, or that it was probed
+  probe FILE::NAME            one function's cross-language vector, as JSON on stdout
+  cross A B [--with CMD]      compare a JavaScript function to a Python one
 
 exit: 0 nothing to read, 1 findings, 2 could not run
 `;
@@ -74,7 +78,7 @@ export function parseArgs(argv) {
   const opts = {
     root: '.', config: null, quiet: false, base: 'origin/main',
     cmd: null, positional: [], into: [], scan: [], stdin: false, name: null,
-    reason: null,
+    reason: null, withCmd: null,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -85,6 +89,7 @@ export function parseArgs(argv) {
     else if (arg === '--config') { i += 1; opts.config = argv[i]; }
     else if (arg === '--base') { i += 1; opts.base = argv[i]; }
     else if (arg === '--reason') { i += 1; opts.reason = argv[i]; }
+    else if (arg === '--with') { i += 1; opts.withCmd = argv[i]; }
     else if (arg === '--name') { i += 1; opts.name = argv[i]; }
     else if (arg === '--in' || arg === '--scan') {
       const target = arg === '--in' ? opts.into : opts.scan;
@@ -290,6 +295,146 @@ async function auditEverything(root, opts, config, report) {
   return { families, performed };
 }
 
+// The suffix decides which half a reference belongs to. Inferred rather than declared,
+// because a flag naming both a file and a language can disagree with itself and the
+// suffix is the fact.
+const LANGUAGE_OF = {
+  '.py': 'python', '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
+};
+
+/** 'python' | 'javascript' | null, from a FILE::NAME reference's suffix. */
+export function languageOf(ref) {
+  const split = ref.lastIndexOf('::');
+  const file = split < 0 ? ref : ref.slice(0, split);
+  return LANGUAGE_OF[path.extname(file)] || null;
+}
+
+const CROSS_TIMEOUT_MS = 120000;
+
+/**
+ * The same object with its keys in sorted order, all the way down.
+ *
+ * `JSON.stringify` emits insertion order and Python's `json.dump` is asked to sort, so
+ * without this the two halves write the same record as two different documents — and a
+ * record is the one artefact that crosses between them.
+ */
+function sortedKeys(value) {
+  if (Array.isArray(value)) return value.map(sortedKeys);
+  if (value === null || typeof value !== 'object') return value;
+  const out = {};
+  for (const key of Object.keys(value).sort()) out[key] = sortedKeys(value[key]);
+  return out;
+}
+
+/**
+ * One function's CROSS record: `{ record }` or `{ unresolved }`.
+ *
+ * A refusal is a record with `look` instead of `vector` rather than an error: the
+ * reference resolved and the tool ran, so this is not exit 2 — and a consumer gets one
+ * shape either way.
+ */
+async function crossRecord(ref) {
+  const split = ref.lastIndexOf('::');
+  if (split < 0) return { unresolved: `not a FILE::NAME reference: ${ref}` };
+  const file = path.resolve(ref.slice(0, split));
+  const name = ref.slice(split + 2);
+  const display = `${displayPath(file)}::${name}`;
+  let source;
+  try {
+    source = readFileSync(file, 'utf8');
+  } catch {
+    return { unresolved: `cannot read ${file}` };
+  }
+  const record = { assay_probe: PROBE_SCHEMA, ref: display, language: 'javascript' };
+  const refused = fileRefusal(source);
+  if (refused) return { record: { ...record, arity: 0, look: `the FILE was refused: ${refused}` } };
+  const result = await probeFile(file, undefined, source, true);
+  if (result.error) return { unresolved: result.error };
+  const entry = (result.functions || []).find((f) => f.name === name);
+  if (!entry) return { unresolved: `${displayPath(file)} exports no function named ${name}` };
+  if (entry.skip) return { record: { ...record, arity: 0, look: entry.skip } };
+  return {
+    record: {
+      ...record, arity: entry.arity, ladder: crossKey(entry.arity), vector: entry.vector,
+    },
+  };
+}
+
+/**
+ * An `assay probe` record from a file: `{ record }` or `{ unresolved }`.
+ *
+ * THE SCHEMA IS CHECKED. A record from a version that meant something else by `vector`
+ * would be compared anyway, and comparing a new answer against the wrong earlier
+ * answer is precisely the defect a difference checker exists to catch.
+ */
+function readRecord(file) {
+  let record;
+  try {
+    record = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    return { unresolved: `cannot read ${file} as an \`assay probe\` record (${err.message})` };
+  }
+  if (typeof record !== 'object' || record === null || !('assay_probe' in record)) {
+    return { unresolved: `${file} is not an \`assay probe\` record` };
+  }
+  if (record.assay_probe !== PROBE_SCHEMA) {
+    return {
+      unresolved: `${file} was written by schema ${record.assay_probe} and this is `
+        + `schema ${PROBE_SCHEMA} — the two do not mean the same thing by \`vector\``,
+    };
+  }
+  return { record };
+}
+
+/**
+ * One side of a cross comparison.
+ *
+ * THREE WAYS IN, and the third exists because the first two are not always enough. A
+ * `.json` path is a record somebody already produced. A JavaScript reference is probed
+ * here. A reference in the OTHER language needs the other binary, and `--with CMD` is
+ * how you say where it is — without it this refuses and says exactly what to run,
+ * rather than guessing at a command name that is `assay` for both packages.
+ */
+async function crossSide(ref, withCmd) {
+  if (ref.endsWith('.json') && existsSync(ref)) return readRecord(ref);
+  const language = languageOf(ref);
+  if (language === 'javascript') return crossRecord(ref);
+  if (language === null) {
+    return {
+      unresolved: `${ref} names no language this understands — a reference is `
+        + 'FILE::NAME and the suffix says which half',
+    };
+  }
+  if (!withCmd) {
+    return {
+      unresolved: `${ref} is a Python reference and this is the JavaScript half.\n`
+        + `       Run \`assay probe ${ref} > side.json\` with the Python binary and `
+        + 'pass\n       side.json here, or give --with CMD so this can run it for you.',
+    };
+  }
+  const parts = withCmd.split(/\s+/).filter(Boolean);
+  let stdout;
+  try {
+    stdout = execFileSync(parts[0], [...parts.slice(1), 'probe', ref],
+      { encoding: 'utf8', timeout: CROSS_TIMEOUT_MS });
+  } catch (err) {
+    return { unresolved: `--with '${withCmd}' could not run (${err.message})` };
+  }
+  let record;
+  try {
+    record = JSON.parse(stdout);
+  } catch {
+    return { unresolved: `--with '${withCmd}' did not print an \`assay probe\` record` };
+  }
+  if (record.assay_probe !== PROBE_SCHEMA) {
+    return {
+      unresolved: `--with '${withCmd}' wrote schema ${record.assay_probe} and this is `
+        + `schema ${PROBE_SCHEMA}`,
+    };
+  }
+  return { record };
+}
+
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 
 /**
@@ -408,6 +553,65 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       }
       const found = await whyRef(opts.positional[0], report);
       if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
+      return finish(report, config, write, verbose);
+    }
+
+    case 'probe': {
+      // THE TWO HALVES DO NOT INVOKE EACH OTHER, and that is deliberate rather than
+      // lazy. `npm install assay-checks` gives you this half and `pip install` gives
+      // you the other; neither can assume the other is on the machine, and a command
+      // that shells out to a binary that may not exist fails in a way that reads like
+      // the code being wrong. So one half writes a record and the other reads it.
+      //
+      // IT WRITES JSON ON STDOUT, so redirecting it is the point.
+      if (opts.positional.length !== 1) {
+        write('assay probe needs one FILE::NAME\n');
+        return 2;
+      }
+      const found = await crossRecord(opts.positional[0]);
+      if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
+      write(`${JSON.stringify(sortedKeys(found.record), null, 2)}\n`);
+      return 0;
+    }
+
+    case 'cross': {
+      if (opts.positional.length !== 2) {
+        write('assay cross needs two references\n');
+        return 2;
+      }
+      const sides = [];
+      for (const ref of opts.positional) {
+        // eslint-disable-next-line no-await-in-loop
+        const found = await crossSide(ref, opts.withCmd);
+        if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
+        sides.push(found.record);
+      }
+      const [first, second] = sides;
+      const pair = `${first.ref} [${first.language}]  vs  ${second.ref} [${second.language}]`;
+      const refused = sides.find((s) => s.look !== undefined);
+      if (refused) {
+        report.look(`${pair} — ${refused.ref} could not be probed: ${refused.look}`,
+          first.ref);
+        return finish(report, config, write, verbose);
+      }
+      if (first.language === second.language) {
+        report.look(`${pair} — both sides are ${first.language}; \`pair\` compares two `
+          + 'functions of one language on its own ladder, which is stronger', first.ref);
+        return finish(report, config, write, verbose);
+      }
+      const rungs = crossLadder(first.arity);
+      const [verdict, detail] = compareCross(first.vector, second.vector, first.ladder,
+        second.ladder, rungs);
+      if (verdict === 'same') {
+        report.finding(`same answer across languages (${first.ladder}): ${pair}`,
+          first.ref,
+          'no input in the shared ladder told them apart — READ them; only a person '
+          + 'decides whether the duplication is a defect');
+      } else if (verdict === 'differs') {
+        report.ok(`differs: ${pair} — ${detail}`, first.ref);
+      } else {
+        report.look(`${pair} — ${detail}`, first.ref);
+      }
       return finish(report, config, write, verbose);
     }
 

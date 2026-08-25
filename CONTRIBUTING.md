@@ -3,11 +3,11 @@
 ## Running it
 
 ```bash
-python3 python/tests/run_tests.py          # 169 tests, ~21 s, no dependencies
-node --test js/test/*.test.js              # 160 tests, ~30 s
-python3 python/tests/mutations_assay.py    # 84 mutations, both halves
+python3 python/tests/run_tests.py          # 271 tests, ~25 s, no dependencies
+node --test js/test/*.test.js              # 258 tests, ~35 s
+python3 python/tests/mutations_assay.py    # 167 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
-PYTHONPATH=python python3 -m assay --root . all --base origin/master
+PYTHONPATH=python python3 -m assay --root . all --base origin/master --scan python/assay
 ```
 
 Each half lives in its own directory, laid out the same way: `python/assay` with
@@ -96,6 +96,14 @@ worth. Two rules:
   carries `½`, `é` and tab+newline because without them a predicate written over
   ASCII and one written over Unicode categories agreed on every value — and one
   character turned that `same` into a `differs` with a witness.
+
+`CROSS_VALUES_JSON` is a different animal and has a third rule. It is **one JSON
+document carried verbatim by both halves**, and `test_parity.py` compares the two
+texts: change one and you must change the other to the same bytes, or the check fails.
+Every value in it has to be expressible by `cross_render` in both languages, which is
+why it holds no tuple, no `set`, and no integral float written `2.0` — Python renders
+that `2.0` and JavaScript renders it `2`. The ladder key carries a digest of the rungs,
+so nothing else needs bumping when it changes; the old key simply stops matching.
 
 ## Releasing
 

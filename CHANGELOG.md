@@ -12,6 +12,64 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### `assay cross`: a Python function against a JavaScript one
+
+A validator reimplemented in a Django backend and a Node frontend is the highest-value
+duplication a polyglot repository has, and it is exactly what nobody writes a
+differential test for — because writing one means agreeing, by hand, on what `False` and
+`false` have in common.
+
+```bash
+assay cross src/api.py::shout src/ui.mjs::yell --with assay-js
+
+assay probe src/ui.mjs::yell > yell.json     # or: one half writes a record,
+assay cross src/api.py::shout yell.json      # the other reads it
+```
+
+**One ladder, not two that resemble each other.** `BASE_VALUES` is a hand-written list
+per language, and the strongest thing that could be said about the pair was that they
+cover the same *shapes* — the languages have different primitives, so comparing lengths
+would fail for a correct reason. Enough for two Python functions; nothing like enough
+here, where two lists meant to hold the same values that quietly stopped is the entire
+hazard. The cross ladder is **one JSON document** carried verbatim by both halves;
+`test_parity.py` compares the two texts, and the ladder key carries a **digest of the
+rungs**, so a comparison across a changed ladder is refused by the branch that already
+refuses a mismatched arity.
+
+**One vocabulary for outcomes.** Every value renders as canonical JSON. The three lossy
+mappings are choices about which mistake to make: an integral float renders as an integer
+(JavaScript has one number type), `undefined` and `null` are one absence (Python has one
+and JavaScript has two), and a Python `tuple` renders as an array. Anything JSON cannot
+hold — bytes, a `Map`, a `Date`, a class instance — is refused rather than approximated,
+and one such outcome makes the whole comparison a `look`. `NaN` and the infinities are
+spelled out, because `JSON.stringify` turns all three into `null`.
+
+**A raise carries no name.** The two error taxonomies genuinely diverge — `d['x']` is a
+`KeyError` in Python and `undefined` in JavaScript — so comparing names would make every
+honest pair `differs`, and declaring them equal is worse, because `same` is the verdict
+that *fails*. Every raise renders as one token, which is the whole of how a rung where
+**both** sides raised gets masked: two of them can never be a witness, and the vacuity
+guard counts only returned values so two of them can never be evidence either. A rung
+where **one** raised and the other answered stays a witness, and it is the most
+interesting kind there is.
+
+The first version of that masking was a branch in the comparison loop with a comment
+explaining what it did — and a mutation removing it changed nothing, because two raises
+already render alike. The guard and its absence produced the same observable, which is
+precisely the failure this package exists to report, so the branch is gone and the
+parity test pins the rendering it restated.
+
+**The two halves do not invoke each other.** Neither package can assume the other is
+installed, and a command that shells out to a binary that may not exist fails in a way
+that reads like the code being wrong. `assay probe` writes a record and `assay cross`
+reads one; `--with CMD` runs that first step when both are present. Two references in the
+same language are a `look` pointing at `pair`, which compares them on their own
+language's fuller ladder.
+
+`assay probe` writes JSON on stdout with its keys sorted in both halves, and carries an
+`assay_probe` schema number checked on the way in: comparing a new answer against the
+wrong earlier answer is precisely the defect a difference checker exists to catch.
+
 ### A baseline entry can carry a `reason`, and the command that fires it
 
 `runner_exempt` requires a `reason` because **an exemption without one cannot be told

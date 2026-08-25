@@ -20,23 +20,32 @@ import os
 import sys
 
 try:
-    from .sameness import outcome_of
+    from .sameness import cross_outcome_of, outcome_of
 except ImportError:                                       # pragma: no cover
     # Run as a plain file path rather than `-m assay.worker`, so the parent process
     # does not have to know whether the package is installed or merely on the path.
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from assay.sameness import outcome_of
+    from assay.sameness import cross_outcome_of, outcome_of
 
 RECURSION_LIMIT = 300
 
 
 def run(request, out=None):
-    """Probe one function over its ladder. Returns the list of outcome strings."""
+    """Probe one function over its ladder. Returns the list of outcome strings.
+
+    TWO MODES, and the difference is the whole of what `assay cross` needs. In the
+    native mode the inputs arrive as SOURCE to be evaluated here and the outcomes are
+    rendered in Python's own vocabulary. In `cross` mode they arrive as VALUES — the
+    two languages share no source syntax, which is the reason that ladder exists — and
+    the outcomes are rendered in the interlingua.
+    """
     namespace = {}
     source = request["preamble"] + "\n" + request["source"]
     exec(compile(source, "<assay-probe>", "exec"), namespace)   # noqa: S102
     fn = namespace[request["name"]]
     per_input = request.get("per_input") or 0
+    cross = request.get("mode") == "cross"
+    render = cross_outcome_of if cross else outcome_of
 
     alarm = signal = None
     try:
@@ -54,11 +63,11 @@ def run(request, out=None):
     sys.setrecursionlimit(RECURSION_LIMIT)
     outcomes = []
     for src in request["inputs"]:
-        args = ast.literal_eval(src)
+        args = src if cross else ast.literal_eval(src)
         if alarm:
             alarm(signal.ITIMER_REAL, per_input)
         try:
-            outcomes.append(outcome_of(fn, args))
+            outcomes.append(render(fn, args))
         finally:
             if alarm:
                 alarm(signal.ITIMER_REAL, 0)
