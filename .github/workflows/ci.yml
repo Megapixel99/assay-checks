@@ -147,10 +147,12 @@ jobs:
     # would be a tally over a suite that was never going to see it.
     # Separate job so the fast feedback above is never held up behind it.
     runs-on: ubuntu-latest
-    # THE COST IS (mutations × suite) AND BOTH GREW. Every mutation runs a whole suite
-    # from scratch, so the wall clock is the table length times about half a minute,
-    # and the table roughly doubled when the cross-language half, the seventh runner
-    # property and the baseline work arrived.
+    # THE COST IS (mutations × suite), PER HALF. Every mutation runs a whole suite from
+    # scratch, so the wall clock is 104 Python mutations at about twenty-five seconds
+    # plus 73 JavaScript ones at about twenty — roughly an hour. It was half again as
+    # much until the probe stopped importing `asyncio` on every spawn; the table itself
+    # roughly doubled when the cross-language half, the seventh runner property and the
+    # baseline work arrived.
     #
     # Raised rather than sampled. A `--only` filter exists and prints PARTIAL RUN when
     # it is used, because a tally over the mutations you had time for reads exactly

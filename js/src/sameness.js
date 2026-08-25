@@ -973,7 +973,8 @@ export function compare(aVec, bVec, aKey, bKey, inputs) {
  * interlingua — see `crossOutcome`. It is the same child doing the same gating; only
  * what goes in and what comes out change.
  */
-export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null, cross = false) {
+export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null, cross = false,
+  perInput = PER_INPUT_MS) {
   return new Promise((resolve) => {
     const worker = path.join(HERE, 'probe.js');
     // The source travels WITH the path. The child loads by path, so relative imports
@@ -1054,7 +1055,13 @@ export function probeFile(file, timeout = PROBE_TIMEOUT_MS, gated = null, cross 
     for (let arity = 1; arity <= MAX_ARITY; arity += 1) {
       ladders[arity] = cross ? crossLadder(arity) : ladder(arity);
     }
-    child.stdin.end(JSON.stringify({ file, source, ladders, cross }));
+    // `perInput` TRAVELS WITH THE REQUEST rather than being read from this module by
+    // the child, which is what the Python half already does with `per_input`. The child
+    // is a separate process and imports its own copy of these constants, so a caller
+    // that shortens the budget here would otherwise be shortening it only for itself.
+    child.stdin.end(JSON.stringify({
+      file, source, ladders, cross, perInput,
+    }));
   });
 }
 

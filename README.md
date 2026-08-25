@@ -329,7 +329,7 @@ object instead of the prose report:
            "skipped": {"no arguments": 274}, "unloadable": {"reads the clock": 19}},
   "schema": 1,
   "tool": "assay",
-  "version": "0.3.0"
+  "version": "0.3.1"
 }
 ```
 
@@ -653,7 +653,7 @@ exists to find, so it is checked.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }   # `diff` needs a base ref; a shallow clone has none
-- uses: Megapixel99/assay-checks@v0.3.0
+- uses: Megapixel99/assay-checks@v0.3.1
   with:
     command: all       # every audit that can produce a baseline line
     paths: src         # ...and with `all`, paths mean `--scan`: the sameness half
@@ -661,7 +661,7 @@ exists to find, so it is checked.
 
 # The same action runs the other half. `language` is `python` unless you say otherwise,
 # so a JavaScript project has to name it.
-- uses: Megapixel99/assay-checks@v0.3.0
+- uses: Megapixel99/assay-checks@v0.3.1
   with:
     command: scan
     paths: js/src
@@ -785,8 +785,8 @@ are what is already published and do not change. `pyproject.toml` bridges the tw
 Working from a checkout rather than an install, `python/` is what goes on the path:
 
 ```bash
-python3 python/tests/run_tests.py        # 291 tests, ~35 s
-npm test                                 # 276 tests, ~40 s
+python3 python/tests/run_tests.py        # 291 tests, ~25 s
+npm test                                 # 276 tests, ~19 s
 python3 python/tests/mutations_assay.py  # 177 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master --scan python/assay

@@ -16,7 +16,7 @@ import test from 'node:test';
 import {
   canon, collect, compare, declaredArity, discriminating, fileRefusal,
   functionRefusal, group, isProjection, ladder, ladderKey, MIN_DISTINCT, outcomeOf,
-  probeFile, probeOutcome, stripNonCode,
+  probeFile, probeOutcome, PROBE_TIMEOUT_MS, stripNonCode,
 } from '../src/sameness.js';
 import { exportedFunctions, probeFunction } from '../src/probe.js';
 
@@ -526,7 +526,12 @@ test('a function that never settles is PROBED, and then not discriminated', asyn
     + 'export async function pending(a) {\n'
     + '  await new Promise(() => {});\n  return a;\n}\n',
   );
-  const result = await probeFile(file);
+  // A SHORTER BUDGET, not a different question. Every rung of `pending` runs to the
+  // per-input timer, so at the default 250ms this one test costs thirty-one of them —
+  // the slowest in either half, in a suite the mutation runner runs once per mutation.
+  // What is under test is that a rung which never settles becomes an OUTCOME, and the
+  // budget travels to the child in the request, so shortening it asks the same thing.
+  const result = await probeFile(file, PROBE_TIMEOUT_MS, null, false, 25);
   assert.equal(result.error, undefined, JSON.stringify(result));
   const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
   assert.ok(byName.fine.vector, 'the function that settled keeps its vector');
@@ -568,7 +573,10 @@ test('one non-terminating function does not cost the whole file', async () => {
     + 'export function spins(a) {\n'
     + '  while (a !== undefined) { /* never returns */ }\n  return a;\n}\n',
   );
-  const result = await probeFile(file, 2500);
+  // 2500ms was ten times what the child needs to boot, load and answer for the
+  // function that settles (~200ms here); 1000 is still five times it, and the wait is
+  // paid twice in this file. What is asserted is which function the kill lands on.
+  const result = await probeFile(file, 1000);
   assert.equal(result.error, undefined, JSON.stringify(result));
   assert.equal(result.functions.length, 2);
   const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
@@ -584,7 +592,7 @@ test('a killed probe tells the hung function from the ones never started', async
     + 'export function bSpins(a) { while (a !== undefined) { /* hangs */ } return a; }\n'
     + "export function cLater(a) { return a === 1 ? 'one' : typeof a; }\n",
   );
-  const result = await probeFile(file, 2500);
+  const result = await probeFile(file, 1000);
   const byName = Object.fromEntries(result.functions.map((f) => [f.name, f]));
   assert.ok(byName.aFirst.vector);
   assert.match(byName.bSpins.skip, /did not answer/);

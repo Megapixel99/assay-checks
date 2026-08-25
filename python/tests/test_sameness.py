@@ -322,13 +322,34 @@ class Preamble(unittest.TestCase):
         self.assertFalse(os.path.exists(marker))
 
 
+def with_per_input(seconds, fn, *args, **kwargs):
+    """Run `fn` with the worker's per-input alarm set to `seconds`.
+
+    `PER_INPUT_SECONDS` is read at call time and sent to the worker in the request, so
+    the child honours it; restored in a `finally` so one test cannot re-time another.
+    """
+    saved = S.PER_INPUT_SECONDS
+    S.PER_INPUT_SECONDS = seconds
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        S.PER_INPUT_SECONDS = saved
+
+
 class Probing(unittest.TestCase):
 
     def test_a_nonterminating_function_becomes_an_outcome_not_a_hang(self):
         path = write("def f(n):\n"
                      "    if not isinstance(n, int):\n        raise TypeError('int')\n"
                      "    x = 0\n    while True:\n        x += n\n")
-        vector, why = S.probe(S.parse(path).funcs["f"])
+        # A SHORTER ALARM, not a different question. Eight rungs of the arity-1 ladder
+        # are ints and each one runs until the alarm fires, so the default second is
+        # eight of them — the slowest test here, in a suite the mutation runner runs
+        # once per mutation. What is under test is that the wait ENDS IN AN OUTCOME,
+        # and the budget travels to the worker in the request, so shrinking it asks
+        # exactly the same thing. It stays far longer than the microseconds the other
+        # twenty-three rungs need to raise, which is what keeps this from going flaky.
+        vector, why = with_per_input(0.25, S.probe, S.parse(path).funcs["f"])
         self.assertIsNone(why, why)
         self.assertTrue(any("Timeout" in o for o in vector), vector)
         # ...and a vector of nothing but raises can never reach the guard.

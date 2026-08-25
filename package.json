@@ -1,6 +1,6 @@
 {
   "name": "assay-checks",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Audit the checks, and find the answers your tree already has: could those tests have failed, and does the tree already answer this?",
   "keywords": [
     "audit",

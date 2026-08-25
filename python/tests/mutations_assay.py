@@ -289,10 +289,10 @@ MUTATIONS = [
     ("sameness: a coroutine is read as an object rather than run",
      "sameness.py",
      """        if inspect.iscoroutine(value):
-            value = asyncio.run(value)
+            value = _await(value)
     except BaseException as exc:                              # noqa: BLE001""",
      """        if False:
-            value = asyncio.run(value)
+            value = _await(value)
     except BaseException as exc:                              # noqa: BLE001"""),
 
     # ---- the cross-language interlingua -------------------------------------- #
@@ -1095,12 +1095,18 @@ MUTATIONS += [
      "probe.js",
      """  for (const [name, fn] of found) {
     // eslint-disable-next-line no-await-in-loop
-    say({ entry: await probeFunction(fn, name, request.ladders, request.cross === true) });
+    say({
+      entry: await probeFunction(fn, name, request.ladders, request.cross === true,
+        // A request from an older caller carries no budget; the shared default is
+        // then the same number it would have read from this module anyway.
+        typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS),
+    });
   }""",
      """  const all = [];
   for (const [name, fn] of found) {
     // eslint-disable-next-line no-await-in-loop
-    all.push(await probeFunction(fn, name, request.ladders, request.cross === true));
+    all.push(await probeFunction(fn, name, request.ladders, request.cross === true,
+      typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS));
   }
   for (const entry of all) say({ entry });"""),
     ("js sameness: a function that never answered is dropped rather than reported",

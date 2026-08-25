@@ -15,6 +15,58 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## 0.3.1
+
+**A PATCH bump, and the rule at the top says why:** nothing here touches the CLI
+contract, the `assay.json` format, the verdict vocabulary or the JSON schema, and no
+new check is added. A tree green on 0.3.0 is green on 0.3.1, faster.
+
+### Probing no longer imports `asyncio` to find out it did not need it
+
+One probe is one child process per function, and that child imported `assay.sameness`,
+which imported `asyncio` at module scope — **85ms of the 190ms a spawn cost**, paid by
+every function to serve the small minority that are coroutines. Both call sites were
+already behind `inspect.iscoroutine`, so the import moved inside the branch that awaits.
+A scan's probing is about **35% faster per function**, which is most of what a scan is;
+the package's own Python suite went from 39s to 25s on the same machine, and the
+mutation job from about ninety minutes to about sixty.
+
+Nothing about what a probe answers changed. `asyncio` remains in the purity gate's
+refusal list, which is a string of module names and was never this import.
+
+### The JavaScript probe takes the per-input budget from its caller
+
+`probeFile` gained an optional final `perInput`, and the request it writes to the child
+carries it. The Python worker has always received `per_input` this way; the JavaScript
+child read the constant from its own copy of the module instead, so a caller that
+shortened the budget shortened it only for itself. Additive — a request without the
+field gets the same `PER_INPUT_MS` the child would have read anyway.
+
+### The mutation runner drops cached bytecode
+
+A `.pyc` is judged valid by source **size** plus mtime **seconds**, so a same-length
+mutation — `MIN_DISTINCT = 2` -> `MIN_DISTINCT = 1` is one, and it is in the table —
+restores to an identical size within the same second, CPython's cache check passes it,
+and the **next** run executes bytecode compiled from the mutated file. It fails on a
+line that exists in no source file on disk, which reads like a defect in the tool rather
+than an instrument fault.
+
+The suites now run with `PYTHONDONTWRITEBYTECODE=1`, and `__pycache__` beside the
+mutated package is dropped before the baseline, before each mutation and inside every
+restore — which every restore path already goes through, including the SIGTERM handler
+and the outer `finally`. An eighth property this runner carries, beside the seven
+`assay runners` audits for.
+
+### Three tests that were waiting rather than testing
+
+The slowest test in each half was paying a timeout in full to assert something the
+timeout's *length* was no part of: a non-terminating Python function burned eight
+one-second alarms, and a never-settling JavaScript rung burned thirty-one 250ms ones.
+Both now set a shorter budget and ask the same question, and the two synchronous
+spinners bounded by the wall clock dropped from 2500ms to 1000ms — still five times
+what the child needs to boot, load and answer. The JavaScript suite's `sameness` file
+went from 17s to 8s.
+
 ## 0.3.0
 
 **A MINOR bump, and the rule says why:** a new check is a minor bump even though it can

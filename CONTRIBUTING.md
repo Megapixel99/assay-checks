@@ -3,8 +3,8 @@
 ## Running it
 
 ```bash
-python3 python/tests/run_tests.py          # 291 tests, ~35 s, no dependencies
-node --test js/test/*.test.js              # 276 tests, ~40 s
+python3 python/tests/run_tests.py          # 291 tests, ~25 s, no dependencies
+node --test js/test/*.test.js              # 276 tests, ~19 s
 python3 python/tests/mutations_assay.py    # 177 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master --scan python/assay

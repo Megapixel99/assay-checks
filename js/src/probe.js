@@ -22,7 +22,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
-  ANSWER_FD, crossOutcome, declaredArity, functionRefusal, probeOutcome,
+  ANSWER_FD, crossOutcome, declaredArity, functionRefusal, PER_INPUT_MS, probeOutcome,
 } from './sameness.js';
 
 /**
@@ -91,7 +91,8 @@ function say(payload) {
   while (off < buf.length) off += writeSync(ANSWER_FD, buf, off, buf.length - off);
 }
 
-export async function probeFunction(fn, name, ladders, cross = false) {
+export async function probeFunction(fn, name, ladders, cross = false,
+  perInput = PER_INPUT_MS) {
   let source = '';
   try {
     source = Function.prototype.toString.call(fn);
@@ -123,7 +124,7 @@ export async function probeFunction(fn, name, ladders, cross = false) {
     const crossVector = [];
     for (const args of inputs) {
       // eslint-disable-next-line no-await-in-loop
-      crossVector.push(await crossOutcome(fn, args));
+      crossVector.push(await crossOutcome(fn, args, perInput));
     }
     return { name, arity, vector: crossVector };
   }
@@ -134,7 +135,7 @@ export async function probeFunction(fn, name, ladders, cross = false) {
   const vector = [];
   for (const src of inputs) {
     // eslint-disable-next-line no-await-in-loop
-    vector.push(await probeOutcome(fn, JSON.parse(src)));
+    vector.push(await probeOutcome(fn, JSON.parse(src), perInput));
   }
   return { name, arity, vector };
 }
@@ -237,7 +238,12 @@ async function main() {
   say({ roster: found.map(([name]) => name) });
   for (const [name, fn] of found) {
     // eslint-disable-next-line no-await-in-loop
-    say({ entry: await probeFunction(fn, name, request.ladders, request.cross === true) });
+    say({
+      entry: await probeFunction(fn, name, request.ladders, request.cross === true,
+        // A request from an older caller carries no budget; the shared default is
+        // then the same number it would have read from this module anyway.
+        typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS),
+    });
   }
 }
 
