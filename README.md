@@ -117,12 +117,22 @@ ladder is the absence of one. See *What `same` is worth* below: it is one charac
 assay scan src/                                            # discover
 assay pair src/format.py::humanize src/report.py::pretty   # the declared route, one pair
 assay search src/format.py::humanize --in src/ lib/        # search before you generate
+assay search --stdin --in src/ lib/ < draft.py             # ...before it is a file
 
-# JavaScript: the same three commands, and a reference is FILE::NAME in either language
+# JavaScript: the same commands, and a reference is FILE::NAME in either language
 assay scan src/
 assay pair src/slug.js::slugify src/url.js::toSlug
 assay search src/slug.js::slugify --in src/ lib/
+assay search --stdin --in src/ lib/ < draft.js
 ```
+
+**`--stdin` is what "search before you generate" actually needs.** A `FILE::NAME`
+names something that already exists, so a command taking only one asks you to write
+the file first, which is the thing you were trying to find out whether to write. What
+arrives on stdin is a **snippet parsed as a module**, not a bare function: it may carry
+the imports and helpers the function needs, exactly as the file it is about to become
+would. Two definitions in one snippet and `--name` says which, because picking one
+would make the tool answer about code nobody asked about.
 
 ---
 
@@ -163,6 +173,60 @@ than on anything printed: `0` nothing to read, `1` findings, `2` the tool could 
 run. `2` is never suppressible: "could not run" and "found nothing" are opposite
 situations, and letting the second silence the first is how a broken invocation reads
 as a clean audit for months.
+
+## `--json`, for the thing reading this instead of you
+
+Every subcommand takes `--json`, on either side of the subcommand name, and emits one
+object instead of the prose report:
+
+```json
+{
+  "baseline": null,
+  "command": "scan",
+  "error": null,
+  "exit_code": 1,
+  "items": [
+    {"verdict": "finding", "message": "same answer (arity1/v3): …",
+     "where": "src/slug.js::slugify", "detail": "…"}
+  ],
+  "language": "python",
+  "notes": ["…the census, verbatim…"],
+  "root": "/abs/path",
+  "scan": {"files": 247, "functions": 1412, "probed": 137, "not_probed": 1275,
+           "skipped": {"no arguments": 274}, "unloadable": {"reads the clock": 19}},
+  "schema": 1,
+  "tool": "assay",
+  "version": "0.2.2"
+}
+```
+
+**One shape, always.** A run that could not start emits the same keys as one that
+finished, with `error` set and `items` empty. Prose on the failure path and JSON
+everywhere else hands you a parse error at exactly the moment the tool could not run,
+and a sloppy consumer reads a parse error as *no findings* — the same collapse `2` is
+never suppressible to prevent.
+
+**`look` gets no severity.** The three verdicts are not mapped onto somebody else's
+error/warning/note; that mapping is the collapse the vocabulary exists to prevent. The
+verdict travels by its own name and you decide what it means.
+
+**The census is data, not the printed equation.** `probed + not_probed == functions` is
+yours to check rather than something you parse back out of `notes`, and files stay a
+separate population from functions. A command that ran no scan emits `null` rather than
+`0`, because zero probed functions and no sameness half at all are different claims.
+
+**The baseline's caveat travels as data.** `complete` is false with
+`incomplete_because` naming why, rather than an empty `stale` list that reads as
+"checked, found none". Under Node it is always false, since `anchors` is Python-only.
+
+**Keys are sorted all the way down, in both halves**, so one contract prints as one
+document rather than two. `language` is in the payload because a polyglot repository
+runs both halves over one root and a consumer merging two reports has no other way to
+tell which produced which.
+
+**`schema` is versioned separately from the tool.** A consumer parsing this has the
+same claim on stability as a script reading the exit code, and the two do not move
+together.
 
 ## Configuration
 
@@ -431,6 +495,19 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
   wall timeout for work that finished in a fraction of a second. This is not an async
   problem: a file of ordinary synchronous functions pays it too if its module opened
   something on the way in.
+- **A `--stdin` snippet may not import from the tree.** Python already refuses one:
+  free names resolve from the snippet's own constants, its own gated functions and the
+  stdlib allowlist, and nothing else. JavaScript refuses one for a different reason
+  worth stating, because a module has to be **on disk to be imported at all**: outside
+  the root a relative import resolves to nothing, and inside the root the snippet would
+  be scratch state beside the code under test, which is what `no-tree-writes` audits
+  harnesses for. A snippet that already imports half the tree is a file, so point
+  `search` at the file.
+- **A JavaScript snippet that exports nothing needs `--name`.** A module's functions
+  reach the probe through its exports, so an unexported declaration is invisible, and
+  finding it anyway would mean reading declarations out of source with a regex — the
+  same thing `anchors` declines to do. The name is asked for instead. Python has no
+  such gap: a top-level `def` is a top-level `def`.
 - **The six properties are about mutation harnesses.** If your project has none, that
   half has nothing to say about it and says so rather than reporting a pass.
 - **`targets_mentioned` under-reports.** A harness that merely mentions a filename counts

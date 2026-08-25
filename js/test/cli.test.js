@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +56,12 @@ function tree(files) {
 async function cli(...argv) {
   let text = '';
   const code = await run(argv, (s) => { text += s; });
+  return { code, text };
+}
+
+async function cliStdin(input, ...argv) {
+  let text = '';
+  const code = await run(argv, (s) => { text += s; }, () => input);
   return { code, text };
 }
 
@@ -329,6 +335,17 @@ test('it runs through a SYMLINK, which is how npm installs the command', () => {
   assert.equal(status, 1, 'a findings run through the link must still exit 1');
 });
 
+test('the version it prints is the version the manifest publishes', () => {
+  // `cli.js` carries the number as a LITERAL, separate from `package.json`, so the two
+  // can drift. The Python half's parity test compares all six places a version is
+  // written and would catch it, but a suite that cannot check its own half leaves the
+  // literal guarded only by the other language: a bump that missed this file would go
+  // red in Python and green in everything the JavaScript mutations are scored against.
+  const manifest = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const printed = execFileSync(process.execPath, [CLI, '--version'], { encoding: 'utf8' });
+  assert.equal(printed.trim(), `assay ${manifest.version}`);
+});
+
 test('the package scans ITSELF clean', async () => {
   // Merging two tools is exactly when duplication arrives, so the combined package is
   // scanned by its own scanner.
@@ -490,4 +507,134 @@ test('--json emits keys in sorted order, all the way down', async () => {
   isSorted(data);
   isSorted(data.scan);
   isSorted(data.items[0]);
+});
+
+// --------------------------------------------------------------------------- //
+// search --stdin: a function that is not a file yet
+// --------------------------------------------------------------------------- //
+// SEARCH BEFORE YOU GENERATE cannot mean "first write the file", which is what a
+// command taking only a FILE::NAME asks for. Everything downstream of resolving the
+// query is the same code path, so these are about the query: which function it picked,
+// and what it does when it cannot pick one.
+
+test('a snippet the tree already answers is a finding', async () => {
+  const root = tree({ 'm.js': TWINS });
+  const { code, text } = await cliStdin(
+    "export function c(s) {\n"
+    + "  if (typeof s !== 'string') throw new TypeError('str');\n"
+    + "  return s.split('').reverse().join('');\n}\n",
+    'search', '--stdin', '--in', root,
+  );
+  assert.equal(code, 1, text);
+  assert.match(text, /<stdin>::c/);
+});
+
+test('a snippet nothing answers exits 0 and says so', async () => {
+  const root = tree({ 'm.js': 'export function only(n) { return n * 3 + 1; }\n' });
+  const { code, text } = await cliStdin('export function q(n) { return n - 17; }\n',
+    'search', '--stdin', '--in', root);
+  assert.equal(code, 0, text);
+  assert.match(text, /none/);
+});
+
+test('the query is named <stdin>, which collides with nothing a tree holds', async () => {
+  // It is excluded from its own hits by REFERENCE, so that exclusion needs no
+  // special case for a query that never had a path.
+  const root = tree({ 'm.js': TWINS });
+  const { text } = await cliStdin(
+    "export function c(s) { return s.split('').reverse().join(''); }\n",
+    'search', '--stdin', '--in', root,
+  );
+  assert.match(text, /<stdin>::c/);
+});
+
+test('several functions and no --name is a REFUSAL rather than a guess', async () => {
+  // Picking one would make the tool answer about code nobody asked about, which
+  // reads exactly like an answer about the code they did ask about.
+  const { code, text } = await cliStdin(
+    'export function a(x) { return x + 1; }\nexport function b(x) { return x * 2; }\n',
+    'search', '--stdin', '--in', '.',
+  );
+  assert.equal(code, 2);
+  assert.match(text, /a, b/);
+});
+
+test('--name picks one out of several', async () => {
+  const root = tree({ 'm.js': 'export function only(n) { return n * 3 + 1; }\n' });
+  const { code, text } = await cliStdin(
+    'export function a(x) { return x + 1; }\nexport function b(x) { return x * 2; }\n',
+    'search', '--stdin', '--name', 'a', '--in', root,
+  );
+  assert.equal(code, 0, text);
+  assert.match(text, /<stdin>::a/);
+});
+
+test('a --name that is not in the snippet exits 2', async () => {
+  const { code, text } = await cliStdin('export function a(x) { return x + 1; }\n',
+    'search', '--stdin', '--name', 'zzz', '--in', '.');
+  assert.equal(code, 2);
+  assert.match(text, /no function named zzz/);
+});
+
+test('a snippet that exports nothing asks for a --name rather than reading source', async () => {
+  // Finding an unexported declaration means reading names out of source with a
+  // regex. The user knows the name; guessing at it is how a tool starts reporting
+  // confident nonsense about code it never parsed.
+  const { code, text } = await cliStdin('function a(x) { return x + 1; }\n',
+    'search', '--stdin', '--in', '.');
+  assert.equal(code, 2);
+  assert.match(text, /exports nothing/);
+});
+
+test('a snippet that exports nothing is probed once --name says which', async () => {
+  const root = tree({ 'm.js': 'export function only(n) { return n * 3 + 1; }\n' });
+  const { code, text } = await cliStdin('function a(x) { return x + 1; }\n',
+    'search', '--stdin', '--name', 'a', '--in', root);
+  assert.equal(code, 0, text);
+  assert.match(text, /<stdin>::a/);
+});
+
+test('a snippet that imports from the tree is a look, not a search', async () => {
+  // A module has to be on disk to be imported. Outside the root its relative imports
+  // resolve to nothing, and inside the root it would be scratch state beside the code
+  // under test — the thing `no-tree-writes` audits harnesses for.
+  const { code, text } = await cliStdin(
+    "import { x } from './other.js';\nexport function f(y) { return y + x; }\n",
+    'search', '--stdin', '--in', '.',
+  );
+  assert.equal(code, 0);
+  assert.match(text, /imports from the tree/);
+  assert.match(text, /the tree was not searched/);
+});
+
+test('a snippet this tool may not RUN is a look and never exit 2', async () => {
+  // A function that exists and is refused is not a query that could not be read.
+  // Collapsing those two is how exit 2 starts meaning "found nothing".
+  const { code, text } = await cliStdin(
+    'export function t(x) { return Date.now() + x; }\n', 'search', '--stdin', '--in', '.',
+  );
+  assert.equal(code, 0);
+  assert.match(text, /the tree was not searched/);
+});
+
+test('--stdin and a FILE::NAME are two queries and exit 2', async () => {
+  const { code, text } = await cliStdin('export function c(s) { return s; }\n',
+    'search', '--stdin', 'm.js::a', '--in', '.');
+  assert.equal(code, 2);
+  assert.match(text, /two different queries/);
+});
+
+test('neither --stdin nor a FILE::NAME exits 2', async () => {
+  const { code, text } = await cli('search', '--in', '.');
+  assert.equal(code, 2);
+  assert.match(text, /FILE::NAME or --stdin/);
+});
+
+test('--name without --stdin is an ERROR rather than ignored', async () => {
+  // A flag that is accepted, documented and inert is the shape of the installed-CLI
+  // defect this package shipped in 0.2.0 and the `-q` defect the parser carries a
+  // comment about.
+  const { code, text } = await cli('search', '--name', 'a', 'm.js::f', '--in', '.');
+  assert.equal(code, 2);
+  assert.match(text, /--name/);
 });

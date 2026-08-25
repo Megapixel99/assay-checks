@@ -64,6 +64,10 @@ export const PROBE_TIMEOUT_MS = 20000;
  */
 export const PER_INPUT_MS = 250;
 export const LADDER_VERSION = 'v3';
+// What a snippet read from stdin is called. It collides with nothing a tree can
+// contain, so `search` excluding the query by REFERENCE needs no special case for
+// it. The Python half carries the same string.
+export const SNIPPET_PATH = '<stdin>';
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', 'vendor',

@@ -207,33 +207,54 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertIn("self.params = [a.arg for a in node.args.args]", py("sameness.py"))
 
     def test_ONE_version_in_every_place_that_states_it(self):
-        """Four places carry it, and the release only ever compared two of them.
+        """Six places carry it, and the release only ever compared two of them.
 
         `pyproject.toml` and `package.json` are each a registry's source of truth, and
-        `release.yml` refuses to publish if they disagree. But `assay.__version__` and
-        the string the JavaScript CLI prints are separate literals, so a bump that
-        touched the two manifests and missed these would publish a package whose
-        `--version` names the release before it. That is not a broken build — it is a
-        tool lying about which build you are running, which is worse, because the
-        number is what you would quote in a bug report.
+        `release.yml` refuses to publish if they disagree. The other four are literals
+        nothing compared. `assay.__version__` and the string the JavaScript CLI prints
+        would publish a package whose `--version` names the release before it: not a
+        broken build, but a tool lying about which build you are running, which is
+        worse, because that number is what you would quote in a bug report. The two
+        README pins name a tag in the `uses:` line somebody copies into their workflow,
+        and a pin naming a tag that was never cut fails in their CI rather than in ours.
 
         Kept as literals rather than read at runtime on purpose: `importlib.metadata`
         needs the package installed, and this one is meant to run from a checkout with
         nothing but `PYTHONPATH`. So the duplication stays and is CHECKED, which is the
         same bargain every other table in this package makes.
+
+        THE PINS ARE DISCOVERED, NOT COUNTED. Asserting that there are two would fail
+        the day a third example is added, which trains whoever hits it to edit the
+        number rather than read the check. Finding NONE is the failure that matters,
+        because a pattern that matches nothing agrees with everything.
         """
         import json                                          # noqa: PLC0415
 
-        pyproject = pyproject_version()
-        self.assertIsNotNone(pyproject, "no [project] version in pyproject.toml")
+        sites = {}
+        sites["pyproject.toml"] = pyproject_version()
         with open(os.path.join(REPO, "package.json"), encoding="utf-8") as fh:
-            package_json = json.load(fh)["version"]
-        module = re.search(r'__version__ = "([^"]+)"', py("__init__.py")).group(1)
-        printed = re.search(r"const VERSION = '([^']+)';", js("cli.js")).group(1)
+            sites["package.json"] = json.load(fh)["version"]
+        sites["assay.__version__"] = re.search(
+            r'__version__ = "([^"]+)"', py("__init__.py")).group(1)
+        # ONE constant rather than the printed string: the JavaScript half now states
+        # its version once and `--version` interpolates it, so this reads the source
+        # of truth instead of one of its readers.
+        sites["js VERSION"] = re.search(
+            r"const VERSION = '([0-9][^']*)';", js("cli.js")).group(1)
 
-        self.assertEqual({pyproject, package_json, module, printed}, {pyproject},
-                         "pyproject=%s package.json=%s assay.__version__=%s "
-                         "js --version=%s" % (pyproject, package_json, module, printed))
+        with open(os.path.join(REPO, "README.md"), encoding="utf-8") as fh:
+            readme = fh.read()
+        pins = re.findall(r"Megapixel99/assay-checks@v([0-9][^\s`]*)", readme)
+        self.assertTrue(pins, "no `uses:` pin found in README.md, so this check "
+                              "matched nothing and would agree with any version")
+        for number, pin in enumerate(pins, 1):
+            sites["README pin %d" % number] = pin
+
+        for name, value in sites.items():
+            self.assertIsNotNone(value, "%s states no version" % name)
+        self.assertEqual(len(set(sites.values())), 1,
+                         "the version sites disagree: %s"
+                         % ", ".join("%s=%s" % kv for kv in sorted(sites.items())))
 
     def test_the_JSON_SCHEMA_NUMBER_is_the_same_in_both_halves(self):
         """It is versioned separately from the tool, so it is one number in two files
@@ -279,6 +300,29 @@ class TheTwoHalvesAgree(unittest.TestCase):
         source = js("config.js")
         for key in ("runner_exempt", "anchor_exempt", "baseline"):
             self.assertIn("'%s'" % key, source)
+
+    def test_both_halves_call_a_STDIN_SNIPPET_the_same_thing(self):
+        """`search` excludes the query from its own hits by REFERENCE. A snippet has
+        no path, so it is given one that collides with nothing a tree can contain —
+        and if the two halves chose different strings, the same snippet would be named
+        two ways in a polyglot repository's output."""
+        self.assertEqual(sameness.SNIPPET_PATH, "<stdin>")
+        self.assertIn("export const SNIPPET_PATH = '<stdin>';", js("sameness.js"))
+
+    def test_both_halves_REFUSE_to_pick_a_function_out_of_an_ambiguous_snippet(self):
+        """Picking one would make the tool answer about code nobody asked about. Both
+        halves say so in the same words and both exit 2, because a query that cannot
+        be read is `the tool could not run` and never `the tool found nothing`."""
+        wanted = "name one with --name"
+        self.assertIn(wanted, py("sameness.py"))
+        self.assertIn(wanted, js("cli.js"))
+
+    def test_both_halves_treat_an_INAPPLICABLE_FLAG_as_an_error(self):
+        """A flag that is accepted, documented and inert is the defect this CLI
+        already carries two docstrings about."""
+        wanted = "--name selects a function inside a --stdin snippet"
+        self.assertIn(wanted, py("cli.py"))
+        self.assertIn(wanted, js("cli.js"))
 
     def test_the_ladder_VERSION_matches(self):
         """A vector produced by one half and compared by the other must come from the

@@ -177,6 +177,19 @@ MUTATIONS = [
      "cli.py",
      """            "complete": complete, "stale": list(stale) if complete else [],""",
      """            "complete": True, "stale": list(stale) if complete else [],"""),
+    # ---- a snippet's function is never guessed at ---------------------------- #
+    ("sameness: an ambiguous snippet silently picks a function instead of refusing",
+     "sameness.py",
+     """    if len(mod.funcs) > 1:
+        return None, ("the snippet defines %d functions (%s) — name one with --name"
+                      % (len(mod.funcs), ", ".join(sorted(mod.funcs))))""",
+     """    if False:
+        return None, ("the snippet defines %d functions (%s) — name one with --name"
+                      % (len(mod.funcs), ", ".join(sorted(mod.funcs))))"""),
+    ("cli: --name is accepted and inert without --stdin (the shape of a shipped defect)",
+     "cli.py",
+     """    if args.name is not None and not args.stdin:""",
+     """    if False:"""),
     # ---- the vacuous-probe guard ------------------------------------------- #
     ("sameness: a shallow COPY stops counting as vacuous (a shipped defect)",
      "sameness.py",
@@ -520,10 +533,10 @@ MUTATIONS = [
                         help="print findings only")'''),
     ("cli: an unresolvable reference exits 0 rather than 2",
      "cli.py",
-     '''            out.write("assay: cannot resolve %s\\n" % ref)
-            return 2''',
-     '''            out.write("assay: cannot resolve %s\\n" % ref)
-            return 0'''),
+     '''    out.write("assay: %s\\n" % message)
+    return 2''',
+     '''    out.write("assay: %s\\n" % message)
+    return 0'''),
     ("cli: a `differs` verdict is reported as a finding",
      "cli.py",
      '''        report.ok("differs: %s — %s" % (pair, detail), first.ref)''',
@@ -543,8 +556,7 @@ MUTATIONS = [
     ("cli: a broken config is ignored rather than exiting 2",
      "cli.py",
      '''    except ConfigError as exc:
-        out.write("assay: %s\\n" % exc)
-        return 2''',
+        return _fail(args, out, str(exc))''',
      '''    except ConfigError:
         from .config import Config
         config = Config()'''),
@@ -579,6 +591,15 @@ MUTATIONS += [
      "cli.js",
      """      complete: false,""",
      """      complete: true,"""),
+    # ---- a snippet's function is never guessed at ---------------------------- #
+    ("js cli: an ambiguous snippet silently picks a function instead of refusing",
+     "cli.js",
+     """  } else if (roster.length > 1) {""",
+     """  } else if (false) {"""),
+    ("js cli: a snippet is allowed to import from the tree",
+     "cli.js",
+     """  if (relativeSpecifiers(text).length) {""",
+     """  if (false) {"""),
     # ---- one function object is one function -------------------------------- #
     ("js probe: two names for ONE function object are a pair again (a shipped defect)",
      "probe.js",
@@ -706,6 +727,12 @@ MUTATIONS += [
      """    return realpathSync(process.argv[1])
       === realpathSync(fileURLToPath(import.meta.url));""",
      """    return process.argv[1] === fileURLToPath(import.meta.url);"""),
+
+    # ---- the CLI answers for its own version ---------------------------------- #
+    ("js cli: `--version` stops answering, so the printed version is unchecked",
+     "cli.js",
+     """  if (opts.version) {""",
+     """  if (false) {"""),
 
     # ---- the config is judgment, and it is validated -------------------------- #
     ("js config: an exemption without a REASON is accepted",
