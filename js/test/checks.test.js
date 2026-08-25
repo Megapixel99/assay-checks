@@ -25,7 +25,7 @@ import { Report } from '../src/verdicts.js';
 
 function runner({
   evidence = true, partition = true, restoreInFinally = true, sigterm = true,
-  parses = true, namedSection = false, treeWrite = false,
+  parses = true, namedSection = false, treeWrite = false, restoreVerified = true,
 } = {}) {
   const marker = evidence ? "const EVIDENCE = 'Ran ';" : "const MARKER = 'x';";
   const ranCheck = evidence
@@ -52,11 +52,21 @@ function runner({
     : "  handle('SIGUSR1', () => {});\n";
   const scratch = treeWrite
     ? "\nwriteFileSync(join(__dirname, 'results.json'), '{}');\n" : '';
+  // A restore that RAN is not a restore that WORKED. The verified harness digests the
+  // bytes before anything is written and compares them after; the other one restores
+  // exactly as diligently and never looks.
+  const digest = restoreVerified
+    ? "  const before = createHash('sha256').update(readBack()).digest('hex');\n" : '';
+  const verify = restoreVerified
+    ? "      const after = createHash('sha256').update(readBack()).digest('hex');\n"
+      + "      if (after !== before) console.log('RESTORE FAILED — it did not come back');\n"
+    : '';
   return `${marker}
 export const MUTATIONS = [['a label', 'old code here', 'new code here']];
 
 function handle(name, fn) { void name; void fn; }
 function writeBack(text) { void text; }
+function readBack() { return Buffer.from('source'); }
 
 function runSuite() {
   const out = 'Ran 3 tests';
@@ -65,11 +75,11 @@ ${ranCheck}  return [true, []];
 
 export function main() {
   const original = 'source';
-${handler}  for (const [name, old, next] of MUTATIONS) {
+${digest}${handler}  for (const [name, old, next] of MUTATIONS) {
     const mutated = original.replace(old, next);
     let ran; let fails;
     if (true) {
-${guard}${body}${score}    }
+${guard}${body}${score}${verify}    }
     void name; void ran;
   }
 }
@@ -158,6 +168,26 @@ test('not checking the mutant parses is flagged', () => {
 
 test('writing scratch state beside the code is flagged', () => {
   assert.deepEqual([...missing(runner({ treeWrite: true }))], ['no-tree-writes']);
+});
+
+test('a restore nothing VERIFIES is flagged', () => {
+  // The seventh property, and the one the other six cannot see. This harness restores
+  // in a `finally` and so passes `restore-in-finally`; it never reads the file back,
+  // so it cannot tell a restore that put the bytes back from one that wrote a stale
+  // buffer, the wrong encoding, or only one of two files.
+  assert.deepEqual([...missing(runner({ restoreVerified: false }))], ['restore-verified']);
+});
+
+test('a digest NOTHING COMPARES does not satisfy restore-verified', () => {
+  // Arithmetic is not a check: a hash nothing reads is a number nobody computed for a
+  // reason, and the property is about the comparison rather than about the import.
+  const source = `${runner({ restoreVerified: false })}\nconst H = createHash('sha256');\n`;
+  assert.ok(missing(source).has('restore-verified'));
+});
+
+test('a message NOTHING COMPUTES does not satisfy it either', () => {
+  const source = `${runner({ restoreVerified: false })}\nconst SAID = 'RESTORE FAILED';\n`;
+  assert.ok(missing(source).has('restore-verified'));
 });
 
 test('the reported keys and the config-nameable keys are ONE set', () => {

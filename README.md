@@ -47,7 +47,7 @@ that can break the build it was added to protect.
 ## Half one: could those tests have failed?
 
 `assay runners` audits **mutation harnesses**: the scripts that deliberately break your
-code and check that something notices. If you run one, these are the six ways it can
+code and check that something notices. If you run one, these are the seven ways it can
 lie to you, and each is a failure that looks exactly like success:
 
 | property | what it means | what goes wrong without it |
@@ -58,8 +58,17 @@ lie to you, and each is a failure that looks exactly like success:
 | `sigterm` | SIGTERM becomes an exception so `finally` runs | **SIGTERM does not run `finally`**: a kill leaves the tree broken |
 | `parses-mutant` | a file-breaking mutation is not scored | a syntax error makes every suite fail, which reads as a catch |
 | `no-tree-writes` | no scratch state beside the code under test | a clean target is not a clean tree |
+| `restore-verified` | the tree is **proved** to have come back | a restore that ran is not a restore that worked |
 
-They collapse into one rule worth remembering on its own, because the six are just
+**The last one is about the third one's blind spot.** `restore-in-finally` proves the
+restore *path executes*; it says nothing about the file on disk. A harness that restores
+from a buffer it read *after* mutating, or writes the text back in a different encoding,
+or saved one of the two files it touches, satisfies the other six and still leaves the
+tree wrong — and every suite after it scores code nobody wrote. Hashing before and
+comparing after is the check, and the detector wants both halves of it: a digest nothing
+compares is arithmetic, and a message nothing computes is a string.
+
+They collapse into one rule worth remembering on its own, because the seven are just
 instances of it:
 
 > **A harness must answer separately whether the suite RAN, whether it FAILED, and
@@ -454,7 +463,7 @@ docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
   finding it anyway would mean reading declarations out of source with a regex — the
   same thing `anchors` declines to do. The name is asked for instead. Python has no
   such gap: a top-level `def` is a top-level `def`.
-- **The six properties are about mutation harnesses.** If your project has none, that
+- **The seven properties are about mutation harnesses.** If your project has none, that
   half has nothing to say about it and says so rather than reporting a pass.
 - **`targets_mentioned` under-reports.** A harness that merely mentions a filename counts
   as covering it. An audit that errs should err toward saying less.
@@ -496,7 +505,7 @@ only, and `PYTHONPATH=python` is the whole of what an install would have done. S
 [CONTRIBUTING.md](CONTRIBUTING.md) for the rules this code is built on and what
 happens when a mutation comes back `NOT DETECTED`.
 
-The mutation runner carries all six properties `assay runners` audits for, and several
+The mutation runner carries all seven properties `assay runners` audits for, and several
 of its mutations are versions this tool actually shipped, kept as mutations rather than
 as comments, so a defect fixed once cannot come back quietly.
 

@@ -22,11 +22,13 @@ than as comments so a defect fixed once cannot come back quietly:
   * `guards_per_file` reading only committed history, so uncommitted guards vanish
   * `audit_anchors` letting harnesses into the corpus, so anchors match themselves
 
-This runner is also a SUBJECT of `assay runners` and carries all six properties it
+This runner is also a SUBJECT of `assay runners` and carries all seven properties it
 audits for: positive evidence a suite RAN, a dead-vs-real partition before any
 counting, restore in a `finally`, SIGTERM turned into an exception (SIGTERM does not
 run `finally`), an `ast.parse` guard so a mutation that breaks the file is not scored
-as a catch, and no scratch state written into the tree.
+as a catch, no scratch state written into the tree, and a digest taken before the
+first write and compared after the last restore — because a restore that RAN is not a
+restore that WORKED.
 
     python3 mutations_assay.py              # the whole table
     python3 mutations_assay.py --only same  # substring filter (PARTIAL RUN)
@@ -35,6 +37,7 @@ as a catch, and no scratch state written into the tree.
 import argparse
 import ast
 import glob
+import hashlib
 import os
 import re
 import signal
@@ -350,6 +353,16 @@ MUTATIONS = [
      "checks.py",
      '''    return _has(src, "ast.parse", "compile(") or _requires_named_section(src)''',
      '''    return True'''),
+    ("checks: the restore-verified detector is always satisfied",
+     "checks.py",
+     '''    digested = _has(src, *DIGEST_TELLS)
+    return digested and _has(src, *RESTORE_FAILURE_TELLS)''',
+     '''    digested = _has(src, *DIGEST_TELLS)
+    return True'''),
+    ("checks: a digest NOTHING COMPARES satisfies restore-verified",
+     "checks.py",
+     '''    return digested and _has(src, *RESTORE_FAILURE_TELLS)''',
+     '''    return digested or _has(src, *RESTORE_FAILURE_TELLS)'''),
     ("checks: the named-section alternative no longer counts",
      "checks.py",
      '''    return "WRONG" in src and _has(src, "wanted", "section")''',
@@ -573,6 +586,16 @@ MUTATIONS += [
      """  const seen = new Set(inherited);""",
      """  const seen = new Set();"""),
 
+    # ---- the seventh property ------------------------------------------------ #
+    ("js checks: the restore-verified detector is always satisfied",
+     "checks.js",
+     """    (src) => has(src, ...DIGEST_TELLS) && has(src, ...RESTORE_FAILURE_TELLS)],""",
+     """    () => true],"""),
+    ("js checks: a digest NOTHING COMPARES satisfies restore-verified",
+     "checks.js",
+     """export const RESTORE_FAILURE_TELLS = ['RESTORE FAILED', 'NOT RESTORED',""",
+     """export const RESTORE_FAILURE_TELLS = ['', 'NOT RESTORED',"""),
+
     # ---- the answer channel -------------------------------------------------- #
     ("js sameness: the probe answer shares stdout again (a shipped defect)",
      "sameness.js",
@@ -765,14 +788,45 @@ def main(argv=None):
 
     files = sorted({m[1] for m in MUTATIONS})
     originals = {}
+    # THE DIGEST IS OF THE BYTES THAT WERE THERE, not of the text they decode to.
+    # Hashing the decoded string would agree with itself after a restore that wrote the
+    # file back in a different encoding, which is one of the three ways a restore runs
+    # and still leaves the tree wrong.
+    digests = {}
     for name in files:
-        with open(target(name), encoding="utf-8") as fh:
-            originals[name] = fh.read()
+        with open(target(name), "rb") as fh:
+            raw = fh.read()
+        originals[name] = raw.decode("utf-8")
+        digests[name] = hashlib.sha256(raw).hexdigest()
 
     def restore():
+        """Put every file back, and then PROVE it came back.
+
+        THE SEVENTH PROPERTY, and it is about this function rather than about the
+        `finally` that calls it. `restore-in-finally` proves the restore PATH runs; it
+        says nothing about the file on disk. A harness that restores from a buffer read
+        after the mutation, or writes the text back in a different encoding, or saves
+        one of the two files it touches, satisfies the other six and still leaves work
+        proceeding on top of deliberately broken code.
+
+        So the bytes are read back and compared against the digest taken before
+        anything was written. A mismatch is announced by name: this is the one failure
+        in the run that outlives the run.
+        """
         for name, text in originals.items():
             with open(target(name), "w", encoding="utf-8") as fh:
                 fh.write(text)
+        wrong = []
+        for name in sorted(originals):
+            with open(target(name), "rb") as fh:
+                if hashlib.sha256(fh.read()).hexdigest() != digests[name]:
+                    wrong.append(name)
+        if wrong:
+            RESTORE_FAILURES.extend(wrong)
+            print("RESTORE FAILED — %s did not come back; the tree is LEFT MUTATED "
+                  "and every suite after this one scores code nobody wrote"
+                  % ", ".join(wrong))
+        return wrong
 
     # SIGTERM does not run `finally`, so a killed runner would leave the tree mutated
     # and work would proceed on top of deliberately broken code.
@@ -839,10 +893,23 @@ def main(argv=None):
             print("%-64s %s" % (label[:64],
                                 ("CAUGHT  " + real[0][:36]) if real else "NOT DETECTED"))
         print("\n%d/%d mutations detected" % (detected, len(table)))
+        # A FAILED RESTORE OUTRANKS THE SCORE. A perfect tally over a tree that did not
+        # come back is a tally about a file that is no longer the file, and reporting
+        # it as a pass is the exact shape this runner audits for.
+        if RESTORE_FAILURES:
+            return 2
         return 0 if detected == len(table) else 1
     finally:
         restore()
 
 
+# Filled in by `restore()` when the bytes it wrote back are not the bytes it saved.
+# A module-level list because the LAST restore runs in `main`'s `finally`, after the
+# return value above has already been computed — so a failure there has to be folded
+# in below or it prints loudly and exits 0.
+RESTORE_FAILURES = []
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    _code = main()
+    sys.exit(2 if RESTORE_FAILURES else _code)

@@ -256,7 +256,7 @@ def build_parser():
     sub = ap.add_subparsers(dest="cmd")
 
     sub.add_parser("runners", parents=[_common()],
-                   help="audit mutation runners against six properties")
+                   help="audit mutation runners against seven properties")
     sub.add_parser("anchors", parents=[_common()],
                    help="every mutation anchor matches exactly once")
 

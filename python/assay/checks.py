@@ -16,7 +16,7 @@ abstraction is wrong, a name is misleading, or an edge case is unhandled. Preten
 otherwise would make it the kind of instrument it exists to catch: one whose output is
 trusted past what it measured.
 
-THE SIX PROPERTIES are about MUTATION RUNNERS — harnesses that deliberately break the
+THE SEVEN PROPERTIES are about MUTATION RUNNERS — harnesses that deliberately break the
 code and check that something notices. If you run one, these are the ways it can lie
 to you. If you do not, this half has nothing to say about your project and the other
 half (`assay.sameness`) still does.
@@ -59,7 +59,7 @@ def find_runners(root, prefix=RUNNER_PREFIX):
 
 
 # --------------------------------------------------------------------------- #
-# The six properties
+# The seven properties
 # --------------------------------------------------------------------------- #
 
 def _has(src, *needles):
@@ -155,6 +155,40 @@ def _p_no_tree_writes(src, tree):
                          r"jsonl|txt)[\"']", src)
 
 
+# THE TELLS ARE NAMED CONSTANTS because both halves must accept the same harness. A
+# `.py` harness is audited by this half and a `.js` one by the other, so a tell present
+# in one list and absent from the other means a correct harness passes in one language
+# and is a finding in the other — one config, two verdicts, which is the drift
+# `test_parity.py` exists to stop. Both spellings of the failure name are here for the
+# same reason: `restore_failed` is what a Python harness writes and `restoreFailed` is
+# what a JavaScript one writes, and neither is wrong.
+DIGEST_TELLS = ("hexdigest", ".digest(", "sha256", "sha1", "sha512", "md5",
+                "createHash")
+RESTORE_FAILURE_TELLS = ("RESTORE FAILED", "NOT RESTORED", "restore_failed",
+                         "restoreFailed", "did not come back")
+
+
+def _p_restore_verified(src, tree):
+    """The tree CAME BACK — proved, rather than assumed because the restore ran.
+
+    `restore-in-finally` proves the restore PATH EXECUTES. It does not prove the file
+    on disk is the file that was there before, and the gap is not theoretical: a
+    harness that restores from a buffer it read after mutating, that writes the text
+    back in a different encoding, or that saved one of the two files it touches,
+    satisfies all six of the properties above and still leaves the tree wrong. Every
+    suite after that one runs against code nobody wrote, and the score it prints is a
+    score for something else.
+
+    THE TELL IS A DIGEST TAKEN BEFORE AND COMPARED AFTER, plus a name for the failure
+    when the two disagree. Neither half alone is the check: a digest nothing compares
+    is arithmetic, and a message nothing computes is a string. It is the same
+    RAN / FAILED / RIGHT-FAILURE collapse the other six are instances of, one level
+    out — "the restore ran" and "the restore worked" are different claims.
+    """
+    digested = _has(src, *DIGEST_TELLS)
+    return digested and _has(src, *RESTORE_FAILURE_TELLS)
+
+
 PROPERTIES = [
     ("evidence", "positive proof each suite RAN",
      "no failures reported and no test executed look identical", _p_evidence),
@@ -168,12 +202,14 @@ PROPERTIES = [
      "a syntax error makes every suite fail, which reads as a catch", _p_parses),
     ("no-tree-writes", "no scratch state beside the code under test",
      "a clean target is not a clean tree", _p_no_tree_writes),
+    ("restore-verified", "the tree is PROVED to have come back",
+     "a restore that ran is not a restore that worked", _p_restore_verified),
 ]
 
 PROPERTY_KEYS = frozenset(k for k, _d, _w, _f in PROPERTIES)
 
-# The rule the six collapse into, worth stating on its own because it is the
-# generalisation and the six are instances: A HARNESS MUST BE ABLE TO ANSWER
+# The rule the seven collapse into, worth stating on its own because it is the
+# generalisation and the seven are instances: A HARNESS MUST BE ABLE TO ANSWER
 # SEPARATELY WHETHER THE SUITE RAN, WHETHER IT FAILED, AND WHETHER THE FAILURE WAS THE
 # RIGHT ONE. Collapsing any two of those three is how every defect in this family
 # happens.
@@ -182,7 +218,7 @@ THREE_QUESTIONS = ("a harness must answer separately whether the suite RAN, whet
 
 
 def audit_runners(root, config, report=None):
-    """Every mutation runner against the six properties."""
+    """Every mutation runner against the seven properties."""
     rep = report or Report()
     rels = find_runners(root)
     if not rels:
@@ -191,7 +227,7 @@ def audit_runners(root, config, report=None):
                  "  If this project has no mutation harness, `assay scan` is the half\n"
                  "  that still applies to it." % root)
         return rep
-    rep.note("MUTATION RUNNERS — six properties, each a way a harness can lie\n")
+    rep.note("MUTATION RUNNERS — seven properties, each a way a harness can lie\n")
     for key, desc, why, _det in PROPERTIES:
         rep.note("  %-20s %-46s %s" % (key, desc, why))
     rep.note("\n  the rule they collapse into: %s\n" % THREE_QUESTIONS)

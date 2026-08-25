@@ -145,6 +145,25 @@ class TheTwoHalvesAgree(unittest.TestCase):
                         for key, desc, why, _det in checks.PROPERTIES)
         self.assertEqual(found, expected)
 
+    def test_the_restore_verified_TELLS_are_the_same_in_both_halves(self):
+        """A `.py` harness is audited by the Python half and a `.js` one by the
+        JavaScript half, so this is the one property whose detectors read DIFFERENT
+        files and must still accept the same design. A tell present in one list and
+        missing from the other means a correct harness passes in one language and is a
+        finding in the other — one repository, two verdicts, and nothing saying so.
+
+        The lists are the contract; the surrounding code is not, which is why this
+        compares them rather than the detectors.
+        """
+        found = {}
+        for name in ("DIGEST_TELLS", "RESTORE_FAILURE_TELLS"):
+            table = re.search(r"export const %s = \[(.*?)\];" % name,
+                              js("checks.js"), re.S).group(1)
+            found[name] = set(re.findall(r"'([^']*)'", table))
+        self.assertEqual(found["DIGEST_TELLS"], set(checks.DIGEST_TELLS))
+        self.assertEqual(found["RESTORE_FAILURE_TELLS"],
+                         set(checks.RESTORE_FAILURE_TELLS))
+
     def test_both_halves_treat_a_SHALLOW_COPY_as_vacuous(self):
         """The vacuity guard decides what `same` is worth, so it has to decide the same
         thing twice. A function that only copies its argument through has not been

@@ -39,7 +39,7 @@ import { FINDING, Report, render } from './verdicts.js';
 
 const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
 
-  runners                     audit mutation runners against six properties
+  runners                     audit mutation runners against seven properties
   diff [--base REF]           does this change carry the checks it needs?
   all  [--base REF]           runners + diff
        [--scan PATH...]       ...and the sameness half over these paths

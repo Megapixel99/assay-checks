@@ -12,6 +12,32 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### A seventh runner property: `restore-verified`
+
+`restore-in-finally` proves the restore **path executes**. It does not prove the tree
+came back. A harness that restores from a buffer it read *after* mutating, that writes
+the text back in a different encoding, or that saved one of the two files it touches,
+satisfies all six of the other properties and still leaves the working tree wrong —
+and every suite after that one scores code nobody wrote, at a tally that reads exactly
+like a clean run.
+
+Hashing before and comparing after is the check. The detector wants **both halves**:
+a digest nothing compares is arithmetic, and a message nothing computes is a string,
+so it looks for a digest *and* a named failure for the case where the two disagree.
+The tells live in one list per half and `test_parity.py` pins them equal, because this
+is the one property whose two detectors read different files — a `.py` harness is
+audited by the Python half and a `.js` one by the JavaScript half — and a tell in one
+list and not the other means a correct harness passes in one language and is a finding
+in the other.
+
+`python/tests/mutations_assay.py` now carries the property it audits for: it digests
+the **bytes** of every file it will touch before writing anything and compares them
+after the last restore, and a mismatch exits 2 whatever the mutation score was. The
+digest is over bytes rather than over decoded text on purpose — hashing the string
+would agree with itself after a restore that wrote the file back in a different
+encoding, which is one of the three ways a restore runs and still leaves the tree
+wrong.
+
 ### `assay search --stdin`: ask about a function before it is a file
 
 `search` took a `FILE::NAME`, which names something that already exists — so the
