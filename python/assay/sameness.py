@@ -581,6 +581,23 @@ class Scan:
         """Reasons FUNCTIONS were not probed. Never a finding, always shown."""
         return self._tally(self.skipped.values())
 
+    def to_dict(self):
+        """The census as data, so a consumer never has to parse the printed equation.
+
+        `probed + not_probed` equals `functions`, and FILES ARE A SEPARATE POPULATION:
+        a file nobody opened holds an unknown number of functions, so adding the two
+        totals together prints a number nobody measured. Both halves are here with
+        their own totals, which is what makes that checkable rather than stated.
+        """
+        return {
+            "files": self.files,
+            "unloadable": dict(self.file_census()),
+            "functions": self.functions,
+            "probed": len(self.probed),
+            "not_probed": len(self.skipped),
+            "skipped": dict(self.census()),
+        }
+
     def file_census(self):
         """Reasons a FILE was never opened — a different population, kept apart.
 

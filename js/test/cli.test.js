@@ -354,6 +354,162 @@ test('the package scans ITSELF clean', async () => {
 });
 
 // --------------------------------------------------------------------------- //
+// --json: the same Report, in the shape a machine can read
+// --------------------------------------------------------------------------- //
+// ONE SHAPE, ALWAYS. A run that could not start emits the same keys as one that
+// finished, because prose on the failure path and JSON everywhere else hands a
+// consumer a parse error at exactly the moment the tool could not run — and a sloppy
+// consumer reads a parse error as no findings.
+
+const JSON_KEYS = ['baseline', 'command', 'error', 'exit_code', 'items', 'language',
+  'notes', 'root', 'scan', 'schema', 'tool', 'version'].sort();
+
+async function payload(...argv) {
+  const { code, text } = await cli(...argv);
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    assert.fail(`--json printed something that is not JSON: ${text.slice(0, 200)}`);
+  }
+  return { code, data };
+}
+
+test('every subcommand emits the SAME KEYS', async () => {
+  const root = tree({ 'm.js': TWINS });
+  const runs = [
+    ['--root', root, 'runners'],
+    ['--root', root, 'anchors'],
+    ['scan', root],
+    ['pair', `${path.join(root, 'm.js')}::a`, `${path.join(root, 'm.js')}::b`],
+    ['search', `${path.join(root, 'm.js')}::a`, '--in', root],
+  ];
+  for (const argv of runs) {
+    // eslint-disable-next-line no-await-in-loop
+    const { data } = await payload('--json', ...argv);
+    assert.deepEqual(Object.keys(data).sort(), JSON_KEYS, argv[0]);
+  }
+});
+
+test('the payload exit code IS the returned exit code', async () => {
+  // Agreeing by construction is worth proving: a consumer that trusts the field and
+  // a script that trusts the code must never be told two different things.
+  const root = tree({ 'm.js': TWINS });
+  const runs = [
+    ['scan', root],
+    ['scan', tree({ 'm.js': 'export function f(n) { return n * 2; }\n' })],
+    ['search', 'nope.js::x', '--in', root],
+  ];
+  for (const argv of runs) {
+    // eslint-disable-next-line no-await-in-loop
+    const { code, data } = await payload('--json', ...argv);
+    assert.equal(code, data.exit_code, argv.join(' '));
+  }
+});
+
+test('a finding travels with its verdict rather than a severity', async () => {
+  // Mapping the three verdicts onto somebody else's error/warning/note is the
+  // collapse the verdict vocabulary exists to prevent.
+  const { code, data } = await payload('--json', 'scan', tree({ 'm.js': TWINS }));
+  assert.equal(code, 1);
+  assert.ok(data.items.some((i) => i.verdict === 'finding'));
+  for (const item of data.items) {
+    assert.deepEqual(Object.keys(item).sort(), ['detail', 'message', 'verdict', 'where']);
+  }
+});
+
+test('a look is carried and still exits 0', async () => {
+  const root = tree({ 'm.js': 'export function t(n) { return Date.now() + n; }\n' });
+  const ref = `${path.join(root, 'm.js')}::t`;
+  const { code, data } = await payload('--json', 'pair', ref, ref);
+  assert.equal(code, 0);
+  assert.equal(data.exit_code, 0);
+  assert.ok(data.items.some((i) => i.verdict === 'look'));
+});
+
+test('a run that could not start emits JSON and exits 2', async () => {
+  const root = tree({ 'a.js': 'export const x = 1;\n', 'assay.json': '{not json' });
+  const { code, data } = await payload('--root', root, '--json', 'runners');
+  assert.equal(code, 2);
+  assert.equal(data.exit_code, 2);
+  assert.match(data.error, /not valid JSON/);
+  assert.deepEqual(data.items, []);
+  assert.deepEqual(Object.keys(data).sort(), JSON_KEYS);
+});
+
+test('no subcommand under --json is an error object, not the usage text', async () => {
+  const { code, data } = await payload('--json');
+  assert.equal(code, 2);
+  assert.equal(data.error, 'no subcommand');
+});
+
+test('anchors under --json names the gap rather than printing prose', async () => {
+  // The command this half does not implement must still answer in the shape the
+  // caller asked for. Exit 2 either way: `anchors` here is a run that cannot happen.
+  const { code, data } = await payload('--json', 'anchors');
+  assert.equal(code, 2);
+  assert.match(data.error, /Python package only/);
+});
+
+test('the census is DATA rather than the printed equation', async () => {
+  const { code, data } = await payload('--json', 'scan', path.join(ROOT, 'js', 'src'));
+  assert.equal(code, 0);
+  const census = data.scan;
+  assert.equal(census.probed + census.not_probed, census.functions);
+  // FILES ARE A SEPARATE POPULATION. Adding the two totals together prints a number
+  // nobody measured, so they are two counts and not one.
+  assert.ok(census.files > 0);
+});
+
+test('a command that ran no scan says null rather than zero', async () => {
+  // Zero probed functions and no sameness half at all are different claims.
+  const { data } = await payload('--root', tree({ 'a.js': 'export const x = 1;\n' }),
+    '--json', 'runners');
+  assert.equal(data.scan, null);
+});
+
+test('the baseline carries WHY this half could not check staleness', async () => {
+  // No run on this half is complete — `anchors` is Python-only — so an empty `stale`
+  // list without that flag would be this half claiming it checked and found none.
+  const root = tree({
+    'm.js': TWINS,
+    'assay.json': JSON.stringify({ baseline: ['same answer (arity1/v3): x, y'] }),
+  });
+  const { data } = await payload('--root', root, '--json', 'scan', root);
+  assert.equal(data.baseline.complete, false);
+  assert.match(data.baseline.incomplete_because, /anchors/);
+});
+
+test('--json prints JSON AND NOTHING ELSE', async () => {
+  // A prose banner in front of the object is a parse error, and a parse error at
+  // exactly the wrong moment reads as a clean audit.
+  const { text } = await cli('--json', 'scan', tree({ 'm.js': TWINS }));
+  assert.equal(text.trimStart()[0], '{');
+  JSON.parse(text);
+});
+
+test('--json works on BOTH sides of the subcommand', async () => {
+  const root = tree({ 'm.js': TWINS });
+  const first = await payload('--json', 'scan', root);
+  const second = await payload('scan', root, '--json');
+  assert.equal(first.code, second.code);
+});
+
+test('--json emits keys in sorted order, all the way down', async () => {
+  // `JSON.stringify` emits insertion order and Python's `json.dump` is asked for
+  // sorted keys, so without this the two halves print the same data as two different
+  // documents. One contract, two implementations, is the duplication this package
+  // exists to find — so the byte-level shape is made the same rather than left to how
+  // each language happens to build an object.
+  const { text } = await cli('--json', 'scan', tree({ 'm.js': TWINS }));
+  const data = JSON.parse(text);
+  const isSorted = (o) => assert.deepEqual(Object.keys(o), [...Object.keys(o)].sort());
+  isSorted(data);
+  isSorted(data.scan);
+  isSorted(data.items[0]);
+});
+
+// --------------------------------------------------------------------------- //
 // search --stdin: a function that is not a file yet
 // --------------------------------------------------------------------------- //
 // SEARCH BEFORE YOU GENERATE cannot mean "first write the file", which is what a

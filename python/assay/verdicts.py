@@ -17,6 +17,14 @@ no check at all — it occupies the place where a working one would go. Anything
 tool cannot settle by looking at the code is offered for a human to settle.
 """
 
+import json
+
+# THE JSON SCHEMA IS VERSIONED SEPARATELY FROM THE TOOL, because a consumer parsing
+# this output has the same claim on stability as a script reading the exit code, and
+# the two do not move together. A release that adds a check does not change this
+# number; a release that renames a key does.
+SCHEMA = 1
+
 FINDING = "finding"
 LOOK = "look"
 OK = "ok"
@@ -34,6 +42,10 @@ class Item:
         self.message = message
         self.where = where
         self.detail = detail
+
+    def to_dict(self):
+        return {"verdict": self.verdict, "message": self.message,
+                "where": self.where, "detail": self.detail}
 
     def __repr__(self):                                       # pragma: no cover
         return "<Item %s %s>" % (self.verdict, self.message[:40])
@@ -57,6 +69,14 @@ class Report:
         self.title = title
         self.items = []
         self.sections = []
+        # The census as DATA, set by a command that ran the sameness half. It is also
+        # in `sections` as prose, and a machine reading it back out of that prose
+        # would be a parser of our own output — one more thing that can be wrong about
+        # what happened.
+        self.scan = None
+        # Set by whoever applied the baseline, because that is the only place that
+        # knows whether the run was COMPLETE enough to call a line stale.
+        self.baseline = None
 
     def add(self, verdict, message, where=None, detail=None):
         self.items.append(Item(verdict, message, where, detail))
@@ -106,6 +126,42 @@ class Report:
         more than on anything printed.
         """
         return 1 if self.findings else 0
+
+
+def render_json(report, out, meta=None, error=None):
+    """Print a Report as one JSON object, and the second thing here that writes.
+
+    IT LIVES BESIDE `render` SO THIS FILE'S CLAIM STAYS TRUE with two renderers in it:
+    everything either one shows comes off the same Report, and a second source of the
+    same numbers would be a second answer to the same question.
+
+    ONE SHAPE, ALWAYS. A run that could not start emits the same keys as one that
+    finished, with `error` set and `items` empty, so a consumer never has to ask which
+    of two shapes it received. The failure this guards against is the one this package
+    exists to report: a broken invocation that a sloppy parser reads as a clean audit.
+    """
+    report = report if report is not None else Report()
+    payload = dict(meta or {})
+    payload.update({
+        "schema": SCHEMA,
+        "tool": "assay",
+        "error": error,
+        # `look` GETS NO SEVERITY. Mapping the three verdicts onto somebody else's
+        # error/warning/note is the collapse this whole file is written against; the
+        # verdict travels by its own name and the consumer decides what it means.
+        "items": [i.to_dict() for i in report.items],
+        "notes": list(report.sections),
+        "baseline": report.baseline,
+        "scan": report.scan,
+        "exit_code": 2 if error else report.exit_code(),
+    })
+    # `ensure_ascii=False` because the JavaScript half's `JSON.stringify` writes UTF-8
+    # directly, and a Python half escaping every em dash to `\uXXXX` would print the
+    # same data as a different document. One contract, two implementations, is the
+    # duplication this package exists to find.
+    json.dump(payload, out, indent=2, sort_keys=True, ensure_ascii=False)
+    out.write("\n")
+    return payload["exit_code"]
 
 
 def render(report, out, verbose=True, show_ok=True):

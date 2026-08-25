@@ -2,8 +2,13 @@
 
 Versions follow [semantic versioning](https://semver.org/). The parts under version
 are the **CLI contract** (subcommand names, flags, the three exit codes), the
-**`assay.json` format**, and the **verdict vocabulary** — not the set of findings a
-given release reports, which is expected to grow.
+**`assay.json` format**, the **verdict vocabulary**, and the **JSON schema** that
+`--json` emits — not the set of findings a given release reports, which is expected to
+grow.
+
+The JSON schema carries its own number (`"schema": 1`) beside the tool's, because a
+consumer parsing that output has the same claim on stability as a script reading the
+exit code and the two do not move together.
 
 **A new check is a MINOR bump even though it can turn a passing build red.** That is
 the honest reading: a tool whose whole purpose is finding things you had not checked
@@ -11,6 +16,43 @@ cannot promise that a patch release finds nothing new. Pin exactly if that matte
 and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
+
+### `--json`: the same Report, in the shape a machine can read
+
+Every subcommand takes `--json`, on either side of the subcommand name like every other
+global flag, and emits one object instead of the prose report. The renderer was already
+the only thing that printed and every command already built a `Report` as data, so this
+is a second emitter over a structure that existed rather than a rewrite.
+
+**One shape, always.** A run that could not start emits the same keys as one that
+finished, with `error` set and `items` empty. Prose on the failure path and JSON
+everywhere else hands a consumer a parse error at exactly the moment the tool could not
+run, and a sloppy consumer reads a parse error as *no findings* — which is the failure
+this package exists to report, arriving in its own output. Every exit-2 site routes
+through one helper.
+
+**`look` gets no severity.** Mapping the three verdicts onto somebody else's
+error/warning/note is the collapse the verdict vocabulary exists to prevent. The verdict
+travels by its own name and the consumer decides what it means.
+
+**The census is data, not the printed equation.** `probed + not_probed == functions` is
+checkable by the consumer rather than by parsing our own prose back out of `notes`, and
+files stay a separate population from functions. A command that ran no scan emits `null`
+rather than `0`, because zero probed functions and no sameness half at all are different
+claims.
+
+**The baseline's caveat travels as data.** `complete` is false with `incomplete_because`
+naming why, rather than an empty `stale` list that reads as *checked, found none*. Under
+Node it is always false, since `anchors` is Python-only.
+
+**Keys are sorted all the way down, in both halves**, so one contract prints as one
+document rather than two: `JSON.stringify` emits insertion order and `json.dump` is
+asked to sort, and the Python half emits UTF-8 rather than `\uXXXX` escapes for the
+same reason.
+
+Incidentally, the JavaScript version literal moves into one `VERSION` constant, and the
+parity test that keeps every version site in step reads that rather than the printed
+string.
 
 ### `assay search --stdin`: ask about a function before it is a file
 
