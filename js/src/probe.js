@@ -17,12 +17,13 @@
  * what it never looked at reads exactly like a clean sweep.
  */
 
-import { writeSync } from 'node:fs';
+import { readFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
-  ANSWER_FD, crossOutcome, declaredArity, functionRefusal, PER_INPUT_MS, probeOutcome,
+  ANSWER_FD, crossOutcome, declaredArity, fileRefusal, functionRefusal, PER_INPUT_MS,
+  probeOutcome,
 } from './sameness.js';
 
 /**
@@ -185,15 +186,30 @@ export function relativeSpecifiers(source) {
 }
 
 /**
- * Every function object this file's own dependencies export.
+ * Every function this file's dependencies export, mapped to the refusal of the file
+ * that DEFINES it — `null` when that file is one the gate would let us load.
+ *
+ * THE DEFINING FILE'S GATE HAS TO TRAVEL WITH THE FUNCTION, and a barrel is why. The
+ * gate is applied by `collect` to the file it is ABOUT to probe, so `config.js` —
+ * which imports `node:fs` — is refused and `writeBaseline` is never probed there. But
+ * `index.js` re-exports `writeBaseline` and imports no core module of its own, so it
+ * passes the same gate, and loading it hands the child the very function the gate just
+ * refused. Nothing in `functionRefusal` catches it either: that gate looks for IMPORT
+ * statements, and a function body never contains one — `writeFileSync` is a free name
+ * resolved from a module scope the gate cannot see.
+ *
+ * What stood in the way was the de-duplication skip below, which exists to name each
+ * function once and had no idea it was also the last thing between the probe and a
+ * real `writeFileSync` on a real path. Two mutations remove it, and the probe wrote
+ * ten files named after the ladder's string rungs into the repository root.
  *
  * They are already loaded — the module under probe pulled them in — so importing them
  * again is a cache hit and runs no new top-level code. A specifier that will not
  * resolve is skipped rather than reported: failing to spot a re-export costs one
  * dismissible finding, and guessing at one would hide a real function.
  */
-async function inheritedFunctions(file, source) {
-  const out = new Set();
+async function dependencyExports(file, source) {
+  const out = new Map();
   const base = path.dirname(file);
   for (const spec of relativeSpecifiers(source)) {
     const target = path.resolve(base, spec);
@@ -201,13 +217,20 @@ async function inheritedFunctions(file, source) {
       path.join(target, 'index.js')];
     for (const candidate of candidates) {
       let dep;
+      let text;
       try {
+        text = readFileSync(candidate, 'utf8');
         // eslint-disable-next-line no-await-in-loop
         dep = await import(pathToFileURL(candidate).href);
       } catch {
         continue;
       }
-      for (const [, fn] of exportedFunctions(dep)) out.add(fn);
+      // The bytes that were READ are the bytes that get judged. Asking the loaded
+      // module what file it came from would be asking the thing under test.
+      const refusal = fileRefusal(text);
+      for (const [, fn] of exportedFunctions(dep)) {
+        if (!out.has(fn)) out.set(fn, refusal);
+      }
       break;
     }
   }
@@ -225,18 +248,35 @@ async function main() {
     say({ error: `could not load (${(err && err.message) || err})`.slice(0, 120) });
     return;
   }
-  let inherited = new Set();
+  let origins = new Map();
   try {
-    inherited = await inheritedFunctions(request.file, request.source || '');
+    origins = await dependencyExports(request.file, request.source || '');
   } catch {
-    inherited = new Set();
+    origins = new Map();
   }
+  // ONLY THE ALLOWED ORIGINS ARE DE-DUPLICATED AWAY. A function defined in a file the
+  // gate refuses is deliberately left IN, so it reaches the loop below and is skipped
+  // there BY NAME. Seeding it here too would make the refusal unreachable — a guard
+  // nothing can arrive at is a guard nothing checks, and the census would go on
+  // saying nothing about a function the tool declined to run.
+  const inherited = new Set();
+  for (const [fn, refusal] of origins) if (!refusal) inherited.add(fn);
   const found = exportedFunctions(namespace, inherited);
   // THE ROSTER FIRST, so a function that never answers can be told from one that was
   // never there. Without it a killed probe and an empty module look identical, and
   // "we found none" and "we never looked" are different claims.
   say({ roster: found.map(([name]) => name) });
   for (const [name, fn] of found) {
+    // THE DEFINING FILE'S REFUSAL, CHECKED BEFORE THE FUNCTION IS CALLED. Reaching a
+    // function through a barrel must not launder the gate its own file failed; see
+    // `dependencyExports`. A `skip` rather than a silent drop, because "we declined to
+    // run this" and "there was nothing here" are the two claims this tool exists to
+    // keep apart.
+    const elsewhere = origins.get(fn);
+    if (elsewhere) {
+      say({ entry: { name, skip: `defined in a file that ${elsewhere}` } });
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
     say({
       entry: await probeFunction(fn, name, request.ladders, request.cross === true,

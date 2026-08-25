@@ -1090,10 +1090,48 @@ MUTATIONS += [
      """  const text = stripNonCode(source, true) || source;
   if (text === null) return null;"""),
 
+    # ---- the gate knows every spelling of an import, and the blast is bounded -- #
+    ("js sameness: a DYNAMIC import of a core module stops being refused",
+     "sameness.js",
+     r"""  [new RegExp('\\bimport\\s*\\(\\s*[\'"](?:node:)?(?:' + CORE_MODULES + ')'),
+    'reaches a node core module', SPECIFIER],""",
+     r"""  [new RegExp('\\bimport\\s*\\(\\s*[\'"]THIS_MATCHES_NOTHING(?:node:)?(?:' + CORE_MODULES + ')'),
+    'reaches a node core module', SPECIFIER],"""),
+    ("js sameness: the probe child inherits OUR cwd, so a stray write lands in the tree",
+     "sameness.js",
+     """      { stdio: ['pipe', 'pipe', 'pipe', 'pipe'], cwd: tmpdir() });""",
+     """      { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });"""),
+
+    # ---- a barrel may not launder the gate its own file failed ---------------- #
+    ("js probe: a re-exported function is probed though ITS file is refused",
+     "probe.js",
+     """    const elsewhere = origins.get(fn);
+    if (elsewhere) {""",
+     """    const elsewhere = origins.get(fn);
+    if (false) {"""),
+    ("js probe: the origin gate reads the BARREL's bytes instead of the origin's",
+     "probe.js",
+     """      const refusal = fileRefusal(text);""",
+     """      const refusal = fileRefusal(source);"""),
+    ("js probe: a refused origin is de-duplicated away, so nothing reports it",
+     "probe.js",
+     """  for (const [fn, refusal] of origins) if (!refusal) inherited.add(fn);""",
+     """  for (const [fn] of origins) inherited.add(fn);"""),
+
     # ---- a hang costs the function that hung, not the file --------------------- #
     ("js probe: the child answers once at the end, so a kill loses everything",
      "probe.js",
      """  for (const [name, fn] of found) {
+    // THE DEFINING FILE'S REFUSAL, CHECKED BEFORE THE FUNCTION IS CALLED. Reaching a
+    // function through a barrel must not launder the gate its own file failed; see
+    // `dependencyExports`. A `skip` rather than a silent drop, because "we declined to
+    // run this" and "there was nothing here" are the two claims this tool exists to
+    // keep apart.
+    const elsewhere = origins.get(fn);
+    if (elsewhere) {
+      say({ entry: { name, skip: `defined in a file that ${elsewhere}` } });
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
     say({
       entry: await probeFunction(fn, name, request.ladders, request.cross === true,
@@ -1104,6 +1142,11 @@ MUTATIONS += [
   }""",
      """  const all = [];
   for (const [name, fn] of found) {
+    const elsewhere = origins.get(fn);
+    if (elsewhere) {
+      all.push({ name, skip: `defined in a file that ${elsewhere}` });
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
     all.push(await probeFunction(fn, name, request.ladders, request.cross === true,
       typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS));

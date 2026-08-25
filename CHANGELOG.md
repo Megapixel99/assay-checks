@@ -15,7 +15,50 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
-## 0.3.1
+## 0.4.0
+
+**A MINOR bump, and the rule at the top says why:** the purity gate now refuses files
+it used to load, so a tree that was green on 0.3.0 may report new `look`s — and a
+project whose census counted certain functions as probed will find them counted as
+declined instead. Nothing about the CLI contract, `assay.json`, the verdict vocabulary
+or the JSON schema moves.
+
+### A barrel could launder the gate its own file failed
+
+`config.js` imports `node:fs`, so the gate refuses it and `writeBaseline` is never
+probed there. `index.js` re-exports `writeBaseline` and imports no core module of its
+own — so it passed the same gate, and loading it handed the probe the very function the
+gate had just refused. `functionRefusal` could not catch it either: that gate looks for
+**import statements**, and a function body never contains one. `writeFileSync` is a
+free name resolved in a module scope the gate cannot see.
+
+What stood in the way was the de-duplication skip in `exportedFunctions`, which exists
+to name each function once and had no idea it was also the last thing between the probe
+and a real `writeFileSync` on a real path. Two mutations remove that skip, and the
+probe wrote **ten files named after the ladder's string rungs into the repository
+root** — which CI then reported as `a mutation was left applied — the restore did not
+run`, naming the wrong cause for a real failure.
+
+The defining file's refusal now travels **with** the function. A function reached
+through a barrel is skipped by name, with the origin's reason, rather than silently
+dropped — so the census says what it declined to run instead of saying nothing.
+
+### `await import('node:fs')` was not an import
+
+The same gate refused `require('node:fs')` and `from 'node:fs'` and allowed the dynamic
+form, so a file could reach the filesystem through the one spelling nobody had written
+down — no barrel required. The Python half has always banned `__import__` by name; this
+is the two halves agreeing again rather than a new rule.
+
+### The probe no longer runs in your repository
+
+Every gate here is best-effort, so the question is not only what gets refused but where
+the damage lands when something is not. The child resolves every path it uses
+absolutely and needs no particular working directory, so it is given a scratch one. A
+probed function calling `writeFileSync('a', ...)` can no longer reach the tree it was
+pointed at.
+
+## 0.3.1 (unreleased, folded into 0.4.0)
 
 **A PATCH bump, and the rule at the top says why:** nothing here touches the CLI
 contract, the `assay.json` format, the verdict vocabulary or the JSON schema, and no
