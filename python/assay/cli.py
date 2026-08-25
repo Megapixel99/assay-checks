@@ -30,10 +30,35 @@ from .checks import audit_diff, audit_runners, check_exemptions
 from .config import ConfigError, apply_baseline, load
 from .sameness import (collect, compare, group, ladder, ladder_key, probe,
                        report_scan, resolve)
-from .verdicts import FINDING, Report, render
+from .verdicts import FINDING, Report, render, render_json
 
 
-def _finish(report, config, out, verbose=True, complete=False):
+def _meta(args):
+    """What a machine reading this output needs in order to know whose it is.
+
+    `language` is here because a polyglot repository runs both halves over one root,
+    and a consumer merging two reports has no other way to tell which produced which.
+    """
+    return {"version": __version__, "language": "python",
+            "command": getattr(args, "cmd", None), "root": getattr(args, "root", None)}
+
+
+def _fail(args, out, message):
+    """Exit 2, in whichever shape the caller asked for. Always returns 2.
+
+    UNDER `--json` A BROKEN INVOCATION STILL EMITS JSON. Prose on the failure path and
+    JSON everywhere else gives a consumer a parse error exactly when the tool could not
+    run, and a sloppy consumer reads that as no findings. "Could not run" and "found
+    nothing" are opposite situations; this is the one place where letting the second
+    swallow the first is easiest to do by accident.
+    """
+    if getattr(args, "as_json", False):
+        return render_json(None, out, meta=_meta(args), error=message)
+    out.write("assay: %s\n" % message)
+    return 2
+
+
+def _finish(args, report, config, out, complete=False):
     """Apply the baseline, render, and return the exit code.
 
     STALE DETECTION NEEDS A COMPLETE RUN, and getting this wrong made the tool cry
@@ -47,6 +72,7 @@ def _finish(report, config, out, verbose=True, complete=False):
     accepted findings, because that direction is safe from any command: a line that
     fires is a line that fires.
     """
+    verbose = args.verbose and not args.as_json
     if config.baseline:
         still, stale = apply_baseline(report.findings, config.baseline)
         accepted = len(report.findings) - len(still)
@@ -55,11 +81,21 @@ def _finish(report, config, out, verbose=True, complete=False):
             for line in stale:
                 report.finding("baseline line no longer fires (fixed? then delete "
                                "it): %s" % line)
+        # THE CAVEAT TRAVELS AS DATA rather than as a sentence a human has to notice.
+        # A partial run reports no stale lines and one that checked reports none it
+        # found, and those are different claims; `complete` is what tells them apart.
+        report.baseline = {
+            "path": config.path, "accepted": accepted, "new": len(still),
+            "complete": complete, "stale": list(stale) if complete else [],
+            "incomplete_because": None if complete else "staleness needs `assay all`",
+        }
         if verbose:
             out.write("\nBASELINE %s — %d accepted, %d new, %s\n"
                       % (config.path, accepted, len(still),
                          "%d stale" % len(stale) if complete
                          else "staleness needs `assay all`"))
+    if args.as_json:
+        return render_json(report, out, meta=_meta(args))
     if verbose:
         out.write("\n%s\n" % ("-" * 72))
     return render(report, out, verbose=verbose)
@@ -69,19 +105,19 @@ def cmd_runners(args, config, out):
     report = Report()
     audit_runners(args.root, config, report)
     check_exemptions(args.root, config, report)
-    return _finish(report, config, out, args.verbose)
+    return _finish(args, report, config, out)
 
 
 def cmd_anchors(args, config, out):
     report = Report()
     audit_anchors(args.root, config, report)
-    return _finish(report, config, out, args.verbose)
+    return _finish(args, report, config, out)
 
 
 def cmd_diff(args, config, out):
     report = Report()
     audit_diff(args.root, args.base, config, report)
-    return _finish(report, config, out, args.verbose)
+    return _finish(args, report, config, out)
 
 
 def cmd_all(args, config, out):
@@ -101,16 +137,18 @@ def cmd_all(args, config, out):
         scan = collect(scanned)
         group(scan)
         report_scan(scan, report)
-    return _finish(report, config, out, args.verbose, complete=True)
+        report.scan = scan.to_dict()
+    return _finish(args, report, config, out, complete=True)
 
 
 def cmd_scan(args, config, out):
     scan = collect(args.paths)
     group(scan)
     report = report_scan(scan)
+    report.scan = scan.to_dict()
     if not scan.groups:
         report.note("\nsame   none — no two probed functions share an outcome vector")
-    return _finish(report, config, out, args.verbose)
+    return _finish(args, report, config, out)
 
 
 def cmd_pair(args, config, out):
@@ -119,8 +157,7 @@ def cmd_pair(args, config, out):
     for ref in (args.a, args.b):
         func = resolve(ref)
         if func is None:
-            out.write("assay: cannot resolve %s\n" % ref)
-            return 2
+            return _fail(args, out, "cannot resolve %s" % ref)
         funcs.append(func)
     first, second = funcs
     vectors = []
@@ -128,7 +165,7 @@ def cmd_pair(args, config, out):
         vector, why = probe(func)
         if vector is None:
             report.look("%s — %s" % (func.ref, why), func.ref)
-            return _finish(report, config, out, args.verbose)
+            return _finish(args, report, config, out)
         vectors.append(vector)
     verdict, detail = compare(vectors[0], vectors[1], ladder_key(first),
                               ladder_key(second), ladder(len(first.params)))
@@ -139,21 +176,20 @@ def cmd_pair(args, config, out):
         report.ok("differs: %s — %s" % (pair, detail), first.ref)
     else:
         report.look("%s — %s" % (pair, detail), first.ref)
-    return _finish(report, config, out, args.verbose)
+    return _finish(args, report, config, out)
 
 
 def cmd_search(args, config, out):
     query = resolve(args.ref)
     if query is None:
-        out.write("assay: cannot resolve %s\n" % args.ref)
-        return 2
+        return _fail(args, out, "cannot resolve %s" % args.ref)
     report = Report()
     vector, why = probe(query)
     if vector is None:
         report.look("%s — %s" % (query.ref, why), query.ref)
         report.note("       the tree was not searched, because this function could "
                     "not be probed")
-        return _finish(report, config, out, args.verbose)
+        return _finish(args, report, config, out)
     scan = collect(args.into)
     key = ladder_key(query)
     hits = sorted(ref for ref, vec in scan.probed.items()
@@ -167,7 +203,8 @@ def cmd_search(args, config, out):
                     % query.ref)
         report.note("       which is not proof that nothing answers it; see Limits")
     report_scan(scan, report)
-    return _finish(report, config, out, args.verbose)
+    report.scan = scan.to_dict()
+    return _finish(args, report, config, out)
 
 
 COMMANDS = {
@@ -204,6 +241,9 @@ def _common(defaults=False):
     common.add_argument("-q", "--quiet", action="store_true",
                         default=False if defaults else nothing,
                         help="print findings only")
+    common.add_argument("--json", action="store_true", dest="as_json",
+                        default=False if defaults else nothing,
+                        help="one JSON object instead of the prose report")
     common.add_argument("--config", default=None if defaults else nothing,
                         help="path to assay.json (default: found in --root)")
     common.add_argument("--root", default="." if defaults else nothing,
@@ -255,6 +295,8 @@ def main(argv=None, out=None):
     ap = build_parser()
     args = ap.parse_args(argv)
     if not args.cmd:
+        if args.as_json:
+            return _fail(args, out, "no subcommand")
         ap.print_help(out)
         return 2
     args.verbose = not args.quiet
@@ -262,8 +304,7 @@ def main(argv=None, out=None):
     try:
         config = load(args.config, args.root)
     except ConfigError as exc:
-        out.write("assay: %s\n" % exc)
-        return 2
+        return _fail(args, out, str(exc))
     return COMMANDS[args.cmd](args, config, out)
 
 

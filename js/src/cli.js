@@ -33,9 +33,11 @@ import {
   collect, compare, displayPath, group, jsFiles, ladder, ladderKey, probeFile,
   reportScan, Scan,
 } from './sameness.js';
-import { FINDING, Report, render } from './verdicts.js';
+import { FINDING, Report, render, renderJson } from './verdicts.js';
 
-const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
+const VERSION = '0.2.2';
+
+const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] [--json] <command>
 
   runners                     audit mutation runners against six properties
   diff [--base REF]           does this change carry the checks it needs?
@@ -46,6 +48,8 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
   search FILE::NAME --in DIR  does the tree already answer this?
 
   anchors                     Python only — see \`assay\` on PyPI
+
+  --json                      one JSON object instead of the prose report
 
 exit: 0 nothing to read, 1 findings, 2 could not run
 `;
@@ -58,12 +62,13 @@ exit: 0 nothing to read, 1 findings, 2 could not run
 export function parseArgs(argv) {
   const opts = {
     root: '.', config: null, quiet: false, base: 'origin/main',
-    cmd: null, positional: [], into: [], scan: [],
+    cmd: null, positional: [], into: [], scan: [], asJson: false,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '-q' || arg === '--quiet') opts.quiet = true;
+    else if (arg === '--json') opts.asJson = true;
     else if (arg === '--root') { i += 1; opts.root = argv[i]; }
     else if (arg === '--config') { i += 1; opts.config = argv[i]; }
     else if (arg === '--base') { i += 1; opts.base = argv[i]; }
@@ -100,18 +105,61 @@ export function parseArgs(argv) {
  * Suppression still works, from any command, because that direction is safe from a
  * partial run: a line that fires is a line that fires.
  */
-function finish(report, config, write, verbose) {
+function finish(report, config, write, opts) {
+  const verbose = !opts.quiet && !opts.asJson;
   if (config.baseline.length) {
     const [still] = applyBaseline(report.findings, config.baseline);
     const accepted = report.findings.length - still.length;
     report.items = report.items.filter((i) => i.verdict !== FINDING).concat(still);
+    // THE CAVEAT TRAVELS AS DATA rather than as a sentence a human has to notice. No
+    // run on this half is complete — `anchors` is Python-only — so `complete` is
+    // false here always, and reporting an empty `stale` list without it would be this
+    // half claiming it checked and found none.
+    report.baseline = {
+      path: config.path,
+      accepted,
+      new: still.length,
+      complete: false,
+      stale: [],
+      incomplete_because:
+        'staleness needs the Python `assay all` (this half cannot run `anchors`)',
+    };
     if (verbose) {
       write(`\nBASELINE ${config.path} — ${accepted} accepted, ${still.length} new, `
         + 'staleness needs the Python `assay all` (this half cannot run `anchors`)\n');
     }
   }
+  if (opts.asJson) return renderJson(report, write, meta(opts));
   if (verbose) write(`\n${'-'.repeat(72)}\n`);
   return render(report, write, { verbose });
+}
+
+/**
+ * What a machine reading this output needs in order to know whose it is.
+ *
+ * `language` is here because a polyglot repository runs both halves over one root, and
+ * a consumer merging two reports has no other way to tell which produced which.
+ */
+function meta(opts) {
+  return {
+    version: VERSION, language: 'node', command: opts.cmd || null,
+    root: path.resolve(opts.root),
+  };
+}
+
+/**
+ * Exit 2, in whichever shape the caller asked for. Always returns 2.
+ *
+ * UNDER `--json` A BROKEN INVOCATION STILL EMITS JSON. Prose on the failure path and
+ * JSON everywhere else gives a consumer a parse error exactly when the tool could not
+ * run, and a sloppy consumer reads that as no findings. "Could not run" and "found
+ * nothing" are opposite situations; this is the one place where letting the second
+ * swallow the first is easiest to do by accident.
+ */
+function fail(opts, write, message) {
+  if (opts.asJson) return renderJson(null, write, meta(opts), message);
+  write(`assay: ${message}\n`);
+  return 2;
 }
 
 /**
@@ -144,14 +192,21 @@ async function probeRef(ref) {
 
 export async function run(argv, write = (s) => process.stdout.write(s)) {
   const opts = parseArgs(argv);
-  if (opts.version) { write('assay 0.2.2\n'); return 0; }
-  if (opts.help || !opts.cmd) { write(USAGE); return 2; }
+  if (opts.version) { write(`assay ${VERSION}\\n`); return 0; }
+  if (opts.help) { write(USAGE); return 2; }
+  // The usage text is what a person typing nothing needs; a consumer that asked for
+  // JSON needs the failure in the shape it can read. Same exit code either way.
+  if (!opts.cmd) {
+    if (opts.asJson) return fail(opts, write, 'no subcommand');
+    write(USAGE);
+    return 2;
+  }
 
   let config;
   try {
     config = load(opts.config, opts.root);
   } catch (err) {
-    if (err instanceof ConfigError) { write(`assay: ${err.message}\n`); return 2; }
+    if (err instanceof ConfigError) return fail(opts, write, err.message);
     throw err;
   }
   const root = path.resolve(opts.root);
@@ -160,6 +215,11 @@ export async function run(argv, write = (s) => process.stdout.write(s)) {
 
   switch (opts.cmd) {
     case 'anchors':
+      if (opts.asJson) {
+        return fail(opts, write, '`anchors` is implemented in the Python package '
+          + 'only: pulling a mutation table out of source needs a real parser, and a '
+          + 'regex version would report confident nonsense');
+      }
       write('assay: `anchors` is implemented in the Python package only.\n'
         + '       Pulling a mutation table out of source needs a real parser, and a\n'
         + '       regex version would report confident nonsense. Use `pip install\n'
@@ -169,11 +229,11 @@ export async function run(argv, write = (s) => process.stdout.write(s)) {
     case 'runners':
       auditRunners(root, config, report);
       checkExemptions(root, config, report);
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, opts);
 
     case 'diff':
       auditDiff(root, opts.base, config, report);
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, opts);
 
     case 'all': {
       auditRunners(root, config, report);
@@ -185,32 +245,34 @@ export async function run(argv, write = (s) => process.stdout.write(s)) {
         const scan = await collect(opts.scan);
         group(scan);
         reportScan(scan, report);
+        report.scan = scan.toDict();
       }
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, opts);
     }
 
     case 'scan': {
-      if (!opts.positional.length) { write('assay scan needs a path\n'); return 2; }
+      if (!opts.positional.length) return fail(opts, write, 'scan needs a path');
       const scan = await collect(opts.positional);
       group(scan);
       reportScan(scan, report);
+      report.scan = scan.toDict();
       if (!scan.groups.length) {
         report.note('\nsame   none — no two probed functions share an outcome vector');
       }
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, opts);
     }
 
     case 'pair': {
-      if (opts.positional.length !== 2) { write('assay pair needs two refs\n'); return 2; }
+      if (opts.positional.length !== 2) return fail(opts, write, 'pair needs two refs');
       const probes = [];
       for (const ref of opts.positional) {
         // eslint-disable-next-line no-await-in-loop
         const found = await probeRef(ref);
-        if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
+        if (found.unresolved) return fail(opts, write, found.unresolved);
         if (found.unprobed) {
           // A function this tool may not execute is a `look`, not a failed run.
           report.look(`${found.display} — ${found.unprobed}`, found.display);
-          return finish(report, config, write, verbose);
+          return finish(report, config, write, opts);
         }
         probes.push([found.display, found.entry]);
       }
@@ -222,19 +284,19 @@ export async function run(argv, write = (s) => process.stdout.write(s)) {
       if (verdict === 'same') report.finding(`same answer: ${pair}`, refA, detail);
       else if (verdict === 'differs') report.ok(`differs: ${pair} — ${detail}`, refA);
       else report.look(`${pair} — ${detail}`, refA);
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, opts);
     }
 
     case 'search': {
-      if (!opts.positional.length) { write('assay search needs a ref\n'); return 2; }
-      if (!opts.into.length) { write('assay search needs --in DIR\n'); return 2; }
+      if (!opts.positional.length) return fail(opts, write, 'search needs a ref');
+      if (!opts.into.length) return fail(opts, write, 'search needs --in DIR');
       const found = await probeRef(opts.positional[0]);
-      if (found.unresolved) { write(`assay: ${found.unresolved}\n`); return 2; }
+      if (found.unresolved) return fail(opts, write, found.unresolved);
       if (found.unprobed) {
         report.look(`${found.display} — ${found.unprobed}`, found.display);
         report.note('       the tree was not searched, because this function could '
           + 'not be probed');
-        return finish(report, config, write, verbose);
+        return finish(report, config, write, opts);
       }
       const { entry, display: ref } = found;
       const scan = await collect(opts.into);
@@ -255,10 +317,12 @@ export async function run(argv, write = (s) => process.stdout.write(s)) {
         report.note('       which is not proof that nothing answers it; see Limits');
       }
       reportScan(scan, report);
-      return finish(report, config, write, verbose);
+      report.scan = scan.toDict();
+      return finish(report, config, write, opts);
     }
 
     default:
+      if (opts.asJson) return fail(opts, write, `unknown command ${opts.cmd}`);
       write(`assay: unknown command ${opts.cmd}\n\n${USAGE}`);
       return 2;
   }

@@ -229,12 +229,41 @@ class TheTwoHalvesAgree(unittest.TestCase):
         with open(os.path.join(REPO, "package.json"), encoding="utf-8") as fh:
             package_json = json.load(fh)["version"]
         module = re.search(r'__version__ = "([^"]+)"', py("__init__.py")).group(1)
-        printed = re.search(r"write\('assay ([0-9][^\\']*)\\n'\)",
-                            js("cli.js")).group(1)
+        printed = re.search(r"const VERSION = '([^']+)';", js("cli.js")).group(1)
 
         self.assertEqual({pyproject, package_json, module, printed}, {pyproject},
                          "pyproject=%s package.json=%s assay.__version__=%s "
                          "js --version=%s" % (pyproject, package_json, module, printed))
+
+    def test_the_JSON_SCHEMA_NUMBER_is_the_same_in_both_halves(self):
+        """It is versioned separately from the tool, so it is one number in two files
+        and therefore a thing that can drift. A consumer parsing this output has the
+        same claim on stability as a script reading the exit code."""
+        from assay.verdicts import SCHEMA                  # noqa: PLC0415
+
+        printed = re.search(r"export const SCHEMA = (\d+);", js("verdicts.js"))
+        self.assertIsNotNone(printed, "no SCHEMA constant in verdicts.js")
+        self.assertEqual(SCHEMA, int(printed.group(1)))
+
+    def test_both_suites_pin_the_SAME_JSON_KEYS(self):
+        """Each half's suite asserts its own output has exactly these keys, so the
+        thing left to check is that the two suites are asking for the same set.
+
+        READ AS TEXT, like everything else in this file: running the JavaScript would
+        need Node, and a suite that silently skips when a runtime is missing reports a
+        pass for a check that never ran.
+        """
+        py_test = os.path.join(HERE, "test_cli.py")
+        with open(py_test, encoding="utf-8") as fh:
+            py_block = re.search(r"KEYS = \{(.*?)\}", fh.read(), re.S).group(1)
+        js_test = os.path.join(REPO, "js", "test", "cli.test.js")
+        with open(js_test, encoding="utf-8") as fh:
+            js_block = re.search(r"const JSON_KEYS = \[(.*?)\]", fh.read(), re.S).group(1)
+        def names(block):
+            return set(re.findall(r"['\"]([a-z_]+)['\"]", block))
+
+        self.assertEqual(names(py_block), names(js_block))
+        self.assertIn("exit_code", names(py_block))
 
     def test_the_verdict_names_are_identical(self):
         source = js("verdicts.js")

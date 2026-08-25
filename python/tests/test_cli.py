@@ -150,6 +150,133 @@ class ExitCodes(unittest.TestCase):
         self.assertIn("not valid JSON", text)
 
 
+class JsonOutput(unittest.TestCase):
+    """`--json`: the same Report, in the shape a machine can read.
+
+    ONE SHAPE, ALWAYS. A run that could not start emits the same keys as one that
+    finished, because prose on the failure path and JSON everywhere else hands a
+    consumer a parse error at exactly the moment the tool could not run — and a sloppy
+    consumer reads a parse error as no findings. "Could not run" and "found nothing"
+    are opposite situations, and this is where letting the second swallow the first is
+    easiest to do by accident.
+    """
+
+    KEYS = {"schema", "tool", "version", "language", "command", "root", "error",
+            "items", "notes", "baseline", "scan", "exit_code"}
+
+    def payload(self, *argv):
+        code, text = run(*argv)
+        try:
+            data = json.loads(text)
+        except ValueError:                                # pragma: no cover
+            self.fail("--json printed something that is not JSON: %r" % text[:200])
+        return code, data
+
+    def test_every_subcommand_emits_the_SAME_KEYS(self):
+        root = tree({"m.py": TWINS})
+        for argv in (("--root", root, "runners"), ("--root", root, "anchors"),
+                     ("scan", root), ("pair", os.path.join(root, "m.py") + "::a",
+                                      os.path.join(root, "m.py") + "::b"),
+                     ("search", os.path.join(root, "m.py") + "::a", "--in", root)):
+            with self.subTest(argv=argv[0]):
+                _code, data = self.payload("--json", *argv)
+                self.assertEqual(set(data), self.KEYS)
+
+    def test_the_payload_exit_code_IS_the_process_exit_code(self):
+        """Agreeing by construction is worth proving: a consumer that trusts the field
+        and a script that trusts the code must never be told two different things."""
+        root = tree({"m.py": TWINS})
+        for argv in (("scan", root), ("scan", tree({"m.py": "def f(n):\n    return n\n"})),
+                     ("search", "nope.py::x", "--in", root)):
+            with self.subTest(argv=argv):
+                code, data = self.payload("--json", *argv)
+                self.assertEqual(code, data["exit_code"])
+
+    def test_a_finding_travels_with_its_verdict_rather_than_a_severity(self):
+        """Mapping the three verdicts onto somebody else's error/warning/note is the
+        collapse the verdict vocabulary exists to prevent."""
+        root = tree({"m.py": TWINS})
+        code, data = self.payload("--json", "scan", root)
+        self.assertEqual(code, 1)
+        verdicts = {i["verdict"] for i in data["items"]}
+        self.assertIn("finding", verdicts)
+        self.assertTrue(all(set(i) == {"verdict", "message", "where", "detail"}
+                            for i in data["items"]))
+
+    def test_a_look_is_carried_and_still_exits_0(self):
+        root = tree({"m.py": "import time\n\ndef t(n):\n    return time.time() + n\n"})
+        code, data = self.payload("--json", "pair", os.path.join(root, "m.py") + "::t",
+                                  os.path.join(root, "m.py") + "::t")
+        self.assertEqual(code, 0)
+        self.assertEqual(data["exit_code"], 0)
+        self.assertIn("look", {i["verdict"] for i in data["items"]})
+
+    def test_a_run_that_could_not_start_emits_JSON_and_exits_2(self):
+        root = tree({"a.py": "x = 1\n", "assay.json": "{not json"})
+        code, data = self.payload("--root", root, "--json", "runners")
+        self.assertEqual(code, 2)
+        self.assertEqual(data["exit_code"], 2)
+        self.assertIn("not valid JSON", data["error"])
+        self.assertEqual(data["items"], [])
+        self.assertEqual(set(data), self.KEYS)
+
+    def test_no_subcommand_under_json_is_an_error_object_not_the_help_text(self):
+        code, data = self.payload("--json")
+        self.assertEqual(code, 2)
+        self.assertEqual(data["error"], "no subcommand")
+
+    def test_the_census_is_DATA_rather_than_the_printed_equation(self):
+        """`probed + not_probed` equals `functions`, and a consumer can check that
+        here rather than by parsing our own prose back out of `notes`."""
+        code, data = self.payload("--json", "scan", os.path.join(ROOT, "assay"))
+        self.assertEqual(code, 0)
+        census = data["scan"]
+        self.assertEqual(census["probed"] + census["not_probed"], census["functions"])
+        # FILES ARE A SEPARATE POPULATION. Adding the two totals together prints a
+        # number nobody measured, so they are two counts and not one.
+        self.assertIn("files", census)
+        self.assertGreater(census["files"], 0)
+
+    def test_a_command_that_ran_no_scan_says_null_rather_than_zero(self):
+        """Zero probed functions and no sameness half at all are different claims."""
+        _code, data = self.payload("--root", tree({"a.py": "x = 1\n"}), "--json",
+                                   "runners")
+        self.assertIsNone(data["scan"])
+
+    def test_the_baseline_carries_WHY_it_could_not_check_staleness(self):
+        root = tree({"m.py": TWINS, "assay.json": json.dumps(
+            {"baseline": ["same answer (arity1/v3): x, y"]})})
+        _code, data = self.payload("--root", root, "--json", "scan", root)
+        self.assertEqual(data["baseline"]["complete"], False)
+        self.assertIn("assay all", data["baseline"]["incomplete_because"])
+        _code, complete = self.payload("--root", root, "--json", "all",
+                                       "--scan", root)
+        self.assertEqual(complete["baseline"]["complete"], True)
+        self.assertIsNone(complete["baseline"]["incomplete_because"])
+
+    def test_json_prints_JSON_AND_NOTHING_ELSE(self):
+        """A prose banner in front of the object is a parse error, and a parse error
+        at exactly the wrong moment reads as a clean audit."""
+        root = tree({"m.py": TWINS})
+        _code, text = run("--json", "scan", root)
+        self.assertTrue(text.lstrip().startswith("{"), text[:80])
+        json.loads(text)
+
+    def test_json_emits_keys_in_SORTED_ORDER_all_the_way_down(self):
+        """`json.dump` is asked to sort and `JSON.stringify` emits insertion order, so
+        without this the two halves print the same data as two different documents."""
+        _code, text = run("--json", "scan", tree({"m.py": TWINS}))
+        data = json.loads(text)
+        for obj in (data, data["scan"], data["items"][0]):
+            self.assertEqual(list(obj), sorted(obj))
+
+    def test_json_works_on_BOTH_sides_of_the_subcommand(self):
+        root = tree({"m.py": TWINS})
+        first, _ = self.payload("--json", "scan", root)
+        second, _ = self.payload("scan", root, "--json")
+        self.assertEqual(first, second)
+
+
 class ConfigWiring(unittest.TestCase):
 
     def test_a_baseline_entry_turns_a_finding_into_a_pass(self):

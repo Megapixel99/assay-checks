@@ -152,6 +152,31 @@ def target(name):
 
 # (label, file, old, new)
 MUTATIONS = [
+    # ---- the JSON report says the same thing the prose one does -------------- #
+    ("verdicts: the JSON exit code is computed apart from the Report's",
+     "verdicts.py",
+     """        "exit_code": 2 if error else report.exit_code(),""",
+     """        "exit_code": 2 if error else 0,"""),
+    ("verdicts: keys stop being sorted, so the two halves print different documents",
+     "verdicts.py",
+     """    json.dump(payload, out, indent=2, sort_keys=True, ensure_ascii=False)""",
+     """    json.dump(payload, out, indent=2, sort_keys=False, ensure_ascii=False)"""),
+    ("verdicts: a run that could not start emits a DIFFERENT SHAPE from one that ran",
+     "verdicts.py",
+     """    report = report if report is not None else Report()""",
+     """    report = report if report is not None else Report()
+    if error:
+        return 2"""),
+    ("cli: --json falls back to prose on the failure path",
+     "cli.py",
+     """    if getattr(args, "as_json", False):
+        return render_json(None, out, meta=_meta(args), error=message)""",
+     """    if False:
+        return render_json(None, out, meta=_meta(args), error=message)"""),
+    ("cli: a partial run claims it checked the baseline for stale lines",
+     "cli.py",
+     """            "complete": complete, "stale": list(stale) if complete else [],""",
+     """            "complete": True, "stale": list(stale) if complete else [],"""),
     # ---- the vacuous-probe guard ------------------------------------------- #
     ("sameness: a shallow COPY stops counting as vacuous (a shipped defect)",
      "sameness.py",
@@ -541,6 +566,19 @@ MUTATIONS = [
 # --------------------------------------------------------------------------- #
 
 MUTATIONS += [
+    # ---- the JSON report says the same thing the prose one does -------------- #
+    ("js verdicts: the JSON exit code is computed apart from the Report's",
+     "verdicts.js",
+     """    exit_code: error ? 2 : built.exitCode(),""",
+     """    exit_code: error ? 2 : 0,"""),
+    ("js verdicts: keys stop being sorted, so the two halves print different documents",
+     "verdicts.js",
+     """  for (const key of Object.keys(value).sort()) out[key] = sorted(value[key]);""",
+     """  for (const key of Object.keys(value)) out[key] = sorted(value[key]);"""),
+    ("js cli: this half claims it checked the baseline for stale lines",
+     "cli.js",
+     """      complete: false,""",
+     """      complete: true,"""),
     # ---- one function object is one function -------------------------------- #
     ("js probe: two names for ONE function object are a pair again (a shipped defect)",
      "probe.js",
