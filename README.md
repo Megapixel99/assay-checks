@@ -140,12 +140,14 @@ assay why src/format.py::humanize                          # ...and if it was no
 assay accept --reason "read them; merging needs the router change"   # accept what you have read
 assay cross src/format.py::humanize src/ui.mjs::pretty --with assay-js   # across the boundary
 assay search --stdin --in src/ lib/ < draft.py             # ...before it is a file
+assay why --stdin < draft.py                               # ...and whether it can be searched for at all
 
 # JavaScript: the same commands, and a reference is FILE::NAME in either language
 assay scan src/
 assay pair src/slug.js::slugify src/url.js::toSlug
 assay search src/slug.js::slugify --in src/ lib/
 assay search --stdin --in src/ lib/ < draft.js
+assay why --stdin < draft.js
 ```
 
 **`--stdin` is what "search before you generate" actually needs.** A `FILE::NAME`
@@ -154,7 +156,27 @@ the file first, which is the thing you were trying to find out whether to write.
 arrives on stdin is a **snippet parsed as a module**, not a bare function: it may carry
 the imports and helpers the function needs, exactly as the file it is about to become
 would. Two definitions in one snippet and `--name` says which, because picking one
-would make the tool answer about code nobody asked about.
+would make the tool answer about code nobody asked about. `assay why` takes the same
+two ways in, because it is the same question asked one step earlier: writing the file
+first in order to be told the file was never the problem is what `--stdin` exists to
+avoid.
+
+**A query the ladder cannot tell apart is a `look`, never a `none`.** The census files
+every function it cannot discriminate under *not probed*, so a constant or a projection
+can only fail to find the other constants and projections — the match was never
+possible, and printing the clean result there would say *we found none* where the truth
+is *we never looked*:
+
+```
+$ assay search --stdin --in src/ lib/ < draft.py
+       the tree was not searched: the census excludes every function this ladder cannot tell apart, so a match was never possible
+  look     <stdin>::k — not discriminated by the ladder
+           1 distinct returned value across the 31 rungs that answered, and 2 is the minimum — as far as this ladder can see it is a constant
+```
+
+It is the same answer `assay why` gives about the same vector, from the same code — the
+two commands cannot disagree about it. A query the ladder *can* discriminate still gets
+the ordinary `same none`, which means the tree really was searched.
 
 ## The pair no differential test covers: one function, two languages
 
@@ -286,8 +308,9 @@ $ assay why src/slug.js::slugify
   ok       src/slug.js::slugify — probed on arity1/v3: 29 of 29 rungs answered, 23 distinct value(s)
 ```
 
-It never produces a finding: it reports what the tool did, and decides nothing. It also
-splits the one reason the census cannot split — `not discriminated by the ladder` covers
+It never produces a finding: it reports what the tool did, and decides nothing. `--stdin`
+asks it about a snippet instead of a name, with `--name` picking one definition out of
+several, exactly as `search` does. It also splits the one reason the census cannot split — `not discriminated by the ladder` covers
 a **constant**, a **projection**, and a function the ladder **never reached**, and those
 need a wider ladder, a different function, and inputs of another shape respectively.
 

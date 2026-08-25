@@ -15,6 +15,61 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## Unreleased
+
+**A MINOR bump when it lands, and the rule at the top says why:** `why` grows two flags
+and `search` reports a case it used to print as a clean result, so a tree green on 0.4.0
+may show a new `look`. Nothing is removed and no exit code moves — a `look` has never
+failed a run — but two invocations that used to be accepted are now errors, and both
+were flags or arguments the tool parsed and ignored.
+
+### `search` checks its own query, and stops calling `none` what it never looked for
+
+`assay search` matched its query's vector against the census and, on no hit, printed the
+clean result:
+
+```
+same   none — nothing in the tree matched <ref>'s outcome vector
+       which is not proof that nothing answers it; see Limits
+```
+
+For a **query the ladder cannot discriminate** — a constant, a projection, or a vector
+that raised on every rung — that line was never true. `collect` files exactly those
+functions under *not probed*, so a constant query can only fail to find the other
+constants: the match was never possible and the tree was never really searched. No false
+positive was ever possible either, which is why this was a reporting defect rather than
+a wrong answer, and it landed on the **highest-traffic path**. `--stdin` is *search
+before you generate*, so the person reading that line is about to write the function.
+
+`search` now applies the same `discrimination_detail` check `why` does, and reports a
+non-discriminating query as a `look` with the reason the census cannot give:
+
+```
+       the tree was not searched: the census excludes every function this ladder cannot tell apart, so a match was never possible
+  look     <stdin>::k — not discriminated by the ladder
+           1 distinct returned value across the 31 rungs that answered, and 2 is the minimum — as far as this ladder can see it is a constant
+```
+
+**ONE DECIDER, not two that agree by hand.** The `look` is written in one place per half
+and both commands go through it, because the defect being fixed *was* the two of them
+answering one question differently — and a sentence kept in step by hand is how they get
+back there. Exit codes are unchanged: a `look` never fails a run, and a query the ladder
+*can* discriminate still gets the ordinary `same none`.
+
+### `assay why --stdin`, for symmetry
+
+`why` takes a snippet on stdin, with `--name` picking one definition out of several,
+exactly as `search` does. It is the same question asked one step earlier, and answering
+it only for code already on disk meant writing the file first in order to be told the
+file was never the problem. Both commands now resolve their query through one place, so
+`--name` without `--stdin`, `--stdin` with a `FILE::NAME`, and a second reference are
+errors in both halves and for both commands rather than in some of the four.
+
+Two consequences worth naming: `search` inherits `why`'s three-way resolution failure —
+no such file, a file that does not parse, a file with no such function, instead of one
+`cannot resolve` that sends you to none of them — and `assay why` with no argument now
+says `why needs a FILE::NAME or --stdin`.
+
 ## 0.4.0
 
 **A MINOR bump, and the rule at the top says why:** the purity gate now refuses files

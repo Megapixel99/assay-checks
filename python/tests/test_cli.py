@@ -495,6 +495,166 @@ class WhyOneFunction(unittest.TestCase):
         self.assertIn("FILE::NAME", text)
 
 
+class SearchThatCouldNotHaveMATCHED(unittest.TestCase):
+    """A query the ladder cannot discriminate, which `search` used to call `none`.
+
+    `collect` files every function the ladder cannot tell apart under skipped, so a
+    constant query can only fail to find the other constants: the match was never
+    possible, and the tree was never really searched. Printing the clean `same none`
+    there states the one thing this tool refuses to state — found none, where the
+    truth is never looked. `why` already answered this question about the same vector,
+    so `search` gives the same answer from the same function.
+
+    THE COST LANDS ON THE BUSIEST PATH. `--stdin` is search before you generate, so
+    the person reading that line is about to write the function.
+    """
+
+    CONSTANT = "def k(n):\n    return 7\n"
+    PROJECTION = "def p(n):\n    return n\n"
+    RAISES = "def r(n):\n    return n.no_such_attribute\n"
+    TREE = {"m.py": "def only(n):\n    return n * 3 + 1\n"}
+
+    def search(self, snippet):
+        return run_stdin(snippet, "search", "--stdin", "--in", tree(self.TREE))
+
+    def test_a_CONSTANT_query_is_a_look_rather_than_a_clean_none(self):
+        code, text = self.search(self.CONSTANT)
+        self.assertEqual(code, 0, text)
+        self.assertIn("not discriminated by the ladder", text)
+        self.assertIn("it is a constant", text)
+        self.assertNotIn("nothing in the tree matched", text)
+
+    def test_a_PROJECTION_query_is_told_apart_from_a_constant(self):
+        """The two need opposite fixes — a wider ladder, or a different function — and
+        `search` inherits that split rather than repeating the decision."""
+        code, text = self.search(self.PROJECTION)
+        self.assertEqual(code, 0, text)
+        self.assertIn("a projection", text)
+        self.assertNotIn("it is a constant", text)
+        self.assertNotIn("nothing in the tree matched", text)
+
+    def test_a_query_that_RAISED_EVERYWHERE_is_not_called_a_constant(self):
+        _code, text = self.search(self.RAISES)
+        self.assertIn("raised on all", text)
+        self.assertNotIn("it is a constant", text)
+
+    def test_it_says_the_tree_was_NOT_searched(self):
+        """"We found none" and "we never looked" are different claims. This is the
+        second way not to look, and it used to print as the first."""
+        _code, text = self.search(self.CONSTANT)
+        self.assertIn("the tree was not searched", text)
+
+    def test_a_DISCRIMINATING_query_still_gets_the_clean_none(self):
+        """The check must not swallow the result it was added to protect: a real
+        search that really found nothing still says so."""
+        code, text = self.search("def q(n):\n    return n - 17\n")
+        self.assertEqual(code, 0, text)
+        self.assertIn("nothing in the tree matched", text)
+        self.assertNotIn("not discriminated by the ladder", text)
+
+    def test_a_FILE_NAME_query_gets_the_SAME_answer_as_a_snippet(self):
+        """The two ways in differ in where the text came from and nowhere else."""
+        root = tree({"m.py": self.CONSTANT})
+        code, text = run("search", os.path.join(root, "m.py") + "::k", "--in", root)
+        self.assertEqual(code, 0, text)
+        self.assertIn("not discriminated by the ladder", text)
+        self.assertIn("it is a constant", text)
+
+    def test_search_and_why_give_ONE_answer_for_ONE_function(self):
+        """The defect this replaced was the two of them disagreeing: `why` said the
+        ladder could not see the function and `search`, on the same vector, printed
+        the result that means a clean sweep."""
+        root = tree({"m.py": self.PROJECTION})
+        ref = os.path.join(root, "m.py") + "::p"
+        _c, searched = run("search", ref, "--in", root)
+        _w, asked = run("why", ref)
+        line = "%s — not discriminated by the ladder" % ref
+        self.assertIn(line, searched)
+        self.assertIn(line, asked)
+        for text in (searched, asked):
+            self.assertIn("a projection: everywhere it answered", text)
+
+    def test_the_verdict_IS_a_look_rather_than_an_ok_that_reads_as_clean(self):
+        """The whole answer is the verdict. An `ok` carrying the same sentence says
+        the tool decided and found nothing wrong, which is the claim it must not make
+        — and it would read identically in the prose the eye skims."""
+        root = tree({"m.py": self.CONSTANT})
+        _code, text = run("--json", "search", os.path.join(root, "m.py") + "::k",
+                          "--in", root)
+        items = json.loads(text)["items"]
+        undiscriminated = [i for i in items
+                           if "not discriminated by the ladder" in i["message"]]
+        self.assertEqual(len(undiscriminated), 1, items)
+        self.assertEqual(undiscriminated[0]["verdict"], "look")
+
+    def test_a_look_here_NEVER_fails_the_run(self):
+        for snippet in (self.CONSTANT, self.PROJECTION, self.RAISES):
+            code, text = self.search(snippet)
+            self.assertEqual(code, 0, text)
+
+
+class WhyFromStdin(unittest.TestCase):
+    """`assay why --stdin` — the same question, about code that is not a file yet.
+
+    `search --stdin` has to answer it on the way, so asking it directly should not
+    require inventing a file: writing the file first in order to be told the file was
+    never the problem is the shape `--stdin` exists to avoid.
+    """
+
+    def test_a_snippet_gets_the_same_answer_as_the_file_it_will_become(self):
+        source = "def constant(x):\n    return 1\n"
+        root = tree({"m.py": source})
+        _c, from_file = run("why", os.path.join(root, "m.py") + "::constant")
+        _s, from_stdin = run_stdin(source, "why", "--stdin")
+        for text in (from_file, from_stdin):
+            self.assertIn("not discriminated by the ladder", text)
+            self.assertIn("it is a constant", text)
+        self.assertIn("<stdin>::constant", from_stdin)
+
+    def test_a_PROBED_snippet_says_so_rather_than_staying_silent(self):
+        code, text = run_stdin("def double(x):\n    return x + x\n", "why", "--stdin")
+        self.assertEqual(code, 0, text)
+        self.assertIn("probed on arity1/", text)
+
+    def test_a_GATE_that_refused_a_snippet_is_named(self):
+        code, text = run_stdin("import os\n\ndef f(x):\n    return os.getcwd() + x\n",
+                               "why", "--stdin")
+        self.assertEqual(code, 0, text)
+        self.assertIn("touches os", text)
+
+    def test_name_picks_one_function_out_of_a_snippet(self):
+        code, text = run_stdin("def a(x):\n    return x + 1\n\n\n"
+                               "def b(x):\n    return x * 2\n",
+                               "why", "--stdin", "--name", "b")
+        self.assertEqual(code, 0, text)
+        self.assertIn("<stdin>::b", text)
+        self.assertNotIn("<stdin>::a", text)
+
+    def test_an_AMBIGUOUS_snippet_is_refused_rather_than_guessed(self):
+        code, text = run_stdin("def a(x):\n    return x + 1\n\n\n"
+                               "def b(x):\n    return x * 2\n", "why", "--stdin")
+        self.assertEqual(code, 2)
+        self.assertIn("name one with --name", text)
+
+    def test_neither_stdin_nor_a_reference_exits_2_and_names_BOTH_ways_in(self):
+        code, text = run("why")
+        self.assertEqual(code, 2)
+        self.assertIn("why needs a FILE::NAME or --stdin", text)
+
+    def test_stdin_and_a_reference_are_two_queries_and_exit_2(self):
+        code, text = run_stdin("def a(x):\n    return x\n", "why", "--stdin",
+                               "m.py::a")
+        self.assertEqual(code, 2)
+        self.assertIn("two different queries", text)
+
+    def test_name_without_stdin_is_an_ERROR_rather_than_ignored(self):
+        """A flag that is accepted, documented and inert is the defect this CLI
+        already carries two docstrings about."""
+        code, text = run("why", "--name", "a", "m.py::a")
+        self.assertEqual(code, 2)
+        self.assertIn("--name selects a function inside a --stdin snippet", text)
+
+
 class ConfigWiring(unittest.TestCase):
 
     def test_a_baseline_entry_turns_a_finding_into_a_pass(self):

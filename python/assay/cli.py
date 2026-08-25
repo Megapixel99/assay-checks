@@ -2,7 +2,7 @@
 
     could those checks have failed?      assay runners | anchors | diff | all
     does the tree already answer this?   assay scan | pair | search
-    why was my function not probed?      assay why FILE::NAME
+    why was my function not probed?      assay why FILE::NAME | assay why --stdin
     ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
     I have read this one and accept it   assay accept --reason "..." [LINE]
 
@@ -326,6 +326,66 @@ def cmd_pair(args, config, out):
     return _finish(args, report, config, out)
 
 
+def _undiscriminated(report, func, vector):
+    """Report the `look` that says the ladder could not tell this function apart.
+
+    True when it did, and nothing was decided. ONE PLACE FOR ONE ANSWER, because `why`
+    and `search` are asking the same question of the same vector — and the defect this
+    replaced was the two of them answering it differently. `search` deduced nothing and
+    printed the clean `same none`; `why`, on the identical function, said the ladder
+    could not see it. Two deciders that can disagree is the shape of defect this
+    package exists to report, and a sentence kept in step by hand is how they get there.
+    """
+    detail = discrimination_detail(vector, ladder(len(func.params)))
+    if detail is None:
+        return False
+    report.look("%s — not discriminated by the ladder" % func.ref, func.ref, detail)
+    return True
+
+
+def _query(args, out):
+    """The function this command is asking about: (Func, None) or (None, exit code).
+
+    Two ways in, and they are not interchangeable. A FILE::NAME names something that
+    already exists; `--stdin` takes something that does not exist yet, which is the
+    case `search` is named for — SEARCH BEFORE YOU GENERATE cannot mean "first write
+    the file".
+
+    `why` TAKES THE SAME TWO, because it is the same question asked one step earlier.
+    A snippet is exactly where "why was my function not probed?" is worth asking, and
+    answering it only for code already on disk would mean writing the file first in
+    order to be told the file was never the problem.
+
+    A FLAG THAT DOES NOT APPLY IS AN ERROR RATHER THAN A NO-OP. `--name` picks one
+    definition out of a snippet, so with a FILE::NAME it has nothing to pick and
+    accepting it quietly would leave a flag that is documented, parsed and inert.
+
+    `resolve_why` RATHER THAN `resolve`, on both commands. "cannot resolve" collapses
+    three answers — no such file, a file that does not parse, a file with no such
+    function — into one sentence that sends you to none of the three.
+    """
+    if args.name is not None and not args.stdin:
+        return None, _fail(
+            args, out,
+            "--name selects a function inside a --stdin snippet; a FILE::NAME "
+            "already names one")
+    if args.stdin:
+        if args.ref:
+            return None, _fail(args, out, "--stdin and a FILE::NAME are two "
+                                          "different queries; give one")
+        query, why = resolve_source(sys.stdin.read(), args.name)
+        if query is None:
+            return None, _fail(args, out, why)
+        return query, None
+    if not args.ref:
+        return None, _fail(args, out,
+                           "%s needs a FILE::NAME or --stdin" % args.cmd)
+    query, unresolved = resolve_why(args.ref)
+    if query is None:
+        return None, _fail(args, out, unresolved)
+    return query, None
+
+
 def cmd_why(args, config, out):
     """The census, for one name: which gate refused THIS function.
 
@@ -340,10 +400,14 @@ def cmd_why(args, config, out):
     an `ok` — and an `ok` here is printed rather than left silent for the same reason
     every other one is, because "it was probed" and "nothing looked at it" are
     different claims and only one of them is evidence.
+
+    `--stdin` ASKS IT ABOUT A SNIPPET, the same way `search` does. `search --stdin` is
+    the high-traffic path — you ask before you write — and this is the direct form of
+    the question that path has to answer on the way.
     """
-    func, unresolved = resolve_why(args.ref)
+    func, code = _query(args, out)
     if func is None:
-        return _fail(args, out, unresolved)
+        return code
     report = Report()
     vector, refused = probe(func)
     if vector is None:
@@ -351,12 +415,9 @@ def cmd_why(args, config, out):
                     "refused before the ladder, so it is in no bucket and can pair "
                     "with nothing")
         return _finish(args, report, config, out)
-    inputs = ladder(len(func.params))
-    detail = discrimination_detail(vector, inputs)
-    if detail is not None:
-        report.look("%s — not discriminated by the ladder" % func.ref, func.ref, detail)
+    if _undiscriminated(report, func, vector):
         return _finish(args, report, config, out)
-    answered, distinct = discriminating(vector, inputs)
+    answered, distinct = discriminating(vector, ladder(len(func.params)))
     report.ok("%s — probed on %s: %d of %d rungs answered, %d distinct value(s)"
               % (func.ref, ladder_key(func), answered, len(vector), distinct),
               func.ref)
@@ -543,40 +604,22 @@ def cmd_cross(args, config, out):
     return _finish(args, report, config, out)
 
 
-def _query(args, out):
-    """The function `search` is asking about: (Func, None) or (None, exit code).
-
-    Two ways in, and they are not interchangeable. A FILE::NAME names something that
-    already exists; `--stdin` takes something that does not exist yet, which is the
-    case the command is named for — SEARCH BEFORE YOU GENERATE cannot mean "first
-    write the file".
-
-    A FLAG THAT DOES NOT APPLY IS AN ERROR RATHER THAN A NO-OP. `--name` picks one
-    definition out of a snippet, so with a FILE::NAME it has nothing to pick and
-    accepting it quietly would leave a flag that is documented, parsed and inert.
-    """
-    if args.name is not None and not args.stdin:
-        return None, _fail(
-            args, out,
-            "--name selects a function inside a --stdin snippet; a FILE::NAME "
-            "already names one")
-    if args.stdin:
-        if args.ref:
-            return None, _fail(args, out, "--stdin and a FILE::NAME are two "
-                                          "different queries; give one")
-        query, why = resolve_source(sys.stdin.read(), args.name)
-        if query is None:
-            return None, _fail(args, out, why)
-        return query, None
-    if not args.ref:
-        return None, _fail(args, out, "search needs a FILE::NAME or --stdin")
-    query = resolve(args.ref)
-    if query is None:
-        return None, _fail(args, out, "cannot resolve %s" % args.ref)
-    return query, None
-
-
 def cmd_search(args, config, out):
+    """Does the tree already answer this? — and never `none` when nobody looked.
+
+    THERE ARE TWO WAYS NOT TO SEARCH and only one of them used to be reported. A query
+    refused before the ladder is obvious: no vector, nothing to match, and the command
+    says so. A query the ladder cannot DISCRIMINATE is the quiet one — it has a vector,
+    the matching runs, and it matches nothing, because `collect` files every function
+    the ladder cannot tell apart under skipped and a constant can therefore only fail
+    to find the other constants. The tool then printed `same none`, which is the clean
+    result, for a search that was never capable of a hit.
+
+    So the same check `assay why` applies is applied here, from the same function, and
+    a non-discriminating query is a `look`. "We found none" and "we never looked" are
+    different claims, and this is the path where the difference costs the most: the
+    person reading it is about to write the function.
+    """
     query, code = _query(args, out)
     if query is None:
         return code
@@ -586,6 +629,11 @@ def cmd_search(args, config, out):
         report.look("%s — %s" % (query.ref, why), query.ref)
         report.note("       the tree was not searched, because this function could "
                     "not be probed")
+        return _finish(args, report, config, out)
+    if _undiscriminated(report, query, vector):
+        report.note("       the tree was not searched: the census excludes every "
+                    "function this ladder cannot tell apart, so a match was never "
+                    "possible")
         return _finish(args, report, config, out)
     scan = collect(args.into)
     key = ladder_key(query)
@@ -695,7 +743,11 @@ def build_parser():
 
     p = sub.add_parser("why", parents=[_common()],
                        help="which gate refused this function, or that it was probed")
-    p.add_argument("ref", metavar="FILE::NAME")
+    p.add_argument("ref", metavar="FILE::NAME", nargs="?")
+    p.add_argument("--stdin", action="store_true",
+                   help="read the function from stdin, before it is a file")
+    p.add_argument("--name", default=None,
+                   help="which function in a --stdin snippet to ask about")
 
     p = sub.add_parser("probe", parents=[_common()],
                        help="one function's cross-language vector, as JSON on stdout")
