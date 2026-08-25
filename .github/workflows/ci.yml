@@ -148,11 +148,10 @@ jobs:
     # Separate job so the fast feedback above is never held up behind it.
     runs-on: ubuntu-latest
     # THE COST IS (mutations × suite), PER HALF. Every mutation runs a whole suite from
-    # scratch, so the wall clock is 104 Python mutations at about twenty-five seconds
-    # plus 73 JavaScript ones at about twenty — roughly an hour. It was half again as
-    # much until the probe stopped importing `asyncio` on every spawn; the table itself
-    # roughly doubled when the cross-language half, the seventh runner property and the
-    # baseline work arrived.
+    # scratch, so the wall clock is 104 Python mutations plus 78 JavaScript ones, each
+    # paying its half's suite in full. A measured run of the whole table took 28
+    # minutes; it was 93 before the probe stopped importing `asyncio` on every spawn
+    # and the Python suite started running its classes in parallel.
     #
     # Raised rather than sampled. A `--only` filter exists and prints PARTIAL RUN when
     # it is used, because a tally over the mutations you had time for reads exactly

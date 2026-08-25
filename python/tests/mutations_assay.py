@@ -1313,6 +1313,17 @@ def main(argv=None):
                     help="run only mutations whose label contains this substring")
     args = ap.parse_args(argv)
 
+    # LINE BUFFERED, BECAUSE SILENCE HERE READS AS A HANG. Python switches to an
+    # 8KB block buffer the moment stdout is not a terminal, which is every CI log:
+    # this run printed nothing for its first 15m49s, then 8190 bytes at once, and a
+    # job that shows no output for a quarter of an hour is indistinguishable from a
+    # job that never started — the same conflation this whole file is about. One
+    # line per mutation is the progress report; it has to leave the process.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except AttributeError:                                    # pragma: no cover
+        pass                                                  # Python < 3.7
+
     table = [m for m in MUTATIONS if args.only.lower() in m[0].lower()]
     if args.only:
         print("PARTIAL RUN — %d of %d mutations match %r; scored against what RAN\n"

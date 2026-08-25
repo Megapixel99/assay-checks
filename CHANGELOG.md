@@ -58,6 +58,19 @@ absolutely and needs no particular working directory, so it is given a scratch o
 probed function calling `writeFileSync('a', ...)` can no longer reach the tree it was
 pointed at.
 
+### The suites got about five times faster
+
+`run_tests.py` runs one process per `TestCase` class. The suite is almost entirely
+waiting — a probe is a child process per function — so the cores sat idle through all
+of it: **25.4s serial against 4.9s in parallel**. The output contract is unchanged,
+because `mutations_assay.py` reads this suite's stdout to decide whether it RAN.
+
+The mutation runner is also line-buffered now. Python switches to an 8KB block buffer
+the moment stdout is not a terminal, so a measured CI run printed **nothing for its
+first 15m49s**, then 8190 bytes at once. A job that shows no output for a quarter of an
+hour cannot be told from one that never started, which is the conflation this whole
+package is about. The full table now runs in about 28 minutes, against 93 before.
+
 ## 0.3.1 (unreleased, folded into 0.4.0)
 
 **A PATCH bump, and the rule at the top says why:** nothing here touches the CLI

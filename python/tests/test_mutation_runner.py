@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""The mutation runner's own harness, driven directly.
+"""The harnesses themselves, driven directly.
 
 `mutations_assay.py` is a SUBJECT of `assay runners` and audits itself against the six
 properties. These are the pieces of it that a mutation cannot reach, because breaking
-them stops the runner rather than a guard it tests.
+them stops the runner rather than a guard it tests. `run_tests.py` is here for the same
+reason: it is what RUNS the mutation runner's suites, so a mutation cannot observe it
+breaking — a broken runner reports DID NOT RUN for everything, which is refused rather
+than scored, and the table would go quiet all at once.
 """
 
 import os
@@ -15,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import mutations_assay as M  # noqa: E402
+import run_tests as R  # noqa: E402
 
 
 class SuiteThatHangs(unittest.TestCase):
@@ -59,3 +63,41 @@ class SuiteThatHangs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TheSuiteRunner(unittest.TestCase):
+    """`run_tests.py` runs one process per TestCase class. What that must not change."""
+
+    def test_every_discovered_test_belongs_to_exactly_one_class(self):
+        """The partition is the whole basis of the count.
+
+        A test discovery finds but `classes()` does not name would never be dispatched
+        to a worker, and the summary would report a total the run never covered — a
+        suite that quietly got smaller, which is the shape of defect this package
+        exists to report rather than commit.
+        """
+        found = R.classes(R.suite())
+        self.assertEqual(sum(found.values()), R.suite().countTestCases())
+        self.assertTrue(found, "no classes discovered, so this check matched nothing")
+
+    def test_a_class_that_will_not_LOAD_is_an_error_and_not_an_exception(self):
+        """One unloadable class must not take the other thirty-seven down with it.
+
+        Letting it raise inside the pool ends the whole run, and a run that ended is
+        reported as DID NOT RUN — which the mutation runner refuses to score. The
+        failure would be real and the report would be that there wasn't one.
+        """
+        ran, failures, errors = R.run_class("tests.no_such_module.NoSuchClass")
+        # `loadTestsFromName` does not raise for this: unittest substitutes a synthetic
+        # `_FailedTest` that reports the import problem when it is run. Either way what
+        # matters here is the same — it comes back as a REPORTED error rather than an
+        # exception out of the worker, so the other classes still get their turn.
+        self.assertEqual(failures, [])
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(ran, 1)
+
+    def test_a_class_that_runs_reports_what_it_ran(self):
+        """The other direction, so this cannot pass by reporting nothing for everything."""
+        ran, failures, errors = R.run_class("test_verdicts.Rendering")
+        self.assertGreater(ran, 0)
+        self.assertEqual((failures, errors), ([], []))
