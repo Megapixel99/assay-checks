@@ -632,8 +632,18 @@ class TheTwoHalvesAgree(unittest.TestCase):
         because that is the call they feed. A half that took a different column would
         report a different set of dead anchors for one repository.
         """
-        self.assertIn("found.append(parts[-2].value)", py("anchors.py"))
-        self.assertIn("found.push(parts[parts.length - 2])", js("anchors.js"))
+        self.assertIn("found.append(anchor_column(parts).value)", py("anchors.py"))
+        self.assertIn("found.push(anchorColumn(parts))", js("anchors.js"))
+        # ...and the column rule itself, which is where the second-to-last default
+        # now lives. A half that disambiguated the two four-column shapes while the
+        # other did not would report a different set of dead anchors for one
+        # repository, which is the whole reason this test exists.
+        self.assertIn("while len(trimmed) > 3 and METADATA_COLUMN.match("
+                      "trimmed[-1].value):", py("anchors.py"))
+        self.assertIn("while (trimmed.length > 3 && METADATA_COLUMN.test("
+                      "trimmed[trimmed.length - 1]))", js("anchors.js"))
+        self.assertIn("return trimmed[-2]", py("anchors.py"))
+        self.assertIn("return trimmed[trimmed.length - 2];", js("anchors.js"))
         # ...and both bound the readable shapes the same way, so an entry one half
         # offers as unreadable is not silently guessed at by the other.
         self.assertIn("if 2 <= len(parts) <= 4:", py("anchors.py"))

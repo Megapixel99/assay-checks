@@ -69,6 +69,35 @@ test('the anchor is the SECOND-TO-LAST string, in both documented shapes', () =>
   assert.deepEqual(four.found, ['  return x + 1;']);
 });
 
+test('a DECLARED TEST column does not shift the anchor onto the replacement', () => {
+  // The third four-column shape: `(label, old, new, expectedTest)`, a table naming the
+  // check each mutation must redden so that "something failed" and "the check that
+  // covers this failed" stay different claims. Reading the second-to-last column there
+  // lands on the REPLACEMENT, which matches nothing by construction — so every entry
+  // becomes a dead-anchor finding on a harness that is perfectly healthy.
+  const { found } = anchorsOf([
+    ['a label here', '  return x + 1;', '  return x - 1;', 'handleAddsOne'],
+  ]);
+  assert.deepEqual(found, ['  return x + 1;']);
+});
+
+test('a four-column table ending in CODE still reads the third column', () => {
+  // The other direction, which is what stops the rule above from being a position
+  // swap: the target-column shape ends in a replacement rather than a name.
+  const { found } = anchorsOf([
+    ['a label', 'target.js', '  return x + 1;', '  return x - 1;'],
+  ]);
+  assert.deepEqual(found, ['  return x + 1;']);
+});
+
+test('a THREE-column entry ending in an identifier is left alone', () => {
+  // Deliberately not disambiguated: a replacement that happens to be a bare identifier
+  // is ordinary in a three-column table, and re-reading those would trade a false
+  // finding on one shape for a false finding on another.
+  const { found } = anchorsOf([['label', '  return x + 1;', 'pass']]);
+  assert.deepEqual(found, ['  return x + 1;']);
+});
+
 test('a table shape it cannot read is OFFERED, not guessed at', () => {
   // Counting the wrong things precisely is worse than counting fewer things: an
   // earlier Python version took every string long enough to look like code, and half

@@ -71,11 +71,34 @@ const SOURCE = /\.(py|js|mjs|cjs)$/;
  * and one genuinely dead anchor sat invisible among them. Counting the wrong things
  * precisely is worse than counting fewer things.
  */
+// A METADATA column: a declared test name, a suite name, a section flag — anything a
+// harness carries so a mutation can say WHICH check must go red or WHERE to run it,
+// rather than "something failed". One bare word: an identifier or a flag, no
+// whitespace and no code punctuation. A REPLACEMENT is code.
+const METADATA_COLUMN = /^-{0,2}[A-Za-z_][A-Za-z0-9_.-]*$/;
+
+// `parts[parts.length - 2]` is right whenever the last column is the REPLACEMENT,
+// which covers `(label, old, new)` and `(label, target, old, new)`. It is wrong for
+// every shape carrying something AFTER the replacement — a declared test name, a
+// section flag — where it lands on the replacement, which matches nothing by
+// construction, so a healthy harness becomes a page of dead-anchor findings.
+//
+// Trailing metadata is dropped rather than each shape enumerated. THE STRIP STOPS AT
+// THREE COLUMNS: `("label", code, "pass")` is an ordinary three-column mutation whose
+// replacement is a bare word, and stripping there would put the anchor on the LABEL.
+function anchorColumn(parts) {
+  const trimmed = parts.slice();
+  while (trimmed.length > 3 && METADATA_COLUMN.test(trimmed[trimmed.length - 1])) {
+    trimmed.pop();
+  }
+  return trimmed[trimmed.length - 2];
+}
+
 export function anchorsOf(table) {
   const found = [];
   const unreadable = [];
   for (const parts of table) {
-    if (parts.length >= 2 && parts.length <= 4) found.push(parts[parts.length - 2]);
+    if (parts.length >= 2 && parts.length <= 4) found.push(anchorColumn(parts));
     else if (parts.length > 4) unreadable.push(parts[0]);
   }
   return { found, unreadable };

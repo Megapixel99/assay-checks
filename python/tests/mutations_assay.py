@@ -633,7 +633,7 @@ MUTATIONS = [
     ("anchors: every column is taken as an anchor, so labels are counted too",
      "anchors.py",
      '''            if 2 <= len(parts) <= 4:
-                found.append(parts[-2].value)''',
+                found.append(anchor_column(parts).value)''',
      '''            if 2 <= len(parts) <= 4:
                 found.extend(p.value for p in parts[:-1])'''),
     ("anchors: an anchor matching NOTHING goes back to being counted, not reported",
@@ -647,7 +647,23 @@ MUTATIONS = [
      '''            elif len(parts) > 4:
                 unreadable.append(parts[0].value)''',
      '''            elif len(parts) > 4:
-                found.append(parts[-2].value)'''),
+                found.append(anchor_column(parts).value)'''),
+
+    ("anchors: a declared-test column shifts the anchor onto the replacement",
+     "anchors.py",
+     '''    trimmed = list(parts)
+    while len(trimmed) > 3 and METADATA_COLUMN.match(trimmed[-1].value):
+        trimmed.pop()
+    return trimmed[-2]''',
+     '''    return parts[-2]'''),
+    ("anchors: the JavaScript half stops disambiguating and the two disagree",
+     "anchors.js",
+     '''  const trimmed = parts.slice();
+  while (trimmed.length > 3 && METADATA_COLUMN.test(trimmed[trimmed.length - 1])) {
+    trimmed.pop();
+  }
+  return trimmed[trimmed.length - 2];''',
+     '''  return parts[parts.length - 2];'''),
 
     # ---- config, read in both directions -------------------------------------- #
     ("config: broken JSON becomes an empty config rather than an error",
@@ -952,7 +968,7 @@ MUTATIONS += [
     # ---- anchors, read by IMPORT rather than by parse ------------------------- #
     ("js anchors: the anchor moves off the second-to-last column",
      "anchors.js",
-     """    if (parts.length >= 2 && parts.length <= 4) found.push(parts[parts.length - 2]);""",
+     """    if (parts.length >= 2 && parts.length <= 4) found.push(anchorColumn(parts));""",
      """    if (parts.length >= 2 && parts.length <= 4) found.push(parts[0]);"""),
     ("js anchors: a table shape it cannot read is guessed at rather than offered",
      "anchors.js",

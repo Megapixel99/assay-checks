@@ -56,6 +56,42 @@ class Parsing(unittest.TestCase):
             ' "    return x - 1")]\n'))
         self.assertIn("    return x + 1", found)
 
+    def test_a_DECLARED_TEST_column_does_not_shift_the_anchor(self):
+        """The third four-column shape: `(label, old, new, expected_test)`.
+
+        A harness that names the check each mutation must redden — so that "something
+        failed" and "the check that covers this failed" stay different claims — puts
+        that name last. Reading `parts[-2]` there lands on the REPLACEMENT, which
+        matches nothing by construction, so every entry in such a table becomes a
+        dead-anchor finding on a harness that is perfectly healthy.
+        """
+        found, _ = anchors_of(self.runner_path(
+            'MUTATIONS = [("a label here", "    return x + 1", "    return x - 1",'
+            ' "test_handle_adds_one")]\n'))
+        self.assertIn("    return x + 1", found)
+        self.assertNotIn("    return x - 1", found)
+
+    def test_a_four_column_table_ending_in_CODE_still_reads_the_third(self):
+        """The other direction, which is what stops the fix above from being a
+        position swap: the target-column shape ends in a replacement, not a name, and
+        its anchor is still the third column. This package's own runner is that
+        shape, so getting it wrong would be self-inflicted."""
+        found, _ = anchors_of(self.runner_path(
+            'MUTATIONS = [("a label here", "target.py", "    return x + 1",'
+            ' "    return x - 1")]\n'))
+        self.assertIn("    return x + 1", found)
+        self.assertNotIn("target.py", found)
+
+    def test_a_THREE_column_entry_ending_in_an_identifier_is_left_ALONE(self):
+        """Deliberately not disambiguated. `("label", code, "pass")` is an ordinary
+        three-column mutation whose replacement happens to be a bare identifier, and
+        re-reading it would trade a false finding on one shape for a false finding on
+        another. Measured on a real tree: one such entry across 34 harnesses."""
+        found, _ = anchors_of(self.runner_path(
+            'MUTATIONS = [("label", "    return x + 1", "pass")]\n'))
+        self.assertIn("    return x + 1", found)
+        self.assertNotIn("label", found)
+
     def test_a_table_under_another_name_is_ignored(self):
         found, _ = anchors_of(self.runner_path(
             'OTHER_LIST = [("label", "    return x + 1", "    return x - 1")]\n'))
