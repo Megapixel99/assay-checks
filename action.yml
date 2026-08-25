@@ -11,14 +11,17 @@ branding:
 inputs:
   command:
     description: >-
-      runners | anchors | diff | all | scan | pair | search.
-      `all` is the usual choice for a pull request.
+      runners | anchors | diff | all | scan | pair | search | why | probe | cross.
+      `all` is the usual choice for a pull request. `accept` is deliberately absent:
+      it WRITES to assay.json, and a CI job that edits its own config is a job whose
+      record nobody read.
     required: false
     default: all
   paths:
     description: >-
-      Paths for `scan`, or the FILE::NAME references for `pair` and `search`.
-      Ignored by the audit commands.
+      Paths for `scan`, the FILE::NAME references for `pair`, `search`, `why`, `probe`
+      and `cross`, or — with `all` — the paths to fold the sameness half in over, which
+      is what makes that run COMPLETE enough to call a baseline line stale.
     required: false
     default: ''
   root:
@@ -86,7 +89,18 @@ runs:
         case "${{ inputs.command }}" in
           diff|all) [ -n "$base" ] && args+=(--base "$base") ;;
         esac
-        [ -n "${{ inputs.paths }}" ] && args+=(${{ inputs.paths }})
+        # WITH `all`, PATHS MEAN `--scan`. `all` takes no positional arguments, and
+        # without the sameness half the run has not performed every audit able to
+        # produce a baseline line — so an untagged accepted finding can be fixed and
+        # its record left behind forever, which is the thing the baseline exists to
+        # stop. Every other command takes them as positionals.
+        if [ -n "${{ inputs.paths }}" ]; then
+          if [ "${{ inputs.command }}" = "all" ]; then
+            args+=(--scan ${{ inputs.paths }})
+          else
+            args+=(${{ inputs.paths }})
+          fi
+        fi
 
         if [ "${{ inputs.language }}" = "node" ]; then
           node "$ASSAY_HOME/js/src/cli.js" "${args[@]}" | tee assay-output.txt

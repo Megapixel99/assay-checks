@@ -586,7 +586,9 @@ it is checked.
   with: { fetch-depth: 0 }   # `diff` needs a base ref; a shallow clone has none
 - uses: Megapixel99/assay-checks@v0.2.2
   with:
-    command: all       # `all` is the run that can call a baseline entry stale
+    command: all       # every audit that can produce a baseline line
+    paths: src         # ...and with `all`, paths mean `--scan`: the sameness half
+                       # is what makes the run COMPLETE for an untagged entry
 
 # The same action runs the other half. `language` is `python` unless you say otherwise,
 # so a JavaScript project has to name it.

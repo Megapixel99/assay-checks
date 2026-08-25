@@ -24,9 +24,11 @@ export {
   guardsPerFile, targetsMentioned,
 } from './checks.js';
 export {
-  BASE_VALUES, LADDER_VERSION, MAX_ARITY, MIN_DISTINCT, Scan,
-  canon, collect, compare, discriminating, discriminationDetail, displayPath, fileRefusal,
-  functionRefusal, group, isProjection, jsFiles, ladder, ladderKey, outcomeOf,
-  probeFile, projections, reportScan,
+  BASE_VALUES, CROSS_VALUES, CROSS_VALUES_JSON, LADDER_VERSION, MAX_ARITY,
+  MIN_DISTINCT, PROBE_SCHEMA, Scan,
+  canon, collect, compare, compareCross, crossDiscriminating, crossKey, crossLadder,
+  crossOutcome, crossProjections, crossRender, discriminating, discriminationDetail,
+  displayPath, fileRefusal, functionRefusal, group, isProjection, jsFiles, ladder,
+  ladderKey, outcomeOf, probeFile, projections, reportScan,
 } from './sameness.js';
-export { run, parseArgs } from './cli.js';
+export { run, parseArgs, languageOf } from './cli.js';
