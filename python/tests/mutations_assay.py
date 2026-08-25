@@ -669,6 +669,12 @@ MUTATIONS += [
       === realpathSync(fileURLToPath(import.meta.url));""",
      """    return process.argv[1] === fileURLToPath(import.meta.url);"""),
 
+    # ---- the CLI answers for its own version ---------------------------------- #
+    ("js cli: `--version` stops answering, so the printed version is unchecked",
+     "cli.js",
+     """  if (opts.version) {""",
+     """  if (false) {"""),
+
     # ---- the config is judgment, and it is validated -------------------------- #
     ("js config: an exemption without a REASON is accepted",
      "config.js",
