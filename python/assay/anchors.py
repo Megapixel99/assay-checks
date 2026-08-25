@@ -30,9 +30,51 @@ Both forms are read here.
 
 import ast
 import os
+import re
 
 from .verdicts import Report
 from .checks import find_runners
+
+
+#: A METADATA column: a declared test name, a suite name, a section flag — anything a
+#: harness carries so a mutation can say WHICH check must go red or WHERE to run it,
+#: rather than "something failed". It is one bare word: an identifier or a flag, with
+#: no whitespace and no code punctuation. A REPLACEMENT is code, and that difference is
+#: the only thing separating the shapes, which is why this is a regex and not a
+#: position.
+METADATA_COLUMN = re.compile(r"^-{0,2}[A-Za-z_][A-Za-z0-9_.-]*$")
+
+
+def anchor_column(parts):
+    """The anchor, given one entry's string columns.
+
+    `parts[-2]` is right whenever the last column is the REPLACEMENT, which covers
+    `(label, old, new)` and `(label, target, old, new)`. It is wrong for every shape
+    that carries something AFTER the replacement:
+
+        (label, old, new, expected_test)     names the check that must go red
+        (label, target, old, new, section)   names where to run it
+
+    Both exist so that "something failed" and "the check that covers this failed" stay
+    different claims. There `parts[-2]` lands on the REPLACEMENT, which matches nothing
+    by construction — so every entry becomes a dead-anchor finding on a harness that is
+    perfectly healthy, and an audit that fires on correct code is one that gets
+    switched off.
+
+    SO TRAILING METADATA IS DROPPED BEFORE COUNTING BACK, rather than each shape being
+    enumerated: a metadata column is one bare word and a replacement is code, and that
+    distinction does not need to know how many columns precede it.
+
+    THE STRIP STOPS AT THREE COLUMNS, and that bound is the whole reason this is safe.
+    `("label", code, "pass")` is an ordinary three-column mutation whose replacement
+    happens to be a bare word; stripping there would leave `("label", code)` and put
+    the anchor on the LABEL, trading a false finding on one shape for a false finding
+    on another. Measured on a real tree: one such entry across 34 harnesses.
+    """
+    trimmed = list(parts)
+    while len(trimmed) > 3 and METADATA_COLUMN.match(trimmed[-1].value):
+        trimmed.pop()
+    return trimmed[-2]
 
 
 def anchors_of(path):
@@ -74,7 +116,7 @@ def anchors_of(path):
             # dead anchor sitting among them, invisible. Counting the wrong things
             # precisely is worse than counting fewer things.
             if 2 <= len(parts) <= 4:
-                found.append(parts[-2].value)
+                found.append(anchor_column(parts).value)
             elif len(parts) > 4:
                 unreadable.append(parts[0].value)
     return found, unreadable
