@@ -22,7 +22,7 @@
  * duplication this tool exists to find.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const CONFIG_NAMES = ['assay.json', '.assay.json'];
@@ -168,6 +168,37 @@ export function load(filePath = null, root = '.') {
     baseline.push(new Accepted(entry.line, entry.reason, producedBy));
   }
   return new Config({ runnerExempt, anchorExempt, baseline, filePath: target });
+}
+
+/**
+ * Append accepted findings to `file`, leaving every other key exactly as it was.
+ *
+ * IT REWRITES THE WHOLE DOCUMENT, because JSON cannot be appended to. Everything
+ * already in the file is read back and written out unchanged, and an existing
+ * bare-string entry stays a bare string: rewriting somebody's file into a shape they
+ * did not ask for is not the job of a command asked to add one line.
+ *
+ * `entries` is `{ line, reason, producedBy }`. A null `producedBy` writes no `from`
+ * rather than a `from` of null — a key whose value says nothing is a key a later
+ * reader has to decide the meaning of.
+ */
+export function writeBaseline(file, entries) {
+  let raw = {};
+  if (existsSync(file)) {
+    raw = JSON.parse(readFileSync(file, 'utf8'));
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new ConfigError(`${file} must hold a JSON object`);
+    }
+  }
+  const baseline = [...(raw.baseline || [])];
+  for (const { line, reason, producedBy } of entries) {
+    const entry = { line, reason };
+    if (producedBy) entry.from = producedBy;
+    baseline.push(entry);
+  }
+  raw.baseline = baseline;
+  writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`, 'utf8');
+  return file;
 }
 
 /**

@@ -127,6 +127,7 @@ assay scan src/                                            # discover
 assay pair src/format.py::humanize src/report.py::pretty   # the declared route, one pair
 assay search src/format.py::humanize --in src/ lib/        # search before you generate
 assay why src/format.py::humanize                          # ...and if it was not probed, why
+assay accept --reason "read them; merging needs the router change"   # accept what you have read
 assay search --stdin --in src/ lib/ < draft.py             # ...before it is a file
 
 # JavaScript: the same commands, and a reference is FILE::NAME in either language
@@ -262,6 +263,31 @@ cannot:
 `from` is what makes staleness a property of the **line** rather than of the run; see
 below. A `from` naming no real command is a hard error rather than a line nobody can
 ever check.
+
+**`assay accept` writes the entry for you**, and refuses to write the two entries you
+should not have:
+
+```bash
+assay accept --reason "one is the URL path form; merging needs the router change"
+assay accept "same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug" --reason "..."
+```
+
+With no line it takes every new finding; with one it takes that one. It fills in `from`
+from the audit that actually produced the line, so the check that fires it is the one
+that can later call it stale. `--reason` is required.
+
+It refuses **a `look`** — a look never fails the run, so the entry could never be
+suppressed and never expire, a record of nothing indistinguishable from a record of
+something already fixed. *This package shipped a config example that baselined a look.*
+It was corrected by editing the example, and an example is corrected once per copy of
+it; a command that cannot make the mistake is corrected once.
+
+It also refuses **a line nothing printed**, because an entry that does not fire is stale
+the moment it lands. Nothing is typed by hand: the entry is the finding's exact text,
+taken from the run, which is what makes whole-line matching safe.
+
+Put the line **before** the flags. `--scan` takes a list, and a line after it is one
+more path.
 
 **Every table is read in both directions.** An exemption naming a file that no longer
 exists is a finding. A property name that does not exist is a finding. A baseline line
@@ -421,6 +447,7 @@ your tree, point the tool at the files you trust rather than at the whole reposi
 |---|---|---|
 | `scan` / `pair` / `search` | yes | yes |
 | `why` | yes | yes, and the answer is often the FILE gate |
+| `accept` | yes | yes |
 | `runners` | yes | yes, with a weaker `dead-vs-real` (see below) |
 | `diff` | yes | yes |
 | `anchors` | yes, by **parse** | yes, by **import** |

@@ -360,6 +360,39 @@ class TheTwoHalvesAgree(unittest.TestCase):
         found = set(re.findall(r"case '([a-z]+)':", js("cli.js")))
         self.assertEqual(found, set(COMMANDS))
 
+    def test_both_halves_REFUSE_to_baseline_a_look(self):
+        """The 0.2.2 changelog records shipping a config example that baselined a
+        `look`. A look never fails the run, so the line can never be suppressed and can
+        never expire — a record of nothing, indistinguishable from a record of
+        something already fixed. An example is fixed once per copy of it; a command
+        that cannot make the mistake is fixed once, and it has to refuse in BOTH
+        binaries or the same paste is accepted by one of them."""
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn("`look` never fails the run", source)
+            self.assertIn("stale the moment it lands", source)
+
+    def test_both_halves_write_the_same_three_baseline_KEYS(self):
+        """`assay accept` writes the file the other half then reads. A key one writes
+        and the other does not understand is a config that is valid to the binary that
+        produced it and a hard error to the one that runs next."""
+        self.assertIn('entry = {"line": line, "reason": reason}', py("config.py"))
+        self.assertIn("const entry = { line, reason };", js("config.js"))
+        self.assertIn('entry["from"] = produced_by', py("config.py"))
+        self.assertIn("entry.from = producedBy;", js("config.js"))
+
+    def test_both_halves_have_ONE_definition_of_a_complete_run(self):
+        """`all` needs it to say whether it may call a line stale; `accept` needs it to
+        write `from`. Two lists that had to agree about what "every audit" means would
+        be the duplication this package exists to find, and they would disagree in
+        silence: `accept` would tag a line with a command `all` no longer performs, and
+        that line could then never be called stale."""
+        self.assertIn("_audit_everything(args, config, report)", py("cli.py"))
+        self.assertIn("auditEverything(root, opts, config, report)", js("cli.js"))
+        # ...and each half CALLS it exactly twice, from `all` and from `accept`. A
+        # third call site would be a third opinion about what a complete run is.
+        self.assertEqual(py("cli.py").count("= _audit_everything("), 2)
+        self.assertEqual(js("cli.js").count("= await auditEverything("), 2)
+
     def test_the_ladder_VERSION_matches(self):
         """A vector produced by one half and compared by the other must come from the
         same ladder, and the version string is what says so."""

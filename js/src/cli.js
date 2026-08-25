@@ -5,6 +5,7 @@
  *     could those checks have failed?      assay runners | anchors | diff | all
  *     does the tree already answer this?   assay scan | pair | search
  *     why was my function not probed?      assay why FILE::NAME
+ *     I have read this one and accept it   assay accept --reason "..." [LINE]
  *
  * EXIT CODES, identical for every subcommand, because scripts depend on them more than
  * on anything printed:
@@ -36,7 +37,9 @@ import { fileURLToPath } from 'node:url';
 
 import { auditAnchors } from './anchors.js';
 import { auditDiff, auditRunners, checkExemptions } from './checks.js';
-import { applyBaseline, ConfigError, load } from './config.js';
+import {
+  applyBaseline, CONFIG_NAMES, ConfigError, load, writeBaseline,
+} from './config.js';
 import {
   collect, compare, discriminating, discriminationDetail, displayPath, fileRefusal,
   group, jsFiles, ladder, ladderKey, probeFile, reportScan, Scan, SNIPPET_PATH,
@@ -52,6 +55,7 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] <command>
   diff [--base REF]           does this change carry the checks it needs?
   all  [--base REF]           runners + anchors + diff
        [--scan PATH...]       ...and the sameness half over these paths
+  accept [LINE] --reason R    write a finding into the baseline, with a reason
   scan PATH...                discover functions that answer the same question
   pair FILE::NAME FILE::NAME  compare two named functions
   search FILE::NAME --in DIR  does the tree already answer this?
@@ -70,6 +74,7 @@ export function parseArgs(argv) {
   const opts = {
     root: '.', config: null, quiet: false, base: 'origin/main',
     cmd: null, positional: [], into: [], scan: [], stdin: false, name: null,
+    reason: null,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -79,6 +84,7 @@ export function parseArgs(argv) {
     else if (arg === '--root') { i += 1; opts.root = argv[i]; }
     else if (arg === '--config') { i += 1; opts.config = argv[i]; }
     else if (arg === '--base') { i += 1; opts.base = argv[i]; }
+    else if (arg === '--reason') { i += 1; opts.reason = argv[i]; }
     else if (arg === '--name') { i += 1; opts.name = argv[i]; }
     else if (arg === '--in' || arg === '--scan') {
       const target = arg === '--in' ? opts.into : opts.scan;
@@ -239,6 +245,51 @@ async function whyRef(ref, report) {
   return { answered: true };
 }
 
+/**
+ * Every audit, folded into `report`. Returns `{ families, performed }`.
+ *
+ * ONE PLACE KNOWS WHAT A COMPLETE RUN IS, and `accept` is why it has to be one. `all`
+ * needs the list to say whether it may call a line stale; `accept` needs it to write
+ * `from` on the entries it adds. Two lists that had to agree about what "every audit"
+ * means would be the exact duplication this package exists to find, and the way they
+ * would disagree is silent: `accept` would tag a line with a command `all` no longer
+ * performs, and that line could then never be called stale.
+ *
+ * `--scan PATH` folds the sameness half in. WITHOUT IT THE RUN DID NOT PERFORM THAT
+ * HALF, and saying otherwise is how a `same answer` line gets called stale on a clean
+ * tree — so `scan` joins the performed set only when a scan actually ran.
+ */
+async function auditEverything(root, opts, config, report) {
+  const families = new Map();
+  const performed = [];
+  // A SEPARATE REPORT PER AUDIT, so a finding can be attributed to the audit that
+  // produced it. Reading it back off the shared report afterwards would mean guessing
+  // from the message text, which is a parser of our own output.
+  const perform = async (name, audit) => {
+    const sub = new Report();
+    await audit(sub);
+    for (const item of sub.findings) {
+      if (!families.has(item.message)) families.set(item.message, name);
+    }
+    report.extend(sub);
+    performed.push(name);
+  };
+  await perform('runners', (rep) => {
+    auditRunners(root, config, rep);
+    checkExemptions(root, config, rep);
+  });
+  await perform('anchors', (rep) => auditAnchors(root, config, rep));
+  await perform('diff', (rep) => auditDiff(root, opts.base, config, rep));
+  if (opts.scan.length) {
+    await perform('scan', async (rep) => {
+      const scan = await collect(opts.scan);
+      group(scan);
+      reportScan(scan, rep);
+    });
+  }
+  return { families, performed };
+}
+
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 
 /**
@@ -370,22 +421,51 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       return finish(report, config, write, verbose, ['diff']);
 
     case 'all': {
-      auditRunners(root, config, report);
-      checkExemptions(root, config, report);
-      await auditAnchors(root, config, report);
-      auditDiff(root, opts.base, config, report);
-      // `--scan PATH` folds the sameness half into the same run and the same report,
-      // as it does on the Python side. WITHOUT IT THIS RUN DID NOT PERFORM THE SAMENESS
-      // HALF, and saying otherwise is how a `same answer` line gets called stale on a
-      // clean tree — so `scan` joins the performed set only when a scan actually ran.
-      const performed = ['runners', 'anchors', 'diff'];
-      if (opts.scan.length) {
-        const scan = await collect(opts.scan);
-        group(scan);
-        reportScan(scan, report);
-        performed.push('scan');
-      }
+      const { performed } = await auditEverything(root, opts, config, report);
       return finish(report, config, write, verbose, performed);
+    }
+
+    case 'accept': {
+      if (!opts.reason) {
+        write('assay: accept needs --reason. An acceptance without one cannot be told '
+          + 'from an oversight,\n       and the baseline is the table that accumulates '
+          + 'most and rots first.\n');
+        return 2;
+      }
+      const { families } = await auditEverything(root, opts, config, report);
+      const known = new Set(config.baselineLines);
+      const fired = new Set(report.findings.map((i) => i.message));
+      const line = opts.positional[0];
+      let chosen;
+      if (line !== undefined) {
+        if (known.has(line)) { write(`assay: already in the baseline: ${line}\n`); return 2; }
+        if (report.looks.some((i) => i.message === line)) {
+          write('assay: that line is a `look`. '
+            + 'A `look` never fails the run, so there is nothing\n'
+            + '       to accept: baselining one writes a record that can never match '
+            + 'and\n       never expire.\n');
+          return 2;
+        }
+        if (!fired.has(line)) {
+          write('assay: nothing in this run printed that line. Accepting it would '
+            + 'write an entry\n'
+            + '       that is stale the moment it lands — paste a `finding` exactly '
+            + 'as it was\n       printed.\n');
+          return 2;
+        }
+        chosen = [line];
+      } else {
+        chosen = report.findings.map((i) => i.message).filter((m) => !known.has(m));
+      }
+      if (!chosen.length) { write('assay: nothing new to accept.\n'); return 0; }
+      const file = config.path || path.join(root, CONFIG_NAMES[0]);
+      writeBaseline(file, chosen.map((l) => ({
+        line: l, reason: opts.reason, producedBy: families.get(l) || null,
+      })));
+      write(`assay: wrote ${chosen.length} `
+        + `${chosen.length === 1 ? 'entry' : 'entries'} to ${file}\n`);
+      for (const l of chosen) write(`  + [${families.get(l) || 'no from'}] ${l}\n`);
+      return 0;
     }
 
     case 'scan': {

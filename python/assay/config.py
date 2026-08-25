@@ -205,6 +205,37 @@ def load(path=None, root="."):
     return Config(runner, anchor, baseline, path)
 
 
+def write_baseline(path, entries):
+    """Append accepted findings to `path`, leaving every other key exactly as it was.
+
+    IT REWRITES THE WHOLE DOCUMENT, because JSON cannot be appended to. Everything
+    already in the file is read back and written out unchanged, and an existing
+    bare-string entry stays a bare string: rewriting somebody's file into a shape they
+    did not ask for is not the job of a command asked to add one line.
+
+    `entries` is (line, reason, produced_by). `produced_by` may be None, in which case
+    no `from` is written rather than a `from` of null — a key whose value says nothing
+    is a key a later reader has to decide the meaning of.
+    """
+    raw = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+        if not isinstance(raw, dict):
+            raise ConfigError("%s must hold a JSON object" % path)
+    baseline = list(raw.get("baseline", []))
+    for line, reason, produced_by in entries:
+        entry = {"line": line, "reason": reason}
+        if produced_by:
+            entry["from"] = produced_by
+        baseline.append(entry)
+    raw["baseline"] = baseline
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(raw, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    return path
+
+
 def apply_baseline(findings, accepted, performed=()):
     """(still_failing, stale, unchecked). Accepted findings pass; a stale one fails.
 

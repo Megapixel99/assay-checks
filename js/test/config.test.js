@@ -13,7 +13,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { Accepted, Config, ConfigError, applyBaseline, load } from '../src/config.js';
+import {
+  Accepted, Config, ConfigError, applyBaseline, load, writeBaseline,
+} from '../src/config.js';
 import { Item } from '../src/verdicts.js';
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -174,6 +176,50 @@ test('matching is on the exact message, not a prefix', () => {
   const [still] = applyBaseline(findings('problem in a.js'), accept('problem in'),
     EVERY);
   assert.equal(still.length, 1);
+});
+
+// --------------------------------------------------------------------------- //
+// writeBaseline — what `assay accept` puts in the file
+// --------------------------------------------------------------------------- //
+// Driven directly rather than only through the CLI, because the CLI can only reach
+// findings that HAVE a family: every audit names itself. The entry with no `from` is
+// reachable here and nowhere else, and it is the one the omit-the-key rule is about.
+
+test('writeBaseline writes the line, the reason and the family', () => {
+  const [, file] = writeConfig({});
+  writeBaseline(file, [{ line: 'a finding', reason: 'read it', producedBy: 'runners' }]);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).baseline,
+    [{ line: 'a finding', reason: 'read it', from: 'runners' }]);
+});
+
+test('no family writes NO KEY rather than a null', () => {
+  // A key whose value says nothing is a key a later reader has to decide the meaning
+  // of, and `load` already has a rule for an absent `from`.
+  const [, file] = writeConfig({});
+  writeBaseline(file, [{ line: 'a finding', reason: 'read it', producedBy: null }]);
+  const entry = JSON.parse(readFileSync(file, 'utf8')).baseline[0];
+  assert.ok(!('from' in entry));
+  assert.equal(load(file).baseline[0].producedBy, null);
+});
+
+test('writeBaseline APPENDS and leaves every other key alone', () => {
+  const [, file] = writeConfig({
+    runner_exempt: [{ path: 'a.js', reason: 'elsewhere' }],
+    baseline: ['pasted straight out of a run'],
+  });
+  writeBaseline(file, [{ line: 'a finding', reason: 'read it', producedBy: 'diff' }]);
+  const raw = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(raw.runner_exempt, [{ path: 'a.js', reason: 'elsewhere' }]);
+  assert.equal(raw.baseline[0], 'pasted straight out of a run');
+  assert.equal(raw.baseline[1].line, 'a finding');
+});
+
+test('what writeBaseline writes ROUND TRIPS through load', () => {
+  const [, file] = writeConfig({});
+  writeBaseline(file, [{ line: 'a finding', reason: 'read it', producedBy: 'anchors' }]);
+  const entry = load(file).baseline[0];
+  assert.deepEqual([entry.line, entry.reason, entry.producedBy],
+    ['a finding', 'read it', 'anchors']);
 });
 
 // --------------------------------------------------------------------------- //

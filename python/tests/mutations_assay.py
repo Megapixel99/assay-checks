@@ -549,6 +549,29 @@ MUTATIONS = [
      '''    still = [f for f in findings if f.message not in known]''',
      '''    still = [f for f in findings
              if not any(f.message.startswith(k) for k in known)]'''),
+    ("config: write_baseline drops every OTHER key in the file",
+     "config.py",
+     '''    raw["baseline"] = baseline''',
+     '''    raw = {"baseline": baseline}'''),
+    ("config: write_baseline writes a `from` of null rather than none at all",
+     "config.py",
+     '''        if produced_by:
+            entry["from"] = produced_by''',
+     '''        entry["from"] = produced_by
+        if False:
+            entry["from"] = produced_by'''),
+    ("cli: accept writes a `look` into the baseline (the 0.2.2 defect, automated)",
+     "cli.py",
+     '''        if args.line in {i.message for i in report.looks}:''',
+     '''        if False:'''),
+    ("cli: accept writes a line nothing printed, so the entry is born stale",
+     "cli.py",
+     '''        if args.line not in fired:''',
+     '''        if False:'''),
+    ("cli: accept writes an entry with no reason",
+     "cli.py",
+     '''    if not args.reason:''',
+     '''    if False:'''),
     ("config: a named config that is missing is silently ignored",
      "config.py",
      '''    if not os.path.exists(path):
@@ -606,8 +629,10 @@ MUTATIONS = [
                    ("runners", "anchors", "diff", "scan"))'''),
     ("cli: `all` without --scan claims it performed the sameness half",
      "cli.py",
-     '''    performed = ["runners", "anchors", "diff"]''',
-     '''    performed = ["runners", "anchors", "diff", "scan"]'''),
+     '''    return families, performed''',
+     '''    if "scan" not in performed:
+        performed.append("scan")
+    return families, performed'''),
     ("cli: the lines nobody could check are counted as `0 stale`",
      "cli.py",
      '''    if unchecked:
@@ -616,10 +641,10 @@ MUTATIONS = [
         why = {}'''),
     ("cli: `all` stops folding in the sameness half",
      "cli.py",
-     '''    scanned = getattr(args, "scan", None)
-    if scanned:''',
-     '''    scanned = None
-    if scanned:'''),
+     '''    if getattr(args, "scan", None):
+        perform("scan", scan_half)''',
+     '''    if False:
+        perform("scan", scan_half)'''),
     ("cli: a broken config is ignored rather than exiting 2",
      "cli.py",
      '''    except ConfigError as exc:
@@ -913,8 +938,35 @@ MUTATIONS += [
         ['runners', 'anchors', 'diff', 'scan']);"""),
     ("js cli: `all` without --scan claims it performed the sameness half",
      "cli.js",
-     """      const performed = ['runners', 'anchors', 'diff'];""",
-     """      const performed = ['runners', 'anchors', 'diff', 'scan'];"""),
+     """  return { families, performed };""",
+     """  if (!performed.includes('scan')) performed.push('scan');
+  return { families, performed };"""),
+    ("js cli: `all` stops folding in the sameness half",
+     "cli.js",
+     """  if (opts.scan.length) {
+    await perform('scan', async (rep) => {""",
+     """  if (false) {
+    await perform('scan', async (rep) => {"""),
+    ("js config: writeBaseline drops every OTHER key in the file",
+     "config.js",
+     """  raw.baseline = baseline;""",
+     """  raw = { baseline };"""),
+    ("js config: writeBaseline writes a `from` of null rather than none at all",
+     "config.js",
+     """    if (producedBy) entry.from = producedBy;""",
+     """    entry.from = producedBy;"""),
+    ("js cli: accept writes a `look` into the baseline (the 0.2.2 defect, automated)",
+     "cli.js",
+     """        if (report.looks.some((i) => i.message === line)) {""",
+     """        if (false) {"""),
+    ("js cli: accept writes a line nothing printed, so the entry is born stale",
+     "cli.js",
+     """        if (!fired.has(line)) {""",
+     """        if (false) {"""),
+    ("js cli: accept writes an entry with no reason",
+     "cli.js",
+     """      if (!opts.reason) {""",
+     """      if (false) {"""),
     ("js cli: the lines nobody could check are counted as `0 stale`",
      "cli.js",
      """  if (unchecked.length) {

@@ -10,7 +10,9 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -414,6 +416,124 @@ test('the package scans ITSELF clean', async () => {
   // scanned by its own scanner.
   const { code, text } = await cli('scan', path.join(ROOT, 'js', 'src'));
   assert.equal(code, 0, text);
+});
+
+// --------------------------------------------------------------------------- //
+// accept: the command that writes the baseline line for you
+// --------------------------------------------------------------------------- //
+// The 0.2.2 changelog records shipping a config example that baselined a `look`. A
+// look never fails the run, so the line could never be suppressed and could never
+// expire: a record of nothing, indistinguishable from a record of something already
+// fixed. An example is fixed once per copy of it; a command that cannot make the
+// mistake is fixed once.
+
+const HARNESS = "export const MUTATIONS = [['label', '  return x + 1;', '  return x - 1;']];\n";
+const UNREADABLE = "export const MUTATIONS = [['a label', 'b', 'c', 'd', 'e', 'f']];\n";
+const SIGTERM = 'mutations-x.js: no `sigterm` (SIGTERM does not run `finally`; '
+  + 'a kill leaves the tree broken)';
+
+const acceptProject = (body = HARNESS, config = null) => {
+  const files = { 'mutations-x.js': body };
+  if (config) files['assay.json'] = JSON.stringify(config);
+  return tree(files);
+};
+const written = (root) => JSON.parse(readFileSync(path.join(root, 'assay.json'), 'utf8'));
+
+test('accept REFUSES without a reason', async () => {
+  // The same rule an exemption follows: an acceptance without one cannot be told from
+  // an oversight, and this is the table that rots fastest.
+  const root = acceptProject();
+  const { code, text } = await cli('--root', root, 'accept', '--base', 'HEAD');
+  assert.equal(code, 2);
+  assert.match(text, /--reason/);
+  assert.ok(!existsSync(path.join(root, 'assay.json')));
+});
+
+test('accept writes the LINE, the REASON and what FIRES it', async () => {
+  const root = acceptProject();
+  const { code, text } = await cli('--root', root, 'accept', SIGTERM,
+    '--reason', 'a tempdir, so a kill leaves nothing mutated', '--base', 'HEAD');
+  assert.equal(code, 0, text);
+  assert.deepEqual(written(root).baseline, [{
+    line: SIGTERM,
+    reason: 'a tempdir, so a kill leaves nothing mutated',
+    from: 'runners',
+  }]);
+});
+
+test('what accept wrote is then SUPPRESSED by the audit that fires it', async () => {
+  // The round trip is the point: the entry is the finding's exact text, taken from the
+  // run rather than typed, which is what makes whole-line matching safe.
+  const root = acceptProject();
+  await cli('--root', root, 'accept', SIGTERM, '--reason', 'r', '--base', 'HEAD');
+  const { text } = await cli('--root', root, 'runners');
+  assert.match(text, /1 accepted/);
+  assert.ok(!text.split('FINDINGS').pop().includes(SIGTERM));
+});
+
+test('accept REFUSES a look', async () => {
+  const root = acceptProject(UNREADABLE);
+  const { text: anchorsText } = await cli('--root', root, 'anchors');
+  const look = anchorsText.split('\n').find((l) => l.includes('  look     '))
+    .split('look     ')[1].trim();
+  const { code, text } = await cli('--root', root, 'accept', look, '--reason', 'r',
+    '--base', 'HEAD');
+  assert.equal(code, 2);
+  assert.match(text, /`look` never fails the run/);
+  assert.ok(!existsSync(path.join(root, 'assay.json')));
+});
+
+test('accept REFUSES a line nothing printed', async () => {
+  // Accepting a line that does not fire writes an entry that is stale the moment it
+  // lands, and the file then arrives already claiming something untrue.
+  const root = acceptProject();
+  const { code, text } = await cli('--root', root, 'accept', 'a finding I invented',
+    '--reason', 'r', '--base', 'HEAD');
+  assert.equal(code, 2);
+  assert.match(text, /stale the moment it lands/);
+});
+
+test('accept REFUSES a line already accepted', async () => {
+  const root = acceptProject(HARNESS, {
+    baseline: [{ line: SIGTERM, reason: 'read it', from: 'runners' }],
+  });
+  const { code, text } = await cli('--root', root, 'accept', SIGTERM, '--reason', 'r',
+    '--base', 'HEAD');
+  assert.equal(code, 2);
+  assert.match(text, /already in the baseline/);
+});
+
+test('with no LINE, accept takes every NEW finding', async () => {
+  const root = acceptProject();
+  const { code } = await cli('--root', root, 'accept', '--reason', 'adopting this',
+    '--base', 'HEAD');
+  assert.equal(code, 0);
+  const entries = written(root).baseline;
+  assert.ok(entries.some((e) => e.line === SIGTERM));
+  assert.ok(entries.every((e) => e.reason === 'adopting this'));
+});
+
+test('accept leaves every OTHER key and every existing entry alone', async () => {
+  // Rewriting somebody's file into a shape they did not ask for is not the job of a
+  // command asked to add one line.
+  const root = acceptProject(HARNESS, {
+    runner_exempt: [{ path: 'other.js', reason: 'elsewhere' }],
+    baseline: ['a line pasted straight out of a run'],
+  });
+  await cli('--root', root, 'accept', SIGTERM, '--reason', 'r', '--base', 'HEAD');
+  const raw = written(root);
+  assert.deepEqual(raw.runner_exempt, [{ path: 'other.js', reason: 'elsewhere' }]);
+  assert.equal(raw.baseline[0], 'a line pasted straight out of a run');
+  assert.equal(raw.baseline[1].line, SIGTERM);
+});
+
+test('nothing new is not an error', async () => {
+  const root = acceptProject(HARNESS, { baseline: [] });
+  await cli('--root', root, 'accept', '--reason', 'r', '--base', 'HEAD');
+  const { code, text } = await cli('--root', root, 'accept', '--reason', 'r',
+    '--base', 'HEAD');
+  assert.equal(code, 0);
+  assert.match(text, /nothing new to accept/);
 });
 
 // --------------------------------------------------------------------------- //

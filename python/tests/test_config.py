@@ -16,7 +16,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from assay.config import (Accepted, Config, ConfigError,  # noqa: E402
-                         FAMILIES, apply_baseline, load)
+                         FAMILIES, apply_baseline, load,
+                         write_baseline)
 from assay.verdicts import Item  # noqa: E402
 
 
@@ -169,6 +170,55 @@ class Baseline(unittest.TestCase):
         still, _stale, _u = apply_baseline(self.items("problem in a.py"),
                                            self.accept("problem in"), self.EVERY)
         self.assertEqual(len(still), 1)
+
+
+class Writing(unittest.TestCase):
+    """`write_baseline` — what `assay accept` puts in the file.
+
+    Driven directly rather than only through the CLI, because the CLI can only reach
+    findings that HAVE a family: every audit names itself. The entry with no `from` is
+    reachable here and nowhere else, and it is the one the omit-the-key rule is about.
+    """
+
+    def test_it_writes_the_line_the_reason_and_the_family(self):
+        root = tempfile.mkdtemp()
+        path = os.path.join(root, "assay.json")
+        write_baseline(path, [("a finding", "read it", "runners")])
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["baseline"],
+                             [{"line": "a finding", "reason": "read it",
+                               "from": "runners"}])
+
+    def test_no_family_writes_NO_KEY_rather_than_a_null(self):
+        """A key whose value says nothing is a key a later reader has to decide the
+        meaning of, and `load` already has a rule for an absent `from`."""
+        root = tempfile.mkdtemp()
+        path = os.path.join(root, "assay.json")
+        write_baseline(path, [("a finding", "read it", None)])
+        with open(path, encoding="utf-8") as fh:
+            entry = json.load(fh)["baseline"][0]
+        self.assertNotIn("from", entry)
+        self.assertEqual(load(path).baseline[0].produced_by, None)
+
+    def test_it_APPENDS_and_leaves_every_other_key_alone(self):
+        """Rewriting somebody's file into a shape they did not ask for is not the job
+        of a command asked to add one line."""
+        _root, path = write_config({
+            "runner_exempt": [{"path": "a.py", "reason": "elsewhere"}],
+            "baseline": ["pasted straight out of a run"]})
+        write_baseline(path, [("a finding", "read it", "diff")])
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+        self.assertEqual(raw["runner_exempt"], [{"path": "a.py", "reason": "elsewhere"}])
+        self.assertEqual(raw["baseline"][0], "pasted straight out of a run")
+        self.assertEqual(raw["baseline"][1]["line"], "a finding")
+
+    def test_what_it_writes_ROUND_TRIPS_through_load(self):
+        _root, path = write_config({})
+        write_baseline(path, [("a finding", "read it", "anchors")])
+        entry = load(path).baseline[0]
+        self.assertEqual((entry.line, entry.reason, entry.produced_by),
+                         ("a finding", "read it", "anchors"))
 
 
 class StalenessIsPerLine(unittest.TestCase):

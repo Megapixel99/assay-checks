@@ -453,6 +453,121 @@ class ConfigWiring(unittest.TestCase):
         self.assertIn("assay.json", text)
 
 
+class Accept(unittest.TestCase):
+    """`assay accept` — the command that writes the baseline line for you.
+
+    THE 0.2.2 CHANGELOG RECORDS SHIPPING A CONFIG EXAMPLE THAT BASELINED A `look`. A
+    look never fails the run, so the line could never be suppressed and could never
+    expire: a record of nothing, indistinguishable from a record of something already
+    fixed. That was fixed by editing the example, and an example is fixed once per copy
+    of it. These drive the command that cannot make the mistake at all.
+    """
+
+    RUNNER = 'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'
+    UNREADABLE = 'MUTATIONS = [("a label", "b", "c", "d", "e", "f")]\n'
+    SIGTERM = ("mutations_x.py: no `sigterm` (SIGTERM does not run `finally`; "
+               "a kill leaves the tree broken)")
+
+    def project(self, body=None, config=None):
+        files = {"mutations_x.py": body if body is not None else self.RUNNER}
+        if config is not None:
+            files["assay.json"] = json.dumps(config)
+        return tree(files)
+
+    def written(self, root):
+        with open(os.path.join(root, "assay.json"), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_it_REFUSES_without_a_reason(self):
+        """The same rule an exemption follows. An acceptance without one cannot be
+        told from an oversight, and this is the table that rots fastest."""
+        root = self.project()
+        code, text = run("--root", root, "accept", "--base", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("--reason", text)
+        self.assertFalse(os.path.exists(os.path.join(root, "assay.json")))
+
+    def test_it_writes_the_LINE_the_REASON_and_what_FIRES_it(self):
+        root = self.project()
+        code, text = run("--root", root, "accept", self.SIGTERM,
+                         "--reason", "a tempdir, so a kill leaves nothing mutated",
+                         "--base", "HEAD")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.written(root)["baseline"], [{
+            "line": self.SIGTERM,
+            "reason": "a tempdir, so a kill leaves nothing mutated",
+            "from": "runners"}])
+
+    def test_what_it_wrote_is_then_SUPPRESSED_by_the_audit_that_fires_it(self):
+        """The round trip is the point: the entry is the finding's exact text, taken
+        from the run rather than typed, which is what makes whole-line matching safe."""
+        root = self.project()
+        run("--root", root, "accept", self.SIGTERM, "--reason", "r", "--base", "HEAD")
+        _code, text = run("--root", root, "runners")
+        self.assertIn("1 accepted", text)
+        self.assertNotIn(self.SIGTERM, text.split("FINDINGS")[-1])
+
+    def test_it_REFUSES_a_look(self):
+        """A `look` never fails the run, so there is nothing to accept — and a
+        baselined look is a record that can never match and never expire."""
+        root = self.project(self.UNREADABLE)
+        _c, anchors_text = run("--root", root, "anchors")
+        look = [l.split("look     ", 1)[1].strip()
+                for l in anchors_text.splitlines() if "  look     " in l][0]
+        code, text = run("--root", root, "accept", look, "--reason", "r",
+                         "--base", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("`look` never fails the run", text)
+        self.assertFalse(os.path.exists(os.path.join(root, "assay.json")))
+
+    def test_it_REFUSES_a_line_nothing_printed(self):
+        """Accepting a line that does not fire writes an entry that is stale the
+        moment it lands, and the file then arrives already claiming something untrue."""
+        root = self.project()
+        code, text = run("--root", root, "accept", "a finding I invented",
+                         "--reason", "r", "--base", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("stale the moment it lands", text)
+
+    def test_it_REFUSES_a_line_already_accepted(self):
+        root = self.project(config={"baseline": [
+            {"line": self.SIGTERM, "reason": "read it", "from": "runners"}]})
+        code, text = run("--root", root, "accept", self.SIGTERM, "--reason", "r",
+                         "--base", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("already in the baseline", text)
+
+    def test_with_no_LINE_it_accepts_every_NEW_finding(self):
+        root = self.project()
+        code, _text = run("--root", root, "accept", "--reason", "adopting this",
+                          "--base", "HEAD")
+        self.assertEqual(code, 0)
+        lines = [e["line"] for e in self.written(root)["baseline"]]
+        self.assertIn(self.SIGTERM, lines)
+        self.assertTrue(all(e["reason"] == "adopting this"
+                            for e in self.written(root)["baseline"]))
+
+    def test_it_leaves_every_OTHER_key_and_every_existing_entry_alone(self):
+        """Rewriting somebody's file into a shape they did not ask for is not the job
+        of a command asked to add one line."""
+        root = self.project(config={
+            "runner_exempt": [{"path": "other.py", "reason": "elsewhere"}],
+            "baseline": ["a line pasted straight out of a run"]})
+        run("--root", root, "accept", self.SIGTERM, "--reason", "r", "--base", "HEAD")
+        raw = self.written(root)
+        self.assertEqual(raw["runner_exempt"],
+                         [{"path": "other.py", "reason": "elsewhere"}])
+        self.assertEqual(raw["baseline"][0], "a line pasted straight out of a run")
+        self.assertEqual(raw["baseline"][1]["line"], self.SIGTERM)
+
+    def test_nothing_new_is_not_an_error(self):
+        root = self.project(config={"baseline": []})
+        run("--root", root, "accept", "--reason", "r", "--base", "HEAD")
+        code, text = run("--root", root, "accept", "--reason", "r", "--base", "HEAD")
+        self.assertEqual(code, 0)
+        self.assertIn("nothing new to accept", text)
+
+
 class AsASubprocess(unittest.TestCase):
     """The installed entry point, exercised the way a user would."""
 

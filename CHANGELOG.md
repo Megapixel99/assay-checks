@@ -35,6 +35,33 @@ adopts. In the object form `reason` is required, on the same terms an exemption'
 command that cannot produce a finding is a hard error rather than a line nobody can ever
 check — the same both-directions rule every other table here follows.
 
+### `assay accept`: a command that cannot baseline a `look`
+
+```bash
+assay accept --reason "one is the URL path form; merging needs the router change"
+assay accept "same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug" --reason "..."
+```
+
+With no line it takes every new finding; with one it takes that one. It fills in `from`
+from the audit that actually produced the line, so the check that fires it is the one
+that can later call it stale, and `--reason` is required.
+
+**It refuses a `look`.** A look never fails the run, so a baselined one could never be
+suppressed and never expire — a record of nothing, indistinguishable from a record of
+something already fixed. The 0.2.2 changelog records shipping a config example that
+baselined a look; it was corrected by editing the example, and an example is corrected
+once per copy of it.
+
+**It refuses a line nothing printed**, because an entry that does not fire is stale the
+moment it lands. Nothing is typed by hand either: the entry is the finding's exact text,
+taken from the run, which is what makes whole-line matching safe. Other keys in the file
+and existing bare-string entries are left exactly as they were.
+
+`all` and `accept` share one definition of what a complete run is. Two lists that had to
+agree about what "every audit" means would be the duplication this package exists to
+find, and they would disagree in silence: `accept` would tag a line with a command `all`
+no longer performs, and that line could then never be called stale.
+
 ### Per-line baseline staleness
 
 Staleness used to need `assay all`, because `assay runners` cannot produce a finding

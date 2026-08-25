@@ -3,6 +3,7 @@
     could those checks have failed?      assay runners | anchors | diff | all
     does the tree already answer this?   assay scan | pair | search
     why was my function not probed?      assay why FILE::NAME
+    I have read this one and accept it   assay accept --reason "..." [LINE]
 
 Both halves ask about work that ALREADY PASSES ITS TESTS, which is why neither is a
 linter and neither is a test runner. A green suite tells you the code did what the
@@ -28,7 +29,8 @@ import sys
 from . import __version__
 from .anchors import audit_anchors
 from .checks import audit_diff, audit_runners, check_exemptions
-from .config import ConfigError, apply_baseline, load
+from .config import (CONFIG_NAMES, ConfigError, apply_baseline, load,
+                     write_baseline)
 from .sameness import (collect, compare, discriminating, discrimination_detail,
                        group, ladder, ladder_key, probe, report_scan, resolve,
                        resolve_source, resolve_why)
@@ -109,28 +111,123 @@ def cmd_diff(args, config, out):
     return _finish(report, config, out, args.verbose, ("diff",))
 
 
-def cmd_all(args, config, out):
-    """Every audit in one run — and the only command that can call a baseline stale.
+def _audit_everything(args, config, report):
+    """Every audit, folded into `report`. Returns ({message: family}, performed).
 
-    `--scan PATH` folds the sameness half in. WITHOUT IT THIS RUN DID NOT PERFORM THE
-    SAMENESS HALF, and saying otherwise is how a `same answer` line gets called stale
-    on a clean tree — so `scan` joins the performed set only when a scan actually ran.
-    An untagged baseline line still needs every audit, which is what makes `--scan` the
-    difference between a complete run and a nearly complete one.
+    ONE PLACE KNOWS WHAT A COMPLETE RUN IS, and `assay accept` is why it has to be
+    one. `all` needs the list to say whether it may call a line stale; `accept` needs
+    it to write `from` on the entries it adds. Two lists that had to agree about what
+    "every audit" means would be the exact duplication this package exists to find,
+    and the way they would disagree is silent: `accept` would tag a line with a
+    command `all` no longer performs, and that line could then never be called stale.
+
+    `--scan PATH` folds the sameness half in. WITHOUT IT THE RUN DID NOT PERFORM THAT
+    HALF, and saying otherwise is how a `same answer` line gets called stale on a
+    clean tree — so `scan` joins the performed set only when a scan actually ran.
     """
-    report = Report()
-    audit_runners(args.root, config, report)
-    check_exemptions(args.root, config, report)
-    audit_anchors(args.root, config, report)
-    audit_diff(args.root, args.base, config, report)
-    performed = ["runners", "anchors", "diff"]
-    scanned = getattr(args, "scan", None)
-    if scanned:
-        scan = collect(scanned)
+    families, performed = {}, []
+
+    def perform(name, audit):
+        # A SEPARATE REPORT PER AUDIT, so a finding can be attributed to the audit that
+        # produced it. Reading it back off the shared report afterwards would mean
+        # guessing from the message text, which is a parser of our own output.
+        sub = Report()
+        audit(sub)
+        for item in sub.findings:
+            # FIRST WINS, and nothing here can currently produce the same message from
+            # two audits — so there is deliberately no mutation for this line. A
+            # mutation nothing can catch is a table entry claiming a guard is covered
+            # when nothing breaks it on purpose, which is the defect this runner
+            # exists to report.
+            families.setdefault(item.message, name)
+        report.extend(sub)
+        performed.append(name)
+
+    def runners(rep):
+        audit_runners(args.root, config, rep)
+        check_exemptions(args.root, config, rep)
+
+    def scan_half(rep):
+        scan = collect(args.scan)
         group(scan)
-        report_scan(scan, report)
-        performed.append("scan")
+        report_scan(scan, rep)
+
+    perform("runners", runners)
+    perform("anchors", lambda rep: audit_anchors(args.root, config, rep))
+    perform("diff", lambda rep: audit_diff(args.root, args.base, config, rep))
+    if getattr(args, "scan", None):
+        perform("scan", scan_half)
+    return families, performed
+
+
+def cmd_all(args, config, out):
+    """Every audit in one run — and, with `--scan`, the complete one."""
+    report = Report()
+    _families, performed = _audit_everything(args, config, report)
     return _finish(report, config, out, args.verbose, performed)
+
+
+def cmd_accept(args, config, out):
+    """Write a finding into the baseline, and refuse to write anything else.
+
+    THE 0.2.2 CHANGELOG RECORDS SHIPPING A CONFIG EXAMPLE THAT BASELINED A `look`.
+    A `look` never fails the run, so a line holding one can never be suppressed and
+    can never expire: it is a record of nothing, indistinguishable from a record of
+    something already fixed. That was fixed by editing the example — and an example is
+    fixed once per copy of it, while a command that cannot make the mistake is fixed
+    once. This refuses.
+
+    IT ACCEPTS ONLY WHAT IT JUST SAW FIRE, for the same reason. A line that does not
+    fire is stale the moment it is written, so the file would arrive already claiming
+    something untrue. Nothing here is typed by hand either: the entry is the finding's
+    exact text, taken from the run, which is what makes whole-line matching safe.
+
+    A partial run is fine here and that is not a loophole. Accepting is the direction
+    that is safe from any command — a line that fires is a line that fires — and the
+    `from` written beside it is the audit that produced it, so the check that fires it
+    is the one that can later call it stale.
+    """
+    if not args.reason:
+        out.write("assay: accept needs --reason. An acceptance without one cannot be "
+                  "told from an oversight,\n       and the baseline is the table that "
+                  "accumulates most and rots first.\n")
+        return 2
+    report = Report()
+    families, _performed = _audit_everything(args, config, report)
+    known = set(config.baseline_lines)
+    fired = {i.message for i in report.findings}
+
+    if args.line is not None:
+        if args.line in known:
+            out.write("assay: already in the baseline: %s\n" % args.line)
+            return 2
+        if args.line in {i.message for i in report.looks}:
+            out.write(
+                "assay: that line is a `look`. A `look` never fails the run, so there "
+                "is nothing\n       to accept: baselining one writes a record that can "
+                "never match and\n       never expire.\n")
+            return 2
+        if args.line not in fired:
+            out.write(
+                "assay: nothing in this run printed that line. Accepting it would "
+                "write an entry\n       that is stale the moment it lands — paste a "
+                "`finding` exactly as it was\n       printed.\n")
+            return 2
+        chosen = [args.line]
+    else:
+        chosen = [i.message for i in report.findings if i.message not in known]
+
+    if not chosen:
+        out.write("assay: nothing new to accept.\n")
+        return 0
+    path = config.path or os.path.join(args.root, CONFIG_NAMES[0])
+    write_baseline(path, [(line, args.reason, families.get(line))
+                          for line in chosen])
+    out.write("assay: wrote %d entr%s to %s\n"
+              % (len(chosen), "y" if len(chosen) == 1 else "ies", path))
+    for line in chosen:
+        out.write("  + [%s] %s\n" % (families.get(line) or "no from", line))
+    return 0
 
 
 def cmd_scan(args, config, out):
@@ -274,6 +371,7 @@ def cmd_search(args, config, out):
 
 COMMANDS = {
     "why": cmd_why,
+    "accept": cmd_accept,
     "runners": cmd_runners,
     "anchors": cmd_anchors,
     "diff": cmd_diff,
@@ -328,14 +426,21 @@ def build_parser():
     sub.add_parser("anchors", parents=[_common()],
                    help="every mutation anchor matches exactly once")
 
-    for name, helptext in (("diff", "does this change carry the checks it needs?"),
-                           ("all", "runners + anchors + diff")):
+    for name, helptext in (
+            ("diff", "does this change carry the checks it needs?"),
+            ("all", "runners + anchors + diff"),
+            ("accept", "write a finding into the baseline, with a reason")):
         p = sub.add_parser(name, parents=[_common()], help=helptext)
         p.add_argument("--base", default="origin/main",
                        help="ref to diff against (default origin/main)")
-        if name == "all":
+        if name in ("all", "accept"):
             p.add_argument("--scan", nargs="+",
                            help="also run the sameness half over these paths")
+        if name == "accept":
+            p.add_argument("line", nargs="?", metavar="LINE",
+                           help="one finding's exact text (default: every new one)")
+            p.add_argument("--reason", default=None,
+                           help="why you accepted it — required, and not decorative")
 
     p = sub.add_parser("scan", parents=[_common()],
                        help="discover functions that answer the same question")

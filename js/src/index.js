@@ -11,7 +11,10 @@
  */
 
 export { FINDING, LOOK, OK, Item, Report, render } from './verdicts.js';
-export { Config, ConfigError, applyBaseline, load as loadConfig } from './config.js';
+export {
+  Accepted, Config, ConfigError, FAMILIES, applyBaseline, load as loadConfig,
+  writeBaseline,
+} from './config.js';
 export {
   anchorsOf, auditAnchors, harnessPaths, readTable, sourceFiles,
 } from './anchors.js';
