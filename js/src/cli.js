@@ -107,24 +107,42 @@ export function parseArgs(argv) {
  * findings, because that direction is safe from any command: a line that fires is a
  * line that fires.
  *
+ * `performed` is what this run actually audited, so a baseline entry that names the
+ * command firing it can be answered by that command alone. Everything else is COUNTED
+ * as not checked rather than silently treated as fresh.
+ *
  * THIS HALF USED TO BE UNABLE TO HAVE A COMPLETE RUN AT ALL, because `anchors` was
  * Python-only, and it said so rather than printing `0 stale`. It now reads a mutation
- * table by importing it, so `assay all` here performs every audit and the caveat is
- * the same one the Python half carries.
+ * table by importing it, so `assay all` here performs every audit.
  */
-function finish(report, config, write, verbose, complete = false) {
+function baselineSummary(accepted, still, stale, unchecked) {
+  const parts = [`${accepted} accepted`, `${still.length} new`, `${stale.length} stale`];
+  if (unchecked.length) {
+    const why = new Map();
+    for (const entry of unchecked) {
+      const key = entry.producedBy || 'no `from`, so it needs `assay all`';
+      why.set(key, (why.get(key) || 0) + 1);
+    }
+    const named = [...why.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([k, n]) => `${k}: ${n}`).join('; ');
+    parts.push(`${unchecked.length} NOT checked for staleness (${named})`);
+  }
+  return parts.join(', ');
+}
+
+function finish(report, config, write, verbose, performed = []) {
   if (config.baseline.length) {
-    const [still, stale] = applyBaseline(report.findings, config.baseline);
+    const [still, stale, unchecked] = applyBaseline(report.findings, config.baseline,
+      performed);
     const accepted = report.findings.length - still.length;
     report.items = report.items.filter((i) => i.verdict !== FINDING).concat(still);
-    if (complete) {
-      for (const line of stale) {
-        report.finding(`baseline line no longer fires (fixed? then delete it): ${line}`);
-      }
+    for (const entry of stale) {
+      report.finding('baseline line no longer fires (fixed? then delete it): '
+        + `${entry.line}`);
     }
     if (verbose) {
-      write(`\nBASELINE ${config.path} — ${accepted} accepted, ${still.length} new, `
-        + `${complete ? `${stale.length} stale` : 'staleness needs `assay all`'}\n`);
+      write(`\nBASELINE ${config.path} — `
+        + `${baselineSummary(accepted, still, stale, unchecked)}\n`);
     }
   }
   if (verbose) write(`\n${'-'.repeat(72)}\n`);
@@ -330,7 +348,7 @@ export async function run(argv, write = (s) => process.stdout.write(s),
   switch (opts.cmd) {
     case 'anchors':
       await auditAnchors(root, config, report);
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, verbose, ['anchors']);
 
     case 'why': {
       if (opts.positional.length !== 1) {
@@ -345,11 +363,11 @@ export async function run(argv, write = (s) => process.stdout.write(s),
     case 'runners':
       auditRunners(root, config, report);
       checkExemptions(root, config, report);
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, verbose, ['runners']);
 
     case 'diff':
       auditDiff(root, opts.base, config, report);
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, verbose, ['diff']);
 
     case 'all': {
       auditRunners(root, config, report);
@@ -357,13 +375,17 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       await auditAnchors(root, config, report);
       auditDiff(root, opts.base, config, report);
       // `--scan PATH` folds the sameness half into the same run and the same report,
-      // as it does on the Python side. Without it `all` covers the check half only.
+      // as it does on the Python side. WITHOUT IT THIS RUN DID NOT PERFORM THE SAMENESS
+      // HALF, and saying otherwise is how a `same answer` line gets called stale on a
+      // clean tree — so `scan` joins the performed set only when a scan actually ran.
+      const performed = ['runners', 'anchors', 'diff'];
       if (opts.scan.length) {
         const scan = await collect(opts.scan);
         group(scan);
         reportScan(scan, report);
+        performed.push('scan');
       }
-      return finish(report, config, write, verbose, true);
+      return finish(report, config, write, verbose, performed);
     }
 
     case 'scan': {
@@ -374,7 +396,7 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       if (!scan.groups.length) {
         report.note('\nsame   none — no two probed functions share an outcome vector');
       }
-      return finish(report, config, write, verbose);
+      return finish(report, config, write, verbose, ['scan']);
     }
 
     case 'pair': {

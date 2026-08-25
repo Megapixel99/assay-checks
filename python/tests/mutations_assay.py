@@ -506,12 +506,44 @@ MUTATIONS = [
         return Config()'''),
     ("config: an exemption without a reason is accepted",
      "config.py",
-     '''            if not entry.get(field):''',
-     '''            if False:'''),
+     '''        for field in required:
+            if not entry.get(field):''',
+     '''        for field in required:
+            if False:'''),
+    ("config: a baseline entry in OBJECT form needs no reason",
+     "config.py",
+     '''        for field in ("line", "reason"):
+            if not entry.get(field):''',
+     '''        for field in ("line",):
+            if not entry.get(field):'''),
+    ("config: a baseline entry may name a command that cannot produce a finding",
+     "config.py",
+     '''        if produced_by is not None and produced_by not in FAMILIES:''',
+     '''        if False:'''),
+    ("config: an object-form baseline entry stops being read at all",
+     "config.py",
+     '''        if not isinstance(entry, dict):
+            raise ConfigError("%s: a 'baseline' entry must be the finding's exact "
+                              "text, or an object carrying it as 'line'" % path)''',
+     '''        if True:
+            raise ConfigError("%s: a 'baseline' entry must be the finding's exact "
+                              "text, or an object carrying it as 'line'" % path)'''),
     ("config: a stale baseline line stops being reported",
      "config.py",
-     '''    stale = sorted(known - seen)''',
-     '''    stale = []'''),
+     '''        elif entry.produced_by in performed:
+            stale.append(entry)''',
+     '''        elif entry.produced_by in performed:
+            unchecked.append(entry)'''),
+    ("config: a line THIS RUN COULD NOT SEE is called stale anyway (cries wolf)",
+     "config.py",
+     '''        else:
+            unchecked.append(entry)''',
+     '''        else:
+            stale.append(entry)'''),
+    ("config: an untagged line is called stale by a PARTIAL run",
+     "config.py",
+     '''    complete = set(FAMILIES) <= performed''',
+     '''    complete = True'''),
     ("config: the baseline matches on a prefix rather than the exact message",
      "config.py",
      '''    still = [f for f in findings if f.message not in known]''',
@@ -567,12 +599,21 @@ MUTATIONS = [
      "cli.py",
      '''        report.ok("differs: %s — %s" % (pair, detail), first.ref)''',
      '''        report.finding("differs: %s — %s" % (pair, detail), first.ref)'''),
-    ("cli: a PARTIAL run calls a baseline entry stale (cries wolf at itself)",
+    ("cli: a command claims it performed every audit (cries wolf at itself)",
      "cli.py",
-     '''        if complete:
-            for line in stale:''',
-     '''        if True:
-            for line in stale:'''),
+     '''    return _finish(report, config, out, args.verbose, ("runners",))''',
+     '''    return _finish(report, config, out, args.verbose,
+                   ("runners", "anchors", "diff", "scan"))'''),
+    ("cli: `all` without --scan claims it performed the sameness half",
+     "cli.py",
+     '''    performed = ["runners", "anchors", "diff"]''',
+     '''    performed = ["runners", "anchors", "diff", "scan"]'''),
+    ("cli: the lines nobody could check are counted as `0 stale`",
+     "cli.py",
+     '''    if unchecked:
+        why = {}''',
+     '''    if False:
+        why = {}'''),
     ("cli: `all` stops folding in the sameness half",
      "cli.py",
      '''    scanned = getattr(args, "scan", None)
@@ -835,14 +876,51 @@ MUTATIONS += [
     # ---- the config is judgment, and it is validated -------------------------- #
     ("js config: an exemption without a REASON is accepted",
      "config.js",
-     """      if (!entry[field]) {""",
-     """      if (false) {"""),
+     """    for (const field of required) {
+      if (!entry[field]) {""",
+     """    for (const field of required) {
+      if (false) {"""),
+    ("js config: a baseline entry in OBJECT form needs no reason",
+     "config.js",
+     """    for (const field of ['line', 'reason']) {""",
+     """    for (const field of ['line']) {"""),
+    ("js config: a baseline entry may name a command that cannot produce a finding",
+     "config.js",
+     """    if (producedBy !== null && !FAMILIES.includes(producedBy)) {""",
+     """    if (false) {"""),
+    ("js config: an object-form baseline entry stops being read at all",
+     "config.js",
+     """    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {""",
+     """    if (true) {"""),
+    ("js config: a stale baseline line stops being reported",
+     "config.js",
+     """    else if (did.has(entry.producedBy)) stale.push(entry);""",
+     """    else if (did.has(entry.producedBy)) unchecked.push(entry);"""),
+    ("js config: a line THIS RUN COULD NOT SEE is called stale anyway (cries wolf)",
+     "config.js",
+     """    else unchecked.push(entry);""",
+     """    else stale.push(entry);"""),
+    ("js config: an untagged line is called stale by a PARTIAL run",
+     "config.js",
+     """  const complete = FAMILIES.every((f) => did.has(f));""",
+     """  const complete = true;"""),
 
     # ---- the baseline, and the cry-wolf failure ------------------------------- #
-    ("js cli: a PARTIAL run calls a baseline entry stale (cries wolf at itself)",
+    ("js cli: a command claims it performed every audit (cries wolf at itself)",
      "cli.js",
-     """function finish(report, config, write, verbose, complete = false) {""",
-     """function finish(report, config, write, verbose, complete = true) {"""),
+     """      return finish(report, config, write, verbose, ['runners']);""",
+     """      return finish(report, config, write, verbose,
+        ['runners', 'anchors', 'diff', 'scan']);"""),
+    ("js cli: `all` without --scan claims it performed the sameness half",
+     "cli.js",
+     """      const performed = ['runners', 'anchors', 'diff'];""",
+     """      const performed = ['runners', 'anchors', 'diff', 'scan'];"""),
+    ("js cli: the lines nobody could check are counted as `0 stale`",
+     "cli.js",
+     """  if (unchecked.length) {
+    const why = new Map();""",
+     """  if (false) {
+    const why = new Map();"""),
 ]
 
 

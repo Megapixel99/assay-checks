@@ -35,33 +35,56 @@ from .sameness import (collect, compare, discriminating, discrimination_detail,
 from .verdicts import FINDING, Report, render
 
 
-def _finish(report, config, out, verbose=True, complete=False):
+def _baseline_summary(accepted, still, stale, unchecked):
+    """The counts, and never a number that reads as a claim nobody checked.
+
+    `0 stale` from a run that could not have seen those lines fire reads as "nothing
+    is stale", which is a different claim from "this run never looked". So the entries
+    nobody could check are counted apart from the ones that were, and the reason each
+    was skipped is named — the same rule the census follows for functions it refused.
+    """
+    parts = ["%d accepted" % accepted, "%d new" % len(still), "%d stale" % len(stale)]
+    if unchecked:
+        why = {}
+        for entry in unchecked:
+            key = entry.produced_by or "no `from`, so it needs `assay all`"
+            why[key] = why.get(key, 0) + 1
+        parts.append("%d NOT checked for staleness (%s)"
+                     % (len(unchecked),
+                        "; ".join("%s: %d" % kv for kv in sorted(why.items()))))
+    return ", ".join(parts)
+
+
+def _finish(report, config, out, verbose=True, performed=()):
     """Apply the baseline, render, and return the exit code.
 
-    STALE DETECTION NEEDS A COMPLETE RUN, and getting this wrong made the tool cry
-    wolf at itself. A baseline line records a finding you have read and accepted; it
-    goes stale when it stops firing. But `assay runners` cannot produce a finding that
-    only `diff` reports, so checking staleness there flags every `diff` line as fixed —
-    the audit reporting a problem with its own config, on a clean tree, every run.
+    STALENESS IS PER LINE, and getting it wrong in either direction is a defect this
+    tool shipped. `assay runners` cannot produce a finding that only `diff` reports, so
+    checking staleness there once flagged every `diff` line as fixed — the audit
+    reporting a problem with its own config, on a clean tree, every run. The first fix
+    was to check staleness only from `assay all`: correct, and blunt enough that every
+    line in every other run went unchecked and the run printed a disclaimer where a
+    number belongs.
 
-    So a line that does not fire is only called stale when the run performed EVERY
-    audit that can produce one, which is `assay all`. Every command still suppresses
-    accepted findings, because that direction is safe from any command: a line that
-    fires is a line that fires.
+    `performed` is what this run actually audited, so a baseline entry that names the
+    command firing it can be answered by that command alone. Everything else is counted
+    as NOT CHECKED rather than silently treated as fresh.
+
+    Suppression is unconditional, because that direction is safe from any run: a line
+    that fires is a line that fires.
     """
     if config.baseline:
-        still, stale = apply_baseline(report.findings, config.baseline)
+        still, stale, unchecked = apply_baseline(report.findings, config.baseline,
+                                                 performed)
         accepted = len(report.findings) - len(still)
         report.items = [i for i in report.items if i.verdict != FINDING] + still
-        if complete:
-            for line in stale:
-                report.finding("baseline line no longer fires (fixed? then delete "
-                               "it): %s" % line)
+        for entry in stale:
+            report.finding("baseline line no longer fires (fixed? then delete "
+                           "it): %s" % entry.line)
         if verbose:
-            out.write("\nBASELINE %s — %d accepted, %d new, %s\n"
-                      % (config.path, accepted, len(still),
-                         "%d stale" % len(stale) if complete
-                         else "staleness needs `assay all`"))
+            out.write("\nBASELINE %s — %s\n"
+                      % (config.path,
+                         _baseline_summary(accepted, still, stale, unchecked)))
     if verbose:
         out.write("\n%s\n" % ("-" * 72))
     return render(report, out, verbose=verbose)
@@ -71,39 +94,43 @@ def cmd_runners(args, config, out):
     report = Report()
     audit_runners(args.root, config, report)
     check_exemptions(args.root, config, report)
-    return _finish(report, config, out, args.verbose)
+    return _finish(report, config, out, args.verbose, ("runners",))
 
 
 def cmd_anchors(args, config, out):
     report = Report()
     audit_anchors(args.root, config, report)
-    return _finish(report, config, out, args.verbose)
+    return _finish(report, config, out, args.verbose, ("anchors",))
 
 
 def cmd_diff(args, config, out):
     report = Report()
     audit_diff(args.root, args.base, config, report)
-    return _finish(report, config, out, args.verbose)
+    return _finish(report, config, out, args.verbose, ("diff",))
 
 
 def cmd_all(args, config, out):
     """Every audit in one run — and the only command that can call a baseline stale.
 
-    `--scan PATH` folds the sameness half in. Without it `all` covers the check half
-    only, so a baseline holding `same answer` lines would report them stale; the
-    completeness flag therefore tracks whether a scan actually ran.
+    `--scan PATH` folds the sameness half in. WITHOUT IT THIS RUN DID NOT PERFORM THE
+    SAMENESS HALF, and saying otherwise is how a `same answer` line gets called stale
+    on a clean tree — so `scan` joins the performed set only when a scan actually ran.
+    An untagged baseline line still needs every audit, which is what makes `--scan` the
+    difference between a complete run and a nearly complete one.
     """
     report = Report()
     audit_runners(args.root, config, report)
     check_exemptions(args.root, config, report)
     audit_anchors(args.root, config, report)
     audit_diff(args.root, args.base, config, report)
+    performed = ["runners", "anchors", "diff"]
     scanned = getattr(args, "scan", None)
     if scanned:
         scan = collect(scanned)
         group(scan)
         report_scan(scan, report)
-    return _finish(report, config, out, args.verbose, complete=True)
+        performed.append("scan")
+    return _finish(report, config, out, args.verbose, performed)
 
 
 def cmd_scan(args, config, out):
@@ -112,7 +139,7 @@ def cmd_scan(args, config, out):
     report = report_scan(scan)
     if not scan.groups:
         report.note("\nsame   none — no two probed functions share an outcome vector")
-    return _finish(report, config, out, args.verbose)
+    return _finish(report, config, out, args.verbose, ("scan",))
 
 
 def cmd_pair(args, config, out):

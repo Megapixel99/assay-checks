@@ -12,6 +12,57 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### A baseline entry can carry a `reason`, and the command that fires it
+
+`runner_exempt` requires a `reason` because **an exemption without one cannot be told
+from an oversight**. `baseline` was a bare list of strings and got no such treatment,
+though it is the table that accumulates fastest and rots first: a fixed finding leaves
+its line behind in silence.
+
+An entry is now the finding's exact text **or** an object carrying it as `line`:
+
+```json
+{"line": "same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug",
+ "reason": "one is the URL path form; merging them needs the router change first",
+ "from": "scan"}
+```
+
+The bare string stays legal, and that is not politeness about old configs: adopting this
+means pasting lines out of a run, and a format that refuses the paste is a format nobody
+adopts. In the object form `reason` is required, on the same terms an exemption's is.
+
+**`from` makes staleness a property of the line rather than of the run.** Naming a
+command that cannot produce a finding is a hard error rather than a line nobody can ever
+check — the same both-directions rule every other table here follows.
+
+### Per-line baseline staleness
+
+Staleness used to need `assay all`, because `assay runners` cannot produce a finding
+that only `diff` reports and calling one stale from a partial run flagged every other
+command's lines as fixed — the audit reporting a problem with its own config, on a clean
+tree, on every run. The fix was a whole-run flag: correct, and blunt enough to be its own
+problem. Every line in every other command went unchecked, and the run printed a
+disclaimer where a number belongs.
+
+A line that names the command firing it can be answered by that command alone. Each entry
+now lands in exactly one of three places:
+
+```
+BASELINE assay.json — 3 accepted, 0 new, 1 stale, 2 NOT checked for staleness
+                      (anchors: 1; no `from`, so it needs `assay all`: 1)
+```
+
+*Stale* is a line this run could have seen fire and did not. *Not checked* is one it
+could not have seen at all — **counted rather than folded into the stale number**,
+because `0 stale` from a run that never looked reads as "nothing is stale" and those are
+different claims. An untagged line keeps the old rule.
+
+**A defect this made visible: `assay all` without `--scan` claimed to be complete.** The
+docstring said the completeness flag tracked whether a scan had run; the code passed
+`complete=True` either way, so a `same answer` line in the baseline was called stale by a
+run that never scanned anything, on a clean tree. `scan` now joins the performed set only
+when a scan actually ran, and **`assay all --scan PATH` is the complete run**.
+
 ### `assay anchors` runs under Node, by IMPORT rather than by parse
 
 It used to exit 2 and point at PyPI, and the reason was sound: pulling a mutation table

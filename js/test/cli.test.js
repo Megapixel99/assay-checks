@@ -264,7 +264,63 @@ test('a PARTIAL run does not call a baseline entry stale', async () => {
   const { code, text } = await cli('--root', root, 'scan', root);
   assert.equal(code, 0, text);
   assert.doesNotMatch(text, /no longer fires/);
-  assert.match(text, /staleness needs/);
+  assert.match(text, /NOT checked for staleness/);
+});
+
+test('runners does not claim it performed every audit either', async () => {
+  // Driven per COMMAND rather than once: `performed` is a literal at each call site,
+  // so a command that claims more than it did is a defect one test cannot see. This
+  // one was NOT DETECTED until it existed.
+  const root = tree({
+    'assay.json': JSON.stringify({ baseline: ['a scan-only finding'] }),
+    'm.js': 'export function a(n) { return n * 2; }\n',
+  });
+  const { code, text } = await cli('--root', root, 'runners');
+  assert.equal(code, 0, text);
+  assert.doesNotMatch(text, /no longer fires/);
+  assert.match(text, /NOT checked for staleness/);
+});
+
+test('a line that NAMES its command is answered by that command', async () => {
+  // The point of `from`. `assay scan` knows perfectly well whether a `scan` finding
+  // fired, and needed a whole `assay all` to be allowed to say so.
+  const root = tree({
+    'assay.json': JSON.stringify({
+      baseline: [{ line: 'a scan finding long gone', reason: 'read it', from: 'scan' }],
+    }),
+    'm.js': 'export function a(n) { return n * 2; }\n',
+  });
+  const { code, text } = await cli('--root', root, 'scan', root);
+  assert.equal(code, 1, text);
+  assert.match(text, /no longer fires/);
+});
+
+test('a line from ANOTHER command is counted rather than called stale', async () => {
+  const root = tree({
+    'assay.json': JSON.stringify({
+      baseline: [{ line: 'an anchors finding', reason: 'read it', from: 'anchors' }],
+    }),
+    'm.js': 'export function a(n) { return n * 2; }\n',
+  });
+  const { code, text } = await cli('--root', root, 'scan', root);
+  assert.equal(code, 0, text);
+  assert.doesNotMatch(text, /no longer fires/);
+  assert.match(text, /NOT checked for staleness \(anchors: 1\)/);
+});
+
+test('all WITHOUT --scan does not claim it performed the sameness half', async () => {
+  const root = tree({
+    'assay.json': JSON.stringify({
+      baseline: [{ line: 'same answer (arity1/v3): a.js::x, b.js::y', reason: 'read them', from: 'scan' }],
+    }),
+    'm.js': 'export const x = 1;\n',
+  });
+  // The exit code is not asserted: a temp directory is not a git repository, so
+  // `diff` reports one of its own findings here and the run fails for a reason that
+  // has nothing to do with the baseline.
+  const { text } = await cli('--root', root, 'all', '--base', 'HEAD');
+  assert.doesNotMatch(text, /no longer fires/);
+  assert.match(text, /NOT checked for staleness \(scan: 1\)/);
 });
 
 test('...and `all` DOES call one stale, now that this half can run every audit', async () => {
@@ -276,7 +332,10 @@ test('...and `all` DOES call one stale, now that this half can run every audit',
     'assay.json': JSON.stringify({ baseline: ['a finding long gone'] }),
     'm.js': 'export function a(n) { return n * 2; }\n',
   });
-  const { code, text } = await cli('--root', root, 'all', '--base', 'HEAD');
+  // `--scan` is what makes the run complete: without it the sameness half did not
+  // run, so an UNTAGGED line — one that names no command — is still unchecked.
+  const { code, text } = await cli('--root', root, 'all', '--base', 'HEAD',
+    '--scan', root);
   assert.equal(code, 1, text);
   assert.match(text, /no longer fires/);
 });

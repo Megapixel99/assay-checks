@@ -182,14 +182,24 @@ class TheTwoHalvesAgree(unittest.TestCase):
             self.assertIn("unloadable", source)
             self.assertIn(member, source)
 
-    def test_both_halves_refuse_to_call_a_baseline_STALE_from_a_partial_run(self):
+    def test_both_halves_COUNT_the_baseline_lines_they_could_not_check(self):
         """The rule, not the wording: a line is only stale to a run that could have
-        seen it fire. Python says so from any command but `all`; the JavaScript half
-        says so from every command, because `anchors` is Python-only and no run there
-        performs every audit able to produce a baseline line. What must match is that
-        BOTH say it rather than printing a zero that reads as `nothing is stale`."""
+        seen it fire, and a run that could not see it says so rather than printing a
+        zero. `0 stale` from a run that never looked reads as "nothing is stale", and
+        those are different claims — the same reason `ok` is printed rather than left
+        silent everywhere else here."""
         for source in (py("cli.py"), js("cli.js")):
-            self.assertIn("staleness needs", source)
+            self.assertIn("NOT checked for staleness", source)
+
+    def test_both_halves_know_the_same_set_of_baseline_FAMILIES(self):
+        """`from` names the command that can produce a line, and the two halves have
+        to agree on what those are or one `assay.json` is valid to one binary and a
+        hard error to the other."""
+        from assay.config import FAMILIES                     # noqa: PLC0415
+
+        found = re.search(r"export const FAMILIES = \[([^\]]+)\]", js("config.js"))
+        names = tuple(re.findall(r"'([^']+)'", found.group(1)))
+        self.assertEqual(names, FAMILIES)
 
     def test_both_halves_call_the_same_EXTENSIONS_source(self):
         """The drift this caught: the JavaScript half audited `.mjs` and `.cjs` and

@@ -227,7 +227,11 @@ find.
   }],
   "baseline": [
     "test/mutate_legacy.py: no `evidence` (no failures reported and no test executed look identical)",
-    "same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug"
+    {
+      "line": "same answer (arity1/v3): src/slug.js::slugify, src/url.js::toSlug",
+      "reason": "one is the URL path form; merging them needs the router change first",
+      "from": "scan"
+    }
   ]
 }
 ```
@@ -244,6 +248,21 @@ matched whole, never as a prefix, so the line above is what `assay` printed rath
 than a description of it. A `look` cannot be baselined and does not need to be: it
 never fails the run, so there is nothing to accept.
 
+**An entry is that line, or an object carrying it as `line`.** The bare string stays
+legal because adopting this means pasting lines out of a run, and a format that refuses
+the paste is a format nobody adopts. The object form carries the two things a string
+cannot:
+
+| field | | |
+|---|---|---|
+| `line` | required | the finding's exact text |
+| `reason` | required in the object form | why you accepted it |
+| `from` | optional | the command that can produce it — one of `runners`, `anchors`, `diff`, `scan` |
+
+`from` is what makes staleness a property of the **line** rather than of the run; see
+below. A `from` naming no real command is a hard error rather than a line nobody can
+ever check.
+
 **Every table is read in both directions.** An exemption naming a file that no longer
 exists is a finding. A property name that does not exist is a finding. A baseline line
 that no longer fires is a finding, because someone fixed the problem and left the
@@ -255,7 +274,10 @@ things that are true. The second direction costs about ten lines and is the diff
 between a **suppression file** and a **record**.
 
 `reason` is required and not decorative: **an exemption without one cannot be told
-from an oversight**, and six months later nobody can say which it was.
+from an oversight**, and six months later nobody can say which it was. The `baseline`
+is the table this matters most for — it accumulates fastest and rots first, because a
+fixed finding leaves its line behind in silence — which is why the object form asks for
+one and `assay accept` will not write an entry without it.
 
 Adopting this on an existing project means starting with a backlog. The two dishonest
 ways to handle that are a magic threshold (goes stale in silence) and a blanket
@@ -263,19 +285,38 @@ suppression (hides the next real one). The `baseline` does neither: a new findin
 not in the list so it fails, and one you fixed no longer fires so its line fails as
 stale.
 
-**Staleness needs a complete run, and getting that wrong made the tool cry wolf at
-itself.** `assay runners` cannot produce a finding that only `diff` reports, so
-checking staleness there flagged every `diff` line as fixed: the audit reporting a
-problem with its own config, on a clean tree, on every run. So a line that does not
-fire is only called stale by `assay all`, which performs every audit that can produce
-one (add `--scan PATH` to fold the sameness half in). Every command still *suppresses*
-accepted findings, because that direction is safe from any command: a line that fires
-is a line that fires. **Run `assay all` in CI**, not the subcommands separately, or an
-accepted finding can be fixed and its record left behind forever.
+**Staleness is a property of the line, not of the run, and getting that wrong made the
+tool cry wolf at itself.** `assay runners` cannot produce a finding that only `diff`
+reports, so checking staleness there flagged every `diff` line as fixed: the audit
+reporting a problem with its own config, on a clean tree, on every run.
+
+The first fix was to check staleness only from `assay all`. Correct, and blunt enough to
+be its own problem: every line in every other run went unchecked, and the run printed a
+disclaimer where a number belongs. An entry that names the command firing it can be
+answered by that command alone, so each line lands in exactly one of three places:
+
+```
+BASELINE assay.json — 3 accepted, 0 new, 1 stale, 2 NOT checked for staleness
+                      (anchors: 1; no `from`, so it needs `assay all`: 1)
+```
+
+*Stale* is a line this run could have seen fire and did not. *Not checked* is a line
+this run could not have seen at all — counted, and never folded into the stale number,
+because **`0 stale` from a run that never looked reads as "nothing is stale"** and those
+are different claims. A line with no `from` keeps the old rule: only a run that
+performed every audit can call it fixed, since nothing narrower knows what produces it.
+
+Every command still *suppresses* accepted findings, because that direction is safe from
+any run: a line that fires is a line that fires.
+
+**`assay all --scan PATH` is the complete run** — `all` alone does not perform the
+sameness half, and saying otherwise is how a `same answer` line got called stale on a
+clean tree. Tag your entries with `from` and any command answers its own; leave them
+untagged and the complete run is the only one that can.
 
 **Under Node this used to be impossible**, because `assay anchors` was Python-only and
 no JavaScript run performed every audit that can produce a baseline line. It does now,
-so `assay all` under Node calls a line stale on the same terms the Python half does.
+so the JavaScript half answers on exactly the same terms.
 
 ## What `same` is worth
 

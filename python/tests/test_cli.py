@@ -365,7 +365,9 @@ class ConfigWiring(unittest.TestCase):
         otherwise, which is how a suppression file becomes a work of fiction."""
         cfg = tree({"assay.json": json.dumps({"baseline": ["a finding long gone"]}),
                     "m.py": "def a(n):\n    return n * 2\n"})
-        code, text = run("--root", cfg, "all", "--base", "HEAD")
+        # `--scan` is what makes the run complete: without it the sameness half did not
+        # run, so an UNTAGGED line — one that names no command — is still unchecked.
+        code, text = run("--root", cfg, "all", "--base", "HEAD", "--scan", cfg)
         self.assertEqual(code, 1)
         self.assertIn("no longer fires", text)
 
@@ -382,7 +384,59 @@ class ConfigWiring(unittest.TestCase):
         code, text = run("--root", cfg, "runners")
         self.assertEqual(code, 0, text)
         self.assertNotIn("no longer fires", text)
-        self.assertIn("staleness needs", text)
+        self.assertIn("NOT checked for staleness", text)
+        self.assertIn("needs `assay all`", text)
+
+    def test_SCAN_does_not_claim_it_performed_every_audit_either(self):
+        """Driven per COMMAND rather than once: `performed` is a literal at each call
+        site, so a command that claims more than it did is a defect one test cannot
+        see. The JavaScript half's equivalent was NOT DETECTED until it existed."""
+        cfg = tree({"assay.json": json.dumps({"baseline": ["a runners-only finding"]}),
+                    "m.py": "def a(n):\n    return n * 2\n"})
+        code, text = run("--root", cfg, "scan", cfg)
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("no longer fires", text)
+        self.assertIn("NOT checked for staleness", text)
+
+    def test_a_line_that_NAMES_its_command_is_answered_by_that_command(self):
+        """The point of `from`. `assay runners` knows perfectly well whether a
+        `runners` finding fired, and needed a whole `assay all` to be allowed to say
+        so — which meant a project running the subcommands separately never got the
+        second direction at all."""
+        cfg = tree({"assay.json": json.dumps({"baseline": [
+            {"line": "a runners finding long gone", "reason": "read it",
+             "from": "runners"}]}),
+            "a.py": "x = 1\n"})
+        code, text = run("--root", cfg, "runners")
+        self.assertEqual(code, 1, text)
+        self.assertIn("no longer fires", text)
+
+    def test_a_line_from_ANOTHER_command_is_counted_rather_than_called_stale(self):
+        """The cry-wolf failure, and why the first fix was a whole-run flag. What is
+        new is that the lines nobody could check are COUNTED: `0 stale` from a run that
+        never looked reads as `nothing is stale`, and those are different claims."""
+        cfg = tree({"assay.json": json.dumps({"baseline": [
+            {"line": "an anchors finding", "reason": "read it", "from": "anchors"}]}),
+            "a.py": "x = 1\n"})
+        code, text = run("--root", cfg, "runners")
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("no longer fires", text)
+        self.assertIn("NOT checked for staleness (anchors: 1)", text)
+
+    def test_all_WITHOUT_scan_does_not_claim_it_performed_the_sameness_half(self):
+        """`--scan` is what makes `all` complete, and the flag used to say complete
+        either way — so a `same answer` line was called stale by a run that never
+        scanned anything, on a clean tree."""
+        cfg = tree({"assay.json": json.dumps({"baseline": [
+            {"line": "same answer (arity1/v3): a.py::x, b.py::y",
+             "reason": "read them", "from": "scan"}]}),
+            "a.py": "x = 1\n"})
+        # The exit code is not asserted: a temp directory is not a git repository, so
+        # `diff` reports one of its own findings here and the run fails for a reason
+        # that has nothing to do with the baseline.
+        _code, text = run("--root", cfg, "all", "--base", "HEAD")
+        self.assertNotIn("no longer fires", text)
+        self.assertIn("NOT checked for staleness (scan: 1)", text)
 
     def test_all_folds_in_the_sameness_half_when_asked(self):
         """Without `--scan` a `same answer` line in the baseline would be called
