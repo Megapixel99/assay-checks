@@ -72,6 +72,21 @@ refused everything in ordinary CommonJS.
 globals. `Buffer` deliberately does not: the allowlist is per name, and
 `Buffer.allocUnsafe` hands back whatever was in that memory.
 
+The parity suite now pins the call gate. Both halves resolve a free name through the
+module rather than refusing it on sight, both follow a helper and name it when it is
+impure, both call an unresolvable name `free name X`, and neither opens a module it
+would not have loaded to find out — Python by never importing the containing module and
+admitting only an allowlist of stdlib roots, JavaScript by following a relative
+specifier only, and only into a module that passes the same load gate.
+
+**One rule is per-language on purpose, and is asserted rather than left to drift.**
+Python inlines each helper's source into a preamble it then executes, so it bounds the
+walk at `HELPER_DEPTH` and says when it stops; JavaScript reads text and never inlines,
+so its walk costs nothing to continue and terminates on a `seen` set instead — which
+also makes recursion and mutual recursion ordinary rather than special. Both refuse
+rather than guess when they stop, so this is not a contradiction; a tree probed by one
+binary and not the other would be.
+
 ### The census names what it never looked at
 
 `--json` grows `unloadable_paths` and `skipped_refs` beside the existing tallies. Both
