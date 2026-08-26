@@ -349,7 +349,9 @@ object instead of the prose report:
   "notes": ["…the census, verbatim…"],
   "root": "/abs/path",
   "scan": {"files": 247, "functions": 1412, "probed": 137, "not_probed": 1275,
-           "skipped": {"no arguments": 274}, "unloadable": {"reads the clock": 19}},
+           "skipped": {"no arguments": 274}, "unloadable": {"reads the clock": 19},
+           "skipped_refs": {"src/fmt.js::pad": "no arguments (a ladder cannot …)"},
+           "unloadable_paths": {"src/hbs-helpers.js": "reads the clock"}},
   "schema": 1,
   "tool": "assay",
   "version": "0.4.0"
@@ -370,6 +372,15 @@ verdict travels by its own name and you decide what it means.
 yours to check rather than something you parse back out of `notes`, and files stay a
 separate population from functions. A command that ran no scan emits `null` rather than
 `0`, because zero probed functions and no sameness half at all are different claims.
+
+**And it names what it never looked at.** `unloadable` and `skipped` count;
+`unloadable_paths` and `skipped_refs` say *which*, and carry the whole reason rather
+than the tallied key. `could not load 12` is a number you cannot act on — the only
+recourse is `assay why FILE::NAME`, which has to be told a file and a function name in
+it, the two things the tally withheld. The full reason matters most in the biggest
+bucket: a tally key stops at the first `(`, which is exactly where a load error's
+message begins, so `could not load (JWT_SECRET must be set)` survives here and nowhere
+else. `sum(unloadable.values()) == len(unloadable_paths)`, so the two never drift.
 
 **The baseline's caveat travels as data.** `performed` says what this run audited and
 `unchecked` names every entry it could not have seen fire, rather than an empty `stale`

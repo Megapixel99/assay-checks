@@ -1131,15 +1131,35 @@ export class Scan {
    * file nobody opened holds an unknown number of functions, so adding the two totals
    * together prints a number nobody measured. Both halves are here with their own
    * totals, which is what makes that checkable rather than merely stated.
+   *
+   * THE TALLIES ANSWER "HOW MANY" AND CANNOT ANSWER "WHICH", so the maps travel beside
+   * them. `could not load 12` names nothing a person can open, and the only recourse
+   * the tool offers is `assay why FILE::NAME` — which has to be told a file and a
+   * function name in it, the two things the tally just withheld. A census that reports
+   * how much it never looked at, and then refuses to say where, stops one step short
+   * of the claim it exists to make.
+   *
+   * THE MAPS CARRY THE WHOLE REASON, and for the load errors that is the entire point.
+   * `tally` keys on `why.split('(')[0].split(':')[0]` so that one bucket counts every
+   * spelling of a failure — and a load error's message begins at exactly that `(`.
+   * `could not load (JWT_SECRET must be set)` is a diagnosis the child ALREADY
+   * COMPUTED and the tally then truncates away; the largest bucket in a real run is
+   * the one whose contents were most worth reading.
+   *
+   * Neither map is sorted here. `renderJson` sorts the payload all the way down and
+   * Python's `json.dump` is asked to sort, so ordering them again would be a second
+   * place for the two halves to disagree about one document.
    */
   toDict() {
     return {
       files: this.files,
       unloadable: Object.fromEntries(this.fileCensus()),
+      unloadable_paths: Object.fromEntries(this.unloadable),
       functions: this.functions,
       probed: this.probed.size,
       not_probed: this.skipped.size,
       skipped: Object.fromEntries(this.census()),
+      skipped_refs: Object.fromEntries(this.skipped),
     };
   }
 }

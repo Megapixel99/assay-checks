@@ -183,6 +183,20 @@ class TheTwoHalvesAgree(unittest.TestCase):
             self.assertIn("unloadable", source)
             self.assertIn(member, source)
 
+    def test_both_halves_NAME_what_they_never_looked_at(self):
+        """A tally answers "how many" and cannot answer "which", so both halves carry
+        the maps beside the counts — under the same two key names, because one
+        `assay.json` serves a polyglot repository and a consumer reading the census
+        must not have to ask which binary produced it.
+
+        The maps are the untruncated reason. `tally` keys on the text before the first
+        `(`, which is exactly where a load error's message begins, so the bucket that
+        is largest in a real run is the one whose contents the tally discards.
+        """
+        for source in (js("sameness.js"), py("sameness.py")):
+            self.assertIn("unloadable_paths", source)
+            self.assertIn("skipped_refs", source)
+
     def test_both_halves_COUNT_the_baseline_lines_they_could_not_check(self):
         """The rule, not the wording: a line is only stale to a run that could have
         seen it fire, and a run that could not see it says so rather than printing a

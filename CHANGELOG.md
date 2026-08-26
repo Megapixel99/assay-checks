@@ -26,6 +26,29 @@ is the reason this is not a patch either: it stops reporting dead anchors on har
 that carry a column after the replacement, so a tree red on 0.4.0 for that reason goes
 green without being edited.
 
+### The census names what it never looked at
+
+`--json` grows `unloadable_paths` and `skipped_refs` beside the existing tallies. Both
+map a name to the reason, both are additive, and the tallies are unchanged — so the
+schema number does not move.
+
+The counts could say how much a run never opened and not which. On a real tree that
+reads `could not load 12`, and the only recourse the tool offered was
+`assay why FILE::NAME` — which has to be told a file and a function name inside it, the
+two things the tally had just withheld. A census that measures its own blind spot and
+then declines to locate it stops one step short of the claim it exists to make.
+
+The reason travels whole here, and that matters most where the tally is largest. A
+tally key stops at the first `(` so that one bucket counts every spelling of a failure,
+and a load error's message begins at exactly that `(`: the child already computed
+`could not load (JWT_SECRET must be set)`, and aggregation was throwing the diagnosis
+away while keeping the count. `sum(unloadable.values()) == len(unloadable_paths)` is
+checkable by a consumer, so the two views cannot drift into two different answers about
+one run.
+
+Nothing about which files load or which functions are probed changed. This is the same
+census, addressable.
+
 ### `search` checks its own query, and stops calling `none` what it never looked for
 
 `assay search` matched its query's vector against the census and, on no hit, printed the

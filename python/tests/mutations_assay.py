@@ -1097,6 +1097,22 @@ MUTATIONS += [
      "sameness.js",
      """      scan.unloadable.set(rel, why);""",
      """      scan.skipped.set(rel, why);"""),
+    # The census keeps its counts and quietly stops saying WHICH. `unloadable_paths`
+    # is still emitted, so the parity check that both halves carry the key still
+    # passes; what is gone is the only thing in the document that names a file a
+    # person could open. Silently less useful, never louder.
+    ("js sameness: the census reports how much it never opened, not what",
+     "sameness.js",
+     """      unloadable_paths: Object.fromEntries(this.unloadable),""",
+     """      unloadable_paths: {},"""),
+    # The map survives and the REASON is truncated to the tally's key, which drops a
+    # load error's message at exactly the `(` where it begins — the diagnosis the
+    # child already computed, discarded on the way out.
+    ("js sameness: the detail map repeats the tally instead of the real reason",
+     "sameness.js",
+     """      unloadable_paths: Object.fromEntries(this.unloadable),""",
+     """      unloadable_paths: Object.fromEntries([...this.unloadable]
+        .map(([p, why]) => [p, why.split('(')[0].trim()])),"""),
 
     # ---- gates that must read code, not prose -------------------------------- #
     ("js sameness: the purity gates read prose again (a shipped defect)",
