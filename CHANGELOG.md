@@ -26,6 +26,52 @@ is the reason this is not a patch either: it stops reporting dead anchors on har
 that carry a column after the replacement, so a tree red on 0.4.0 for that reason goes
 green without being edited.
 
+### The gate asks two questions, because it guards two events
+
+`fileRefusal` read the whole file, so one `new Date()` in one body refused every
+function beside it. It is now `loadRefusal` — *may this module be imported?* — asked of
+module-scope code only, paired with a per-function *may this be called?* that follows
+what a function **reaches**. On a barrel of ten Handlebars helpers this goes from 0
+probed to 6; the two clock helpers are still refused, individually and by name.
+
+**Narrowing the file gate alone would have been unsafe**, and the reason was already
+written in `probe.js`: `functionRefusal` reads a function's own source and cannot see
+the module scope its free names resolve in. `slugA(s) { return stamp(s) }` mentions
+nothing gated, and `stamp` calls `writeFileSync`. So the call gate walks free names —
+local bindings transitively, and relative imports into modules that pass the load gate
+themselves. Bare specifiers, core modules, unknown globals and doubly-declared names
+refuse by name.
+
+**This closes a hole that was open, not merely a coverage limit.** A function calling an
+*imported* impure function passed both old gates: the importing file mentions no core
+module, so it loaded, and probing called it. The "barrel could launder the gate" fix
+covered re-exported functions, never callers of imported ones. On a two-file fixture the
+old build wrote a real file to a real absolute path; there is now a test that asserts it
+does not.
+
+Refusals are a chain you can walk back to the code — `reaches config, which reaches env,
+which touches process` — with every hop kept.
+
+**Coverage moves both ways, and it was measured rather than argued.** On
+`@azure/msal-common`: 6 files refused before loading down to 4, 142 functions found up
+to 166, 12 probed up to 13. The gains are barrels; the losses are real —
+`reaches nowSeconds, which reads the clock` refuses three functions the old build probed
+and should not have, because their outcome vectors were never deterministic. On `semver`
+every comparison now refuses through a `debug` helper two modules away that reads
+`process.env`, which is true and expensive: the env read cannot change the return value.
+That is the trade this makes.
+
+Five defects in the analysis were found by running it against real packages rather than
+by reading it, and each has a test: callback parameters read as free names, class method
+names read as references, regex flags read as identifiers, reached bindings judged by
+the probe's own eligibility rules, and — worst — files using ASI or opening with a
+`'use strict'` directive finding **no** top-level bindings at all, which silently
+refused everything in ordinary CommonJS.
+
+`URL`, `URLSearchParams`, `TextEncoder` and `TextDecoder` join the deterministic
+globals. `Buffer` deliberately does not: the allowlist is per name, and
+`Buffer.allocUnsafe` hands back whatever was in that memory.
+
 ### The census names what it never looked at
 
 `--json` grows `unloadable_paths` and `skipped_refs` beside the existing tallies. Both

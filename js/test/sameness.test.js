@@ -16,8 +16,9 @@ import test from 'node:test';
 
 import {
   canon, collect, compare, declaredArity, discriminating, fileRefusal,
-  functionRefusal, group, isProjection, ladder, ladderKey, MIN_DISTINCT, outcomeOf,
-  probeFile, probeOutcome, PROBE_TIMEOUT_MS, stripNonCode,
+  functionRefusal, group, isProjection, ladder, ladderKey, loadRefusal, MIN_DISTINCT,
+  moduleBindings, outcomeOf, probeFile, probeOutcome, PROBE_TIMEOUT_MS, reachRefusal,
+  stripNonCode,
 } from '../src/sameness.js';
 import { exportedFunctions, probeFunction } from '../src/probe.js';
 
@@ -727,6 +728,209 @@ test('a probe that dies without answering says what it printed', async () => {
   assert.match(result.error, /the useful part/);
 });
 
+
+// --------------------------------------------------------------------------- //
+// The gate is TWO questions: may this module be imported, may this be called?
+// --------------------------------------------------------------------------- //
+
+/** `reachRefusal` for one named binding of a module, by source. */
+function reachOf(source, name) {
+  const mod = moduleBindings(source);
+  return reachRefusal(mod.local.get(name), mod);
+}
+
+test('a body-only impurity no longer refuses the whole file', () => {
+  const src = 'export function pure(n) { return n * 2; }\n'
+    + 'export function dated(v) { return new Date(v); }\n';
+  assert.equal(fileRefusal(src), 'reads the clock');   // the old, whole-file answer
+  assert.equal(loadRefusal(src), null);                // nothing reads it on the way IN
+});
+
+test('an impurity at MODULE SCOPE still refuses the file', () => {
+  assert.equal(loadRefusal('const fs = require("fs");\nexport function f(n) { return n; }\n'),
+    'reaches a node core module');
+  assert.equal(loadRefusal('export const started = Date.now();\n'), 'reads the clock');
+});
+
+test('an IIFE keeps its body, because an IIFE runs at import', () => {
+  // The narrow rule that makes the split safe: only a DECLARATION's body is deferred.
+  // Anything that might be invoked on the way in keeps its text.
+  assert.equal(loadRefusal('const home = (function () { return process.env.HOME; })();\n'),
+    'touches process');
+});
+
+test('a class field initializer runs at import, so it is not deferred', () => {
+  assert.equal(loadRefusal('class C { home = process.env.HOME; }\nexport { C };\n'),
+    'touches process');
+});
+
+test('an arrow with an EXPRESSION body is still deferred', () => {
+  // `const f = (x) => impure(x)` runs `impure` when f is called, not on the way in.
+  // Requiring braces to defer would refuse every one-line helper in a barrel.
+  assert.equal(loadRefusal('export const at = (v) => new Date(v);\n'), null);
+});
+
+test('a function is refused for what its FREE NAMES reach', () => {
+  // The hole that makes "narrow the file gate and stop" unsafe. `slugA`'s own source
+  // mentions nothing gated; `stamp` is not exported, so nothing else looks at it.
+  const src = 'export function slugA(s) { return stamp(s); }\n'
+    + 'function stamp(s) { return require("fs").readFileSync(s); }\n';
+  assert.equal(loadRefusal(src), null);
+  assert.equal(functionRefusal('function slugA(s) { return stamp(s); }', 1), null);
+  assert.match(reachOf(src, 'slugA'), /reaches stamp, which reaches a node core module/);
+});
+
+test('reachability follows more than one hop, and NAMES every one', () => {
+  // The chain is a path back to the code, so a hop it skips is a hop the reader cannot
+  // follow. Asserting only the final reason let a version through that reported
+  // `reaches c` for a function whose body mentions only `b`.
+  const src = 'export function a(s) { return b(s); }\n'
+    + 'function b(s) { return c(s); }\n'
+    + 'function c(s) { return process.env[s]; }\n';
+  assert.equal(reachOf(src, 'a'), 'reaches b, which reaches c, which touches process');
+});
+
+test('a refusal chain reads as a sentence, whatever it ends in', () => {
+  // Concatenation produced "reaches giteaFor, which free name Buffer" on real code. A
+  // census line nobody can read is a reason reported without saying what produced it.
+  const free = 'export function f(n) { return wrap(n); }\n'
+    + 'function wrap(n) { return Buffer.from(n); }\n';
+  assert.equal(reachOf(free, 'f'), 'reaches wrap, which has a free name Buffer');
+});
+
+test('deterministic standard globals are allowed', () => {
+  // Each of these was measured refusing real code — `qs` lost a helper to
+  // `free name URLSearchParams` on its own.
+  for (const g of ['URL', 'URLSearchParams', 'TextEncoder', 'TextDecoder']) {
+    const src = `export function f(s) { return new ${g}(s); }\n`;
+    assert.equal(reachOf(src, 'f'), null, g);
+  }
+});
+
+test('Buffer is NOT allowed, and allocUnsafe is why', () => {
+  // The allowlist is per NAME, not per method: `Buffer.from` is deterministic and
+  // `Buffer.allocUnsafe` hands back whatever was in that memory.
+  const src = 'export function f(n) { return Buffer.allocUnsafe(n); }\n';
+  assert.equal(reachOf(src, 'f'), 'free name Buffer');
+});
+
+test('a name from ANOTHER MODULE is refused rather than followed', () => {
+  // Cross-file reachability is out of scope, so an imported name is refused by name.
+  // Before the call gate existed this was a real `writeFileSync` on a real path: the
+  // importing file mentions no core module, so it loaded and the function was probed.
+  const src = 'import { writeIt } from "./io.js";\n'
+    + 'export function save(x) { return writeIt(x); }\n';
+  assert.equal(loadRefusal(src), null);
+  assert.match(reachOf(src, 'save'), /free name writeIt comes from another module/);
+});
+
+test('a require-bound name is treated as imported too', () => {
+  const src = 'const { writeIt } = require("./io.js");\n'
+    + 'module.exports.save = function save(x) { return writeIt(x); };\n';
+  assert.match(reachRefusal('function save(x) { return writeIt(x); }',
+    moduleBindings(src)), /comes from another module/);
+});
+
+test('an unknown global is refused BY NAME, never assumed pure', () => {
+  const mod = moduleBindings('export function f(n) { return Buffer.from(n); }\n');
+  assert.equal(reachRefusal('function f(n) { return Buffer.from(n); }', mod),
+    'free name Buffer');
+});
+
+test('a deterministic global is allowed', () => {
+  const src = 'export function f(n) { return Math.max(Number(n), JSON.parse("1")); }\n';
+  assert.equal(reachOf(src, 'f'), null);
+});
+
+test('a property named like a gated global is not that global', () => {
+  const src = 'export function f(o) { return o.process.env; }\n';
+  assert.equal(reachOf(src, 'f'), null);
+});
+
+test('recursion terminates rather than walking forever', () => {
+  const src = 'export function fact(n) { return n <= 1 ? 1 : n * fact(n - 1); }\n';
+  assert.equal(reachOf(src, 'fact'), null);
+});
+
+test('mutual recursion through an impure hop is still caught', () => {
+  const src = 'export function a(n) { return n < 0 ? 0 : b(n - 1); }\n'
+    + 'function b(n) { return a(n) + process.pid; }\n';
+  assert.match(reachOf(src, 'a'), /touches process/);
+});
+
+test('a name declared TWICE poisons its binding rather than picking one', () => {
+  const src = 'function h(n) { return n; }\nfunction h(n) { return process.pid; }\n'
+    + 'export function f(n) { return h(n); }\n';
+  assert.match(reachOf(src, 'f'), /declared more than once/);
+});
+
+test('a file the lexer cannot read keeps the WHOLE-FILE refusal', () => {
+  // Uncertainty keeps the `look` and never spends it: the last file to narrow a gate
+  // around is one the parser lost the thread on.
+  const src = 'const a = "unterminated\nexport function f(n) { return new Date(n); }\n';
+  assert.equal(moduleBindings(src), null);
+  assert.equal(loadRefusal(src), fileRefusal(src));
+});
+
+test('a CALLBACK parameter is declared, not free', () => {
+  // Reading only the outer parameter list reported `free name key` for
+  // `parameters.forEach((value, key) => ...)` and refused the ordinary shape of every
+  // iteration helper there is. Found by measuring against real code, not by reading.
+  const src = 'export function q(ps) { const o = []; ps.forEach((v, key) => o.push(key + v)); return o; }\n';
+  assert.equal(reachOf(src, 'q'), null);
+});
+
+test('a single-identifier arrow parameter is declared too', () => {
+  const src = 'export function pick(xs) { return xs.find((tp) => tp.id); }\n';
+  assert.equal(reachOf(src, 'pick'), null);
+});
+
+test("an `if` header is not a parameter list", () => {
+  // The test for a parameter list is what FOLLOWS the parens, and `if (x) {` has the
+  // same shape while binding nothing.
+  const src = 'export function f(n) { if (n) { return elsewhere; } return 1; }\n';
+  assert.equal(reachOf(src, 'f'), 'free name elsewhere');
+});
+
+test('a class METHOD NAME is a definition, not a free name', () => {
+  // `constructor(message) { ... }` is neither a property access nor an object key, so
+  // it read as a reference and refused five ordinary error classes in a real package.
+  const src = 'class E { constructor(m) { this.m = m; } }\nexport function make(m) { return new E(m); }\n';
+  assert.equal(reachOf(src, 'make'), null);
+});
+
+test("a regex literal's FLAGS are not an identifier", () => {
+  // `stripNonCode` blanks a regex body and keeps what follows the slash, so `/\\+/g`
+  // ends in a bare `g`. A division `x / g` has no second slash, which is how the two
+  // are told apart without guessing from the letters.
+  const src = 'export function clean(s) { return String(s).replace(/\\+/g, " "); }\n';
+  assert.equal(reachOf(src, 'clean'), null);
+});
+
+test('a class reached by a function is judged for IMPURITY, not for probeability', () => {
+  // `IMPURE_FUNCTION` adds generator/`this`/rest — rules about whether THIS function
+  // can be probed, which say nothing about something it merely reaches. A constructor
+  // assigning `this.code` is an ordinary class.
+  const src = 'class E { constructor(c) { this.code = c; } }\n'
+    + 'export function make(c) { return new E(c); }\n';
+  assert.equal(reachOf(src, 'make'), null);
+});
+
+test('THE PROBE DOES NOT WRITE: a reachable side effect never runs', async () => {
+  // The gate's reason for existing, asserted as behaviour rather than as a verdict.
+  // Probing CALLS the function, so a wrong answer here is a real file on a real path.
+  const witness = path.join(mkdtempSync(path.join(tmpdir(), 'assay-witness-')), 'w.txt');
+  const dir = writeTree({
+    'a.js': 'export function one(s) { return stamp(s); }\n'
+      + 'export function two(s) { return stamp(s); }\n'
+      + `function stamp(s) { require("fs").writeFileSync(${JSON.stringify(witness)}, String(s)); return String(s); }\n`,
+  });
+  const scan = await collect([dir]);
+  assert.equal(scan.probed.size, 0);
+  assert.equal(scan.skipped.size, 2);
+  assert.throws(() => readdirSync(witness), /ENOENT/);
+});
+
 // --------------------------------------------------------------------------- //
 // The census adds up, and says which unit each number is in.
 // --------------------------------------------------------------------------- //
@@ -735,13 +939,32 @@ test('probed + not probed = functions, counting only files that loaded', async (
   const dir = writeTree({
     'good.js': 'export function f(n) { return n * 3 + 1; }\n'
       + 'export function g() { return 1; }\n',
-    'refused.js': 'export function h(n) { return new Date(n).getTime(); }\n',
+    // REFUSED AT LOAD, which now means the clock is read ON THE WAY IN. A `new Date`
+    // confined to a body no longer refuses the file — it refuses the function — so a
+    // fixture that means "this file never opens" has to say so at module scope.
+    'refused.js': 'export const started = Date.now();\n',
   });
   const scan = await collect([dir]);
   assert.equal(scan.functions, scan.probed.size + scan.skipped.size);
   assert.equal(scan.functions, 2);          // f probed, g skipped (no arguments)
   assert.equal(scan.unloadable.size, 1);    // refused.js, counted as a FILE
   assert.equal(scan.files, 2);
+});
+
+test('a clock in a BODY refuses the function, and the file still loads', async () => {
+  // The whole point of splitting the gate. `formatDate` reads the clock when CALLED,
+  // which is no evidence about importing the module — and refusing the file for it
+  // took every pure helper beside it down, which on a barrel is the difference between
+  // a useful run and a zero.
+  const dir = writeTree({
+    'helpers.js': 'export function sizeHuman(n) { return n + " B"; }\n'
+      + 'export function formatDate(v) { return new Date(v).toISOString(); }\n',
+  });
+  const scan = await collect([dir]);
+  assert.equal(scan.unloadable.size, 0);
+  assert.equal(scan.functions, 2);
+  assert.deepEqual([...scan.probed.keys()].map((r) => r.split('::')[1]), ['sizeHuman']);
+  assert.match([...scan.skipped.values()][0], /reads the clock/);
 });
 
 test('a file refused before loading is counted as a file, never as a function', async () => {

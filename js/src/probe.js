@@ -22,8 +22,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
-  ANSWER_FD, crossOutcome, declaredArity, fileRefusal, functionRefusal, PER_INPUT_MS,
-  probeOutcome,
+  ANSWER_FD, crossOutcome, declaredArity, functionRefusal, loadRefusal, moduleBindings,
+  PER_INPUT_MS, probeOutcome, reachRefusal,
 } from './sameness.js';
 
 /**
@@ -92,8 +92,8 @@ function say(payload) {
   while (off < buf.length) off += writeSync(ANSWER_FD, buf, off, buf.length - off);
 }
 
-export async function probeFunction(fn, name, ladders, cross = false,
-  perInput = PER_INPUT_MS) {
+export async function probeFunction(fn, name, ladders, cross = false, mod = null,
+  perInput = PER_INPUT_MS, resolve = null) {
   let source = '';
   try {
     source = Function.prototype.toString.call(fn);
@@ -114,6 +114,17 @@ export async function probeFunction(fn, name, ladders, cross = false,
   }
   const why = functionRefusal(source, arity);
   if (why) return { name, skip: why };
+  // WHAT THIS FUNCTION CAN REACH, which its own text cannot answer. `functionRefusal`
+  // read the body; a free name resolves in the module scope around it, and a helper
+  // three lines down calling `writeFileSync` is reached by a body that mentions none of
+  // the gated words. Probing CALLS the function, so this is the last gate before a real
+  // side effect on a real path.
+  // `mod` ABSENT MEANS NO MODULE WAS OFFERED, not that one was unreadable. A caller
+  // probing a function it already holds — `assay probe`, the suite — has no module
+  // scope to resolve against and is not asking this question. The child, which always
+  // has one, refuses BY NAME when it cannot be read rather than passing null here.
+  const unreachable = mod ? reachRefusal(source, mod, resolve) : null;
+  if (unreachable) return { name, skip: unreachable };
   const inputs = ladders[String(arity)];
   if (!inputs) return { name, skip: `no ladder for arity ${arity}` };
   // TWO MODES, and only the inputs and the rendering differ. In `cross` mode the rungs
@@ -227,7 +238,10 @@ async function dependencyExports(file, source) {
       }
       // The bytes that were READ are the bytes that get judged. Asking the loaded
       // module what file it came from would be asking the thing under test.
-      const refusal = fileRefusal(text);
+      // THE SAME QUESTION `collect` ASKED, asked the same way. A dependency whose
+      // impurity is confined to a body is one this tool would have loaded, so marking
+      // its exports refused here would contradict the gate one directory over.
+      const refusal = loadRefusal(text);
       for (const [, fn] of exportedFunctions(dep)) {
         if (!out.has(fn)) out.set(fn, refusal);
       }
@@ -261,12 +275,57 @@ async function main() {
   // saying nothing about a function the tool declined to run.
   const inherited = new Set();
   for (const [fn, refusal] of origins) if (!refusal) inherited.add(fn);
+  // THE MODULE'S OWN SHAPE, read once. A function's free names resolve in a scope
+  // `functionRefusal` cannot see, and this is that scope. `null` when the source could
+  // not be read, and every function is then refused rather than probed on a guess.
+  const mod = moduleBindings(request.source || '', request.file);
+  // FOLLOWING AN IMPORT NEEDS THE FILESYSTEM, which is why the resolver is built here
+  // and not inside the gate. `sameness.js` answers from text alone and stays testable
+  // that way; this hands it the one thing it cannot go and get.
+  //
+  // ONLY RELATIVE SPECIFIERS ARE FOLLOWED. A bare specifier is somebody else's package
+  // — resolving it means walking `node_modules` and reasoning about `exports` maps, and
+  // guessing wrong there is a probed function reaching a real side effect. It refuses
+  // instead, and the census says which name did it.
+  const resolveCache = new Map();
+  const resolveImport = (spec, fromId) => {
+    if (!spec || !spec.startsWith('.') || !fromId) return null;
+    const key = `${path.dirname(fromId)}\u0000${spec}`;
+    if (resolveCache.has(key)) return resolveCache.get(key);
+    let answer = null;
+    const target = path.resolve(path.dirname(fromId), spec);
+    for (const candidate of [target, `${target}.js`, `${target}.mjs`, `${target}.cjs`,
+      path.join(target, 'index.js')]) {
+      let text;
+      try {
+        text = readFileSync(candidate, 'utf8');
+      } catch {
+        continue;
+      }
+      // The bytes that were READ are the bytes that get judged, and the question asked
+      // of them is the one `collect` asks: would this module have been loaded at all?
+      const refusal = loadRefusal(text);
+      answer = refusal
+        ? { refusal }
+        : { mod: moduleBindings(text, candidate) };
+      break;
+    }
+    resolveCache.set(key, answer);
+    return answer;
+  };
   const found = exportedFunctions(namespace, inherited);
   // THE ROSTER FIRST, so a function that never answers can be told from one that was
   // never there. Without it a killed probe and an empty module look identical, and
   // "we found none" and "we never looked" are different claims.
   say({ roster: found.map(([name]) => name) });
   for (const [name, fn] of found) {
+    // A MODULE THAT COULD NOT BE READ REFUSES EVERY FUNCTION IN IT. The call gate
+    // resolves free names against this scope, so without it there is no gate — and a
+    // file the lexer lost the thread on is the last one to probe on a guess.
+    if (mod === null) {
+      say({ entry: { name, skip: 'module scope could not be read' } });
+      continue;
+    }
     // THE DEFINING FILE'S REFUSAL, CHECKED BEFORE THE FUNCTION IS CALLED. Reaching a
     // function through a barrel must not launder the gate its own file failed; see
     // `dependencyExports`. A `skip` rather than a silent drop, because "we declined to
@@ -280,9 +339,11 @@ async function main() {
     // eslint-disable-next-line no-await-in-loop
     say({
       entry: await probeFunction(fn, name, request.ladders, request.cross === true,
+        mod,
         // A request from an older caller carries no budget; the shared default is
         // then the same number it would have read from this module anyway.
-        typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS),
+        typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS,
+        resolveImport),
     });
   }
 }

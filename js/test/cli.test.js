@@ -939,7 +939,9 @@ test('the census NAMES the files it never opened, not just how many', async () =
   // nothing a person can open, and `assay why FILE::NAME` — the only recourse — has to
   // be told a file and a function name in it, which is what the tally withheld.
   const root = tree({
-    'clock.js': 'export const at = () => new Date();\n',
+    // AT MODULE SCOPE, so the file genuinely never opens. The same call inside a body
+    // is a refusal of the FUNCTION now, and would leave this census empty.
+    'clock.js': 'export const at = Date.now();\n',
     'pure.js': 'export const twice = (n) => n * 2;\n',
   });
   const { code, data } = await payload('--json', 'scan', root);
