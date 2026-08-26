@@ -21,7 +21,10 @@ and use the `baseline` in `assay.json` to accept what you have read.
 and `search` reports a case it used to print as a clean result, so a tree green on 0.4.0
 may show a new `look`. Nothing is removed and no exit code moves — a `look` has never
 failed a run — but two invocations that used to be accepted are now errors, and both
-were flags or arguments the tool parsed and ignored.
+were flags or arguments the tool parsed and ignored. `anchors` moves the other way, and
+is the reason this is not a patch either: it stops reporting dead anchors on harnesses
+that carry a column after the replacement, so a tree red on 0.4.0 for that reason goes
+green without being edited.
 
 ### `search` checks its own query, and stops calling `none` what it never looked for
 
@@ -69,6 +72,45 @@ Two consequences worth naming: `search` inherits `why`'s three-way resolution fa
 no such file, a file that does not parse, a file with no such function, instead of one
 `cannot resolve` that sends you to none of them — and `assay why` with no argument now
 says `why needs a FILE::NAME or --stdin`.
+
+### `assay anchors` stopped calling a harness's metadata a dead anchor
+
+`anchors` reads a mutation table and checks that every anchor matches its target
+exactly once, and it found the anchor at `parts[-2]` — the second-to-last string in the
+entry. That is right whenever the last column is the REPLACEMENT, which covers both
+documented shapes, `(label, old, new)` and `(label, target, old, new)`. It is wrong for
+every table carrying something *after* it:
+
+```
+(label, old, new, expected_test)      names the check that must go red
+(label, target, old, new, section)    names where to run it
+```
+
+Those shapes exist for the reason this package exists: so that *something failed* and
+*the check that covers this failed* stay different claims. On them `parts[-2]` lands on
+the replacement, which matches nothing by construction — so **the most careful
+harnesses in a tree were the ones reported as broken**, every entry a dead anchor, on a
+table that was perfectly healthy.
+
+Measured on a real tree: **79 findings on a repository with none** — 6 harnesses, 74
+entries. The same tree now reports 13, and all but one of those are three further
+mechanisms that carry no text anchor at all — regex substitution, function replacement,
+a table of callables — which are `anchor_exempt` questions rather than extraction ones.
+
+Trailing metadata is now dropped before counting back, rather than each shape being
+enumerated: a metadata column is one bare word and a replacement is code, and that
+distinction does not need to know how many columns precede it. **The strip stops at
+three columns**, which is what makes it safe — `("label", code, "pass")` is an ordinary
+three-column mutation whose replacement happens to be a bare word, and stripping there
+would put the anchor on the label, trading a false finding on one shape for a false
+finding on another. One such entry exists across the 34 harnesses measured.
+
+**This moves what `assay anchors` reports, in the direction of reporting less.** A tree
+that was red on 0.4.0 for this reason goes green, and no `anchor_exempt` entry written
+to silence it is needed any more — though one left in place stays harmless, and the
+stale-exemption check does not fire on it. Nothing about the CLI contract, `assay.json`,
+the verdict vocabulary or the JSON schema moves. An audit that fires on correct code is
+one that gets switched off, which is why this is a fix rather than a tuning.
 
 ## 0.4.0
 
