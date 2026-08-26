@@ -467,18 +467,29 @@ test('a DYNAMIC import of a core module is refused like a static one', () => {
 });
 
 test('a probe writing a RELATIVE path cannot reach the directory we were run from', async () => {
-  // CONTAINMENT, because every gate here is best-effort. `functionRefusal` reads a
-  // function's own source and cannot see the module scope its free names resolve in —
-  // `writeFileSync` is a free name and nothing in that gate catches it — so the
-  // question is not only what gets refused but WHERE the damage lands when something
-  // is not. `probeFile` sits BELOW the file gate on purpose: `collect` is what refuses
-  // a file, and this is the net that has to hold when something gets past it.
+  // CONTAINMENT, because every gate here is best-effort — so the question is not only
+  // what gets refused but WHERE the damage lands when something is not. `probeFile`
+  // sits BELOW the file gate on purpose: `collect` is what refuses a file, and this is
+  // the net that has to hold when something gets past it.
+  //
+  // THE WRITE IS AT MODULE SCOPE, and it has to be. This fixture used to write from a
+  // probed FUNCTION, on the reasoning that `writeFileSync` is a free name the
+  // per-function gate could not see. `reachRefusal` sees it now, so that function was
+  // refused before it could be called and this test passed whether the cwd was
+  // contained or not — a guard nothing can arrive at is a guard nothing checks, and the
+  // mutation that removes `cwd: tmpdir()` survived a full run to say so.
+  //
+  // Import-time code is what is left, and it is the residue the README already names:
+  // loading a module runs its top-level code, and no gate stands between `probeFile`
+  // and that. So this is the real remaining route rather than a contrivance kept alive
+  // to keep a test red.
   //
   // The cwd is moved to a scratch directory for the duration, so this test cannot
   // itself commit the offence it is checking for, in either outcome.
   const dir = writeTree({
     'm.js': "import { writeFileSync } from 'node:fs';\n"
-      + 'export function save(a) { writeFileSync(String(a), "x"); return a; }\n',
+      + 'writeFileSync("stray-relative-write", "x");\n'
+      + 'export function pure(a) { return a + 1; }\n',
   });
   const scratch = mkdtempSync(path.join(tmpdir(), 'assay-cwd-'));
   const saved = process.cwd();
