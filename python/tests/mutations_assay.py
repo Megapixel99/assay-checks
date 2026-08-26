@@ -13,6 +13,23 @@ because that is the failure mode that matters in an auditing tool. One whose det
 quietly stop detecting reports a clean sheet, which is indistinguishable from a project
 with no problems — and a clean sheet is what everybody wants to see.
 
+SILENT IS A CLAIM ABOUT THE TOOL, NOT ABOUT THE TEST THAT CATCHES IT. Five entries here
+are caught through a unittest ERROR rather than a FAIL, and in all five the exception
+is raised by the ASSERTION: `assertIn` against the `None` a now-permissive `purity`
+hands back, `findings[0]` on a list the mutation emptied, `raw["runner_exempt"]` on a
+file the mutation truncated. The tool went quiet exactly as those entries claim, and
+the shape of the assertion is what raised. So an ERROR is not on its own evidence that
+a mutation is loud, and the FAIL/ERROR mix in a run is not a score.
+
+WHAT THE RULE FORBIDS IS THE TOOL RAISING, and three entries used to do that: deleting
+the length guard in `compare` sent two vectors into `is_projection` to raise
+`IndexError`, and deleting either required-field check in `load` let `entry["reason"]`
+raise `KeyError` one line later. A crash is loud, so those demonstrated the opposite of
+what they are in the table to demonstrate. Each was reshaped to keep the guard and
+change what it DECIDES — a refusal reported as `differs`, which is an `ok` here; a
+missing reason filled in rather than refused — and each is still caught, now by an
+assertion objecting rather than by a traceback. Their entries carry the reasoning.
+
 SEVERAL MUTATIONS ARE VERSIONS THIS TOOL ACTUALLY SHIPPED, kept as mutations rather
 than as comments so a defect fixed once cannot come back quietly:
 
@@ -397,12 +414,19 @@ MUTATIONS = [
      '''    if False:
         return "look", "not comparable: %s vs %s" % (a_key, b_key)
     if len(a_vec) != len(b_vec) or len(a_vec) != len(inputs):'''),
-    ("sameness: a vector that does not match the ladder is compared anyway",
+    # NOT `if False:`, WHICH IS THE LOUD VERSION OF THIS DEFECT. Dropping the guard
+    # sends two vectors of different lengths into `is_projection`, which indexes a
+    # projection built from the OTHER length and raises `IndexError` out of the tool.
+    # A crash is loud, and loud is what the rule at the top of this file rules out. So
+    # the guard still fires; what changes is the verdict it fires WITH. `differs` is an
+    # `ok` here — proof of difference is the good news — so "I cannot compare these
+    # two" is reported as "these two are proven different", and the run stays clean.
+    ("sameness: a vector that does not match the ladder is PROOF the two differ",
      "sameness.py",
      '''    if len(a_vec) != len(b_vec) or len(a_vec) != len(inputs):
         return "look", "vector length disagrees with the ladder"''',
-     '''    if False:
-        return "look", "vector length disagrees with the ladder"'''),
+     '''    if len(a_vec) != len(b_vec) or len(a_vec) != len(inputs):
+        return "differs", "vector length disagrees with the ladder"'''),
     ("sameness: the witness no longer names the input that produced it",
      "sameness.py",
      '''            return "differs", "%s -> %s vs %s" % (inputs[i], x, y)''',
@@ -672,18 +696,27 @@ MUTATIONS = [
         raise ConfigError("%s is not valid JSON (%s)" % (path, exc))''',
      '''    except ValueError:
         return Config()'''),
-    ("config: an exemption without a reason is accepted",
+    # `setdefault` RATHER THAN `if False:`, and the difference is Python's. Deleting
+    # the check lets a reason-less entry through to `entry["reason"]` one line later,
+    # which raises `KeyError` out of `load` — the tool crashing, not the tool going
+    # quiet. (Its JavaScript twin below CAN say `if (false)`: `entry.reason` on a
+    # missing key is `undefined` there, so the same edit is already silent.) Filling
+    # the field in is the silent version: the exemption is accepted, carrying a reason
+    # nobody wrote, and the property it excuses is never audited again.
+    ("config: an exemption without a reason is accepted, wearing one nobody wrote",
      "config.py",
      '''        for field in required:
             if not entry.get(field):''',
      '''        for field in required:
-            if False:'''),
-    ("config: a baseline entry in OBJECT form needs no reason",
+            if not entry.setdefault(field, "unstated"):'''),
+    # The same `setdefault`, for the same reason: dropping "reason" from the tuple
+    # leaves `entry["reason"]` two lines down to raise `KeyError` out of `load`.
+    ("config: a baseline entry in OBJECT form is accepted with a reason nobody wrote",
      "config.py",
      '''        for field in ("line", "reason"):
             if not entry.get(field):''',
-     '''        for field in ("line",):
-            if not entry.get(field):'''),
+     '''        for field in ("line", "reason"):
+            if not entry.setdefault(field, "unstated"):'''),
     ("config: a baseline entry may name a command that cannot produce a finding",
      "config.py",
      '''        if produced_by is not None and produced_by not in FAMILIES:''',
