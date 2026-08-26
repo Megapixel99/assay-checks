@@ -16,6 +16,14 @@ matching:
 Both failures are silent in the direction that matters, which is why counting is worth
 a check rather than a habit.
 
+AND BOTH NAME A PLACE, not just a count. The finding is ABOUT the harness — the harness
+is whose table has gone ambiguous — but the second copy of an anchor usually lives in
+some other file, frequently one added since that harness was last touched. A reader
+handed only the harness starts from the one file that is fine. So the ambiguous finding
+carries the file holding the copies, and the dead one carries the size of the corpus it
+searched, because *matches nothing* and *there was nothing to search* are different
+claims and only the first is about the anchor.
+
 READ, NEVER IMPORTED. Anchors are parsed with `ast` rather than by importing the
 harness: importing one drags in the whole tool it tests, and a harness that does work
 at import time can mask its own mutation just by being loaded. Reading is enough and
@@ -209,18 +217,35 @@ def audit_anchors(root, config, report=None):
         ambiguous, dead = [], []
         for anchor in anchors:
             total += 1
-            worst = max([src.count(anchor) for src in corpus.values()] or [0])
+            # THE COUNT WITHOUT THE FILE SENDS THE READER TO THE WRONG PLACE. This
+            # finding names the HARNESS, because the harness is whose table has become
+            # ambiguous — but the second copy is usually somewhere else entirely, and
+            # often in a file added since that harness was last touched. Saying only
+            # "matches twice" points a reader at the one file they already know about
+            # and leaves them grepping the tree for the one they do not. The path was
+            # in `max()`'s hand and thrown away; keeping it is the whole of the fix.
+            #
+            #
+            # THE FIRST FILE AT THE WORST COUNT WINS, and `>` rather than `>=` is what
+            # says so: the walk is sorted, so a tie names the same file on every run
+            # and on every machine. A finding that moves between two equally guilty
+            # files reads as two different problems.
+            worst, where = 0, None
+            for src_path, src in corpus.items():
+                hits = src.count(anchor)
+                if hits > worst:
+                    worst, where = hits, src_path
             if worst == 0:
                 dead.append(anchor)
             elif worst > 1:
                 # PER FILE, not in total: the same anchor legitimately appearing once
                 # in two different files is not ambiguous for a harness that names its
                 # target, and calling it so would be the crying-wolf failure.
-                ambiguous.append((anchor, worst))
-        for anchor, hits in ambiguous:
-            rep.finding("%s: an anchor matches %d times in ONE file — "
+                ambiguous.append((anchor, worst, os.path.relpath(where, root)))
+        for anchor, hits, where in ambiguous:
+            rep.finding("%s: an anchor matches %d times in ONE file (%s) — "
                         "`replace(..., 1)` will take the first: %r"
-                        % (rel, hits, anchor[:60]), rel)
+                        % (rel, hits, where, anchor[:60]), rel)
         # ZERO MATCHES IS A FINDING, and it is the half of this rule that used to be
         # counted and then reported as `ok`. An anchor matching nothing means the code
         # moved out from under it: loud if the harness checks its target (TARGET
@@ -228,10 +253,19 @@ def audit_anchors(root, config, report=None):
         # testing any more inside a suite that still reports a pass. That was only
         # ever reported as a number because the parser could not tell a label from an
         # anchor and would have failed on every label; it can now, so it can say so.
+        #
+        # AND HOW MANY FILES WERE SEARCHED, because "matches nothing" and "there was
+        # nothing to match it against" are different claims and only one of them is
+        # about the anchor. A root pointed one directory too deep, a corpus emptied by
+        # an `exts` that does not cover the tree, a walk that skipped everything: each
+        # makes every anchor dead at once, and the count is what tells that apart from
+        # a guard the code really did move out from under.
         for anchor in dead:
-            rep.finding("%s: an anchor matches NOTHING — the code moved out from "
-                        "under it, so its mutation tests a guard that is no longer "
-                        "there: %r" % (rel, anchor[:60]), rel)
+            rep.finding("%s: an anchor matches NOTHING in any of %d file%s — the "
+                        "code moved out from under it, so its mutation tests a guard "
+                        "that is no longer there: %r"
+                        % (rel, len(corpus), "" if len(corpus) == 1 else "s",
+                           anchor[:60]), rel)
         for label in unreadable:
             rep.look("%s: cannot tell which column is the anchor in %r — more strings "
                      "than either documented table shape" % (rel, label[:50]), rel)

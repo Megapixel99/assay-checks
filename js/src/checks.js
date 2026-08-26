@@ -100,6 +100,14 @@ export const PROPERTIES = [
   ['restore-in-finally', 'the restore cannot be skipped by an exception',
     'an exception mid-run leaves the target mutated',
     (src) => /\bfinally\s*\{/.test(src)],
+  // SIGKILL IS NOT IN THIS PROPERTY'S REACH, and that is worth knowing before relying
+  // on it. SIGKILL cannot be caught: no handler runs, no `finally` runs, and nothing
+  // this check could look for would have helped. The ordinary way to be SIGKILLed is a
+  // TIMEOUT rather than an impatient person, so a harness satisfying all seven
+  // properties, invoked under a timeout it then exceeds, leaves the tree mutated
+  // exactly as though it carried none of them. The remedy belongs to whatever INVOKED
+  // the harness: check that the tree came back, rather than trust that the harness was
+  // given the chance to put it back.
   ['sigterm', 'SIGTERM becomes an exception so `finally` runs',
     'SIGTERM does not run `finally`; a kill leaves the tree broken',
     (src) => src.includes('SIGTERM')],

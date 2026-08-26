@@ -673,6 +673,42 @@ MUTATIONS = [
      '''            elif len(parts) > 4:
                 found.append(anchor_column(parts).value)'''),
 
+    # THE FINDING STOPS SAYING WHERE, which is the version this package shipped. It
+    # is still a finding, still red, still correct — and it names the harness while
+    # the second copy sits in a file the reader has to go and find. A check that is
+    # right and unactionable is the one people stop running.
+    ("anchors: an ambiguous finding stops naming the file holding the copies",
+     "anchors.py",
+     '''            rep.finding("%s: an anchor matches %d times in ONE file (%s) \u2014 "
+                        "`replace(..., 1)` will take the first: %r"
+                        % (rel, hits, where, anchor[:60]), rel)''',
+     '''            rep.finding("%s: an anchor matches %d times in ONE file \u2014 "
+                        "`replace(..., 1)` will take the first: %r"
+                        % (rel, hits, anchor[:60]), rel)'''),
+    # A TIE THAT MOVES. `>=` names the LAST file at the worst count instead of the
+    # first, so two equally guilty files make the finding's text depend on walk order.
+    # The text is what a `baseline` entry matches WHOLE, so an unstable one is an
+    # accepted line that silently stops being accepted.
+    ("anchors: a tie names a different file depending on walk order",
+     "anchors.py",
+     '''                if hits > worst:
+                    worst, where = hits, src_path''',
+     '''                if hits >= worst:
+                    worst, where = hits, src_path'''),
+    # "MATCHES NOTHING" AND "THERE WAS NOTHING TO SEARCH" collapse into one sentence.
+    # A root pointed one directory too deep makes every anchor dead at once, and
+    # without the corpus size that reads as a tree full of rotted anchors.
+    ("anchors: a dead anchor stops saying how many files were searched",
+     "anchors.py",
+     '''                        % (rel, len(corpus), "" if len(corpus) == 1 else "s",
+                           anchor[:60]), rel)''',
+     '''                        % (rel, 0, "" if len(corpus) == 1 else "s",
+                           anchor[:60]), rel)'''),
+    ("anchors: the JavaScript half stops naming the file and the two disagree",
+     "anchors.js",
+     '''      report.finding(`${rel}: an anchor matches ${hits} times in ONE file (${where}) \u2014 `''',
+     '''      report.finding(`${rel}: an anchor matches ${hits} times in ONE file \u2014 `'''),
+
     ("anchors: a declared-test column shifts the anchor onto the replacement",
      "anchors.py",
      '''    trimmed = list(parts)
@@ -1013,12 +1049,20 @@ MUTATIONS += [
      """      if (false) dead.push(anchor);"""),
     ("js anchors: an ambiguous anchor stops being a finding",
      "anchors.js",
-     """      else if (worst > 1) ambiguous.push([anchor, worst]);""",
-     """      else if (false) ambiguous.push([anchor, worst]);"""),
+     """      else if (worst > 1) ambiguous.push([anchor, worst, where]);""",
+     """      else if (false) ambiguous.push([anchor, worst, where]);"""),
     ("js anchors: ambiguity is counted across files rather than PER file",
      "anchors.js",
-     """        if (hits > worst) worst = hits;""",
-     """        worst += hits;"""),
+     """        if (hits > worst) { worst = hits; where = file; }""",
+     """        if (hits > 0) { worst += hits; where = file; }"""),
+    # THE SAME LINE, A DIFFERENT RULE. The one above breaks PER-FILE counting; this
+    # breaks which file gets named when two are equally guilty, and the tests that go
+    # red are different. One line can carry two guards, and a table that mutates it
+    # once claims coverage of both.
+    ("js anchors: a tie names a different file depending on walk order",
+     "anchors.js",
+     """        if (hits > worst) { worst = hits; where = file; }""",
+     """        if (hits >= worst) { worst = hits; where = file; }"""),
     ("js anchors: harnesses rejoin the corpus, so anchors match themselves",
      "anchors.js",
      """  const skip = harnessPaths(root);""",

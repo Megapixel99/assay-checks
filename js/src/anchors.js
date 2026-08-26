@@ -16,6 +16,14 @@
  *     mutation tested something else*, and those two send you to opposite ends of the
  *     codebase.
  *
+ * AND BOTH NAME A PLACE, not just a count. The finding is ABOUT the harness — the
+ * harness is whose table has gone ambiguous — but the second copy of an anchor usually
+ * lives in some other file, frequently one added since that harness was last touched.
+ * A reader handed only the harness starts from the one file that is fine. So the
+ * ambiguous finding carries the file holding the copies, and the dead one carries the
+ * size of the corpus it searched, because *matches nothing* and *there was nothing to
+ * search* are different claims and only the first is about the anchor.
+ *
  * BY IMPORT, NOT BY PARSE, and that is the whole design of this file. The Python half
  * lifts the table out with `ast` and executes nothing. JavaScript has no parser in its
  * standard library and this package has no dependencies, so for a long time the honest
@@ -215,7 +223,12 @@ export async function auditAnchors(root, config, report = new Report()) {
     }
     if (skip.has(real)) continue;
     try {
-      corpus.push(readFileSync(file, 'utf8'));
+      // THE PATH TRAVELS WITH THE SOURCE. A finding that reports a count and not a
+      // place names the harness — which is whose table went ambiguous — while the
+      // second copy sits in some other file, often one added since that harness was
+      // last touched. Carrying only the text made that path unrecoverable at the only
+      // moment it was wanted.
+      corpus.push({ at: path.relative(root, file), src: readFileSync(file, 'utf8') });
     } catch {
       // Unreadable or not UTF-8. Skipped rather than counted: a file this cannot read
       // holds an unknown number of occurrences, and guessing at zero is a guess.
@@ -251,27 +264,40 @@ export async function auditAnchors(root, config, report = new Report()) {
       // PER FILE, not in total: the same anchor legitimately appearing once in two
       // different files is not ambiguous for a harness that names its target, and
       // calling it so would be the crying-wolf failure.
+      //
+      // THE FIRST FILE AT THE WORST COUNT WINS, and `>` rather than `>=` is what says
+      // so: the walk is sorted, so a tie names the same file on every run and on every
+      // machine. A finding that moves between two equally guilty files reads as two
+      // different problems.
       let worst = 0;
-      for (const src of corpus) {
+      let where = null;
+      for (const { at: file, src } of corpus) {
         let hits = 0;
-        let at = src.indexOf(anchor);
-        while (at !== -1 && anchor) { hits += 1; at = src.indexOf(anchor, at + anchor.length); }
-        if (hits > worst) worst = hits;
+        let idx = src.indexOf(anchor);
+        while (idx !== -1 && anchor) { hits += 1; idx = src.indexOf(anchor, idx + anchor.length); }
+        if (hits > worst) { worst = hits; where = file; }
       }
       if (worst === 0) dead.push(anchor);
-      else if (worst > 1) ambiguous.push([anchor, worst]);
+      else if (worst > 1) ambiguous.push([anchor, worst, where]);
     }
-    for (const [anchor, hits] of ambiguous) {
-      report.finding(`${rel}: an anchor matches ${hits} times in ONE file — `
+    for (const [anchor, hits, where] of ambiguous) {
+      report.finding(`${rel}: an anchor matches ${hits} times in ONE file (${where}) — `
         + `\`replace\` will take the first: ${JSON.stringify(anchor.slice(0, 60))}`, rel);
     }
     // ZERO MATCHES IS A FINDING. An anchor matching nothing means the code moved out
     // from under it: loud if the harness checks its target and SILENTLY INERT if it
     // does not, which is a guard nobody is testing any more inside a suite that still
     // reports a pass.
+    //
+    // AND HOW MANY FILES WERE SEARCHED, because "matches nothing" and "there was nothing
+    // to match it against" are different claims and only one of them is about the
+    // anchor. A root pointed one directory too deep, or a walk that skipped
+    // everything, makes every anchor dead at once — and the count is what tells that
+    // apart from a guard the code really did move out from under.
     for (const anchor of dead) {
-      report.finding(`${rel}: an anchor matches NOTHING — the code moved out from `
-        + 'under it, so its mutation tests a guard that is no longer there: '
+      report.finding(`${rel}: an anchor matches NOTHING in any of ${corpus.length} `
+        + `file${corpus.length === 1 ? '' : 's'} — the code moved out from under it, `
+        + 'so its mutation tests a guard that is no longer there: '
         + `${JSON.stringify(anchor.slice(0, 60))}`, rel);
     }
     for (const label of unreadable) {

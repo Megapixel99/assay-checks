@@ -126,9 +126,24 @@ def _p_sigterm(src, tree):
     """SIGTERM turned into an exception, because SIGTERM does not run `finally`.
 
     This is the one people are surprised by. A `finally` block protects you from
-    exceptions and from nothing else; a harness killed by a timeout, a CI cancel or an
-    impatient `kill` leaves every mutation it had applied sitting in your working
-    tree. Work then proceeds on top of deliberately broken code, and nothing says so.
+    exceptions and from nothing else, so a harness that takes a plain `kill` or a CI
+    cancel mid-run leaves every mutation it had applied sitting in your working tree.
+    Work then proceeds on top of deliberately broken code, and nothing says so.
+
+    SIGKILL IS NOT IN THIS PROPERTY'S REACH, and that belongs here rather than in
+    whichever tree discovers it. SIGKILL cannot be caught, blocked or handled: no
+    handler runs, no `finally` runs, and nothing this check could look for would have
+    helped. THE ORDINARY WAY TO BE SIGKILLED IS A TIMEOUT rather than an impatient
+    person — `subprocess.run(..., timeout=...)` kills the child outright, and so does
+    the kill step of a CI runner that has waited long enough. A harness satisfying all
+    seven properties, invoked under a timeout it then exceeds, leaves the tree mutated
+    exactly as though it carried none of them.
+
+    SO THE REMEDY FOR THAT CASE IS NOT IN THE HARNESS AND CANNOT BE. It belongs to
+    whatever INVOKED the harness, which has to check that the tree came back rather
+    than trust that the harness was given the chance to put it back. `restore-verified`
+    is the same argument one level down — a restore that ran is not a restore that
+    worked — and this is a restore that never ran at all.
     """
     return "SIGTERM" in src
 
