@@ -1170,11 +1170,18 @@ MUTATIONS += [
       current = '';
       continue;
     }"""),
+    # ANCHORED THROUGH THE COMMENT ABOVE IT, because the two lines below are now the
+    # shape of every reader in the file — `moduleBindings` opens exactly the same way.
+    # An anchor that matches twice takes the FIRST, so this mutation would have moved
+    # to whichever reader happened to be earlier in the file rather than the one it is
+    # about, and `assay anchors` said so before it could.
     ("js sameness: an unreadable parameter list is guessed at rather than refused",
      "sameness.js",
-     """  const text = stripNonCode(source, true);
+     """  // inside a comment would otherwise close the list early or add a parameter.
+  const text = stripNonCode(source, true);
   if (text === null) return null;""",
-     """  const text = stripNonCode(source, true) || source;
+     """  // inside a comment would otherwise close the list early or add a parameter.
+  const text = stripNonCode(source, true) || source;
   if (text === null) return null;"""),
 
     # ---- the gate knows every spelling of an import, and the blast is bounded -- #
@@ -1196,10 +1203,15 @@ MUTATIONS += [
     if (elsewhere) {""",
      """    const elsewhere = origins.get(fn);
     if (false) {"""),
+    # ANCHORED THROUGH THE COMMENT, because the import resolver in `main` asks the very
+    # same question of the very same bytes and so spells this line identically. First
+    # match wins, and the two are in different functions — `assay anchors` caught it.
     ("js probe: the origin gate reads the BARREL's bytes instead of the origin's",
      "probe.js",
-     """      const refusal = fileRefusal(text);""",
-     """      const refusal = fileRefusal(source);"""),
+     """      // its exports refused here would contradict the gate one directory over.
+      const refusal = loadRefusal(text);""",
+     """      // its exports refused here would contradict the gate one directory over.
+      const refusal = loadRefusal(source);"""),
     ("js probe: a refused origin is de-duplicated away, so nothing reports it",
      "probe.js",
      """  for (const [fn, refusal] of origins) if (!refusal) inherited.add(fn);""",
@@ -1209,6 +1221,13 @@ MUTATIONS += [
     ("js probe: the child answers once at the end, so a kill loses everything",
      "probe.js",
      """  for (const [name, fn] of found) {
+    // A MODULE THAT COULD NOT BE READ REFUSES EVERY FUNCTION IN IT. The call gate
+    // resolves free names against this scope, so without it there is no gate — and a
+    // file the lexer lost the thread on is the last one to probe on a guess.
+    if (mod === null) {
+      say({ entry: { name, skip: 'module scope could not be read' } });
+      continue;
+    }
     // THE DEFINING FILE'S REFUSAL, CHECKED BEFORE THE FUNCTION IS CALLED. Reaching a
     // function through a barrel must not launder the gate its own file failed; see
     // `dependencyExports`. A `skip` rather than a silent drop, because "we declined to
@@ -1222,13 +1241,19 @@ MUTATIONS += [
     // eslint-disable-next-line no-await-in-loop
     say({
       entry: await probeFunction(fn, name, request.ladders, request.cross === true,
+        mod,
         // A request from an older caller carries no budget; the shared default is
         // then the same number it would have read from this module anyway.
-        typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS),
+        typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS,
+        resolveImport),
     });
   }""",
      """  const all = [];
   for (const [name, fn] of found) {
+    if (mod === null) {
+      all.push({ name, skip: 'module scope could not be read' });
+      continue;
+    }
     const elsewhere = origins.get(fn);
     if (elsewhere) {
       all.push({ name, skip: `defined in a file that ${elsewhere}` });
@@ -1236,7 +1261,8 @@ MUTATIONS += [
     }
     // eslint-disable-next-line no-await-in-loop
     all.push(await probeFunction(fn, name, request.ladders, request.cross === true,
-      typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS));
+      mod, typeof request.perInput === 'number' ? request.perInput : PER_INPUT_MS,
+      resolveImport));
   }
   for (const entry of all) say({ entry });"""),
     ("js sameness: a function that never answered is dropped rather than reported",
