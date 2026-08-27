@@ -1353,6 +1353,93 @@ class WhyOnTheSharedLadder(unittest.TestCase):
                 self.assertEqual(code, 0)
 
 
+class AllFoldsInTheCrossHalf(unittest.TestCase):
+    """`all --sweep PATH --against BUNDLE`: the cross half, inside the complete run.
+
+    `all` is the command that decides whether a baseline line may be called stale, so
+    a cross finding that `all` could not produce is a line nothing can ever answer.
+    """
+
+    def other(self, files):
+        code, text = run("bundle", tree(files))
+        self.assertEqual(code, 0, text)
+        path = os.path.join(tree({}), "other.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(as_other_half(json.loads(text)), fh)
+        return path
+
+    def all_args(self, root, *extra):
+        return ("--root", root, "all", "--base", "HEAD") + extra
+
+    def test_it_reports_the_cross_finding_and_the_far_census(self):
+        root = tree({"m.py": CROSS_TWINS})
+        code, text = run(*self.all_args(root, "--sweep", root,
+                                        "--against", self.other({"m.py": CROSS_TWINS})))
+        self.assertEqual(code, 1, text)
+        self.assertIn("same answer across languages", text)
+        self.assertIn("[javascript]", text)
+
+    def test_sweep_joins_PERFORMED_only_when_it_actually_RAN(self):
+        """`performed` is what lets a TAGGED line be answered by the one command that
+        fires it. A run that named an audit it did not perform would call a line stale
+        that nothing in the run could have fired — the cry-wolf failure, one level up.
+
+        A baseline has to EXIST for `performed` to be reported at all, which is why
+        this fixture writes one: `report.baseline` is None when there is nothing to
+        apply, and a test reading it off a config-less run asserts against a shape the
+        command never produces.
+        """
+        config = json.dumps({"baseline": [{"line": "a cross line",
+                                           "reason": "read it", "from": "sweep"}]})
+        root = tree({"m.py": CROSS_TWINS, "assay.json": config})
+        _code, data = self.payload(*self.all_args(root))
+        self.assertNotIn("sweep", data["baseline"]["performed"])
+        # ...and the line it cannot answer is counted as NOT CHECKED rather than stale.
+        self.assertEqual([u["line"] for u in data["baseline"]["unchecked"]],
+                         ["a cross line"])
+        _code, data = self.payload(
+            *self.all_args(root, "--sweep", root,
+                           "--against", self.other({"m.py": CROSS_TWINS})))
+        self.assertIn("sweep", data["baseline"]["performed"])
+        self.assertEqual(data["baseline"]["unchecked"], [])
+        self.assertEqual(data["baseline"]["stale"], ["a cross line"])
+
+    def payload(self, *argv):
+        code, text = run("--json", *argv)
+        return code, json.loads(text)
+
+    def test_a_BROKEN_far_side_exits_2_before_any_audit_reports(self):
+        """Three audits reporting from a run that then exits 2 reads as though their
+        findings were the failure."""
+        broken = os.path.join(tree({}), "broken.json")
+        with open(broken, "w", encoding="utf-8") as fh:
+            fh.write("{not json")
+        root = tree({"m.py": CROSS_TWINS})
+        code, text = run(*self.all_args(root, "--sweep", root, "--against", broken))
+        self.assertEqual(code, 2)
+        self.assertIn("assay bundle", text)
+        self.assertNotIn("functions,", text)
+
+    def test_against_WITHOUT_sweep_is_an_error_rather_than_a_silent_skip(self):
+        """A flag accepted and inert is the shape of a shipped defect this package
+        carries a comment about."""
+        root = tree({"m.py": CROSS_TWINS})
+        code, text = run(*self.all_args(root, "--against",
+                                        self.other({"m.py": CROSS_TWINS})))
+        self.assertEqual(code, 2)
+        self.assertIn("--sweep", text)
+
+    def test_a_bundle_of_its_OWN_language_is_refused(self):
+        _code, text = run("bundle", tree({"m.py": CROSS_TWINS}))
+        same = os.path.join(tree({}), "same.json")
+        with open(same, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        root = tree({"m.py": CROSS_TWINS})
+        code, out = run(*self.all_args(root, "--sweep", root, "--against", same))
+        self.assertEqual(code, 2)
+        self.assertIn("--scan", out)
+
+
 class ItRunsOnItself(unittest.TestCase):
 
     def test_the_package_holds_no_two_functions_that_answer_the_same_question(self):
