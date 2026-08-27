@@ -17,6 +17,46 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### A body is deferred wherever a body cannot run
+
+The load gate deferred a function body only under a declaration keyword —
+`function`, `class`, `const`, `let`, `var` at depth 0. A CommonJS barrel has none of
+those:
+
+```js
+module.exports = {
+  at: (v) => new Date(v),
+  twice: (n) => n * 2,
+};
+```
+
+Nothing here is a declaration, so the clock in one property refused the file and took
+every pure helper with it — **the very defect the gate was written to fix, surviving in
+the spelling most of a CommonJS estate is written in.** Object-literal property values
+and shorthand methods are now deferred like declarations. On a ten-helper Handlebars
+barrel written this way: 0 probed becomes 6.
+
+**The same edit closed a hole running the other way.**
+`const x = function () { return Date.now(); }();` is an IIFE — it reads the clock on the
+way in — and the gate blanked its body and called the file clean. That is the dangerous
+direction: a file the gate exists to refuse, loaded. The wrapped spelling
+`(function () { … })()` was already refused, but only because a parenthesised group is
+not followed by `=>` and the initializer scan gave up on it — correct by accident, in
+the one place where an accident is a loaded module. Both spellings are now refused
+deliberately, in property position and in initializer position alike.
+
+**An accessor is still not deferred, and that one is a guard rather than an accident.**
+`{ get x() { … } }` runs when the property is *read*, and `exportedFunctions` reads
+every export in order to enumerate it — so a getter body is reachable in a way an
+ordinary method's is not. There is a test that says so.
+
+`async` and generator properties are not deferred either, for want of the same check.
+That is over-refusal: it costs coverage and says so in the census.
+
+Two mutations were added, one per direction, because both are versions this tool
+actually shipped.
+
+
 **A MINOR bump when it lands, and the rule at the top says why:** `why` grows two flags
 and `search` reports a case it used to print as a clean result, so a tree green on 0.4.0
 may show a new `look`. Nothing is removed and no exit code moves — a `look` has never

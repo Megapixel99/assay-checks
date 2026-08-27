@@ -781,6 +781,54 @@ test('an arrow with an EXPRESSION body is still deferred', () => {
   assert.equal(loadRefusal('export const at = (v) => new Date(v);\n'), null);
 });
 
+test('a CJS barrel exporting arrows INLINE defers them like declarations', () => {
+  // The shape most of a CommonJS estate is written in, and the one the load gate
+  // missed: nothing here is a declaration keyword at depth 0, so a clock in one
+  // property refused the file and took every pure helper with it — the very defect the
+  // gate was written to fix, surviving in a different spelling.
+  const src = 'module.exports = {\n'
+    + '  at: (v) => new Date(v),\n'
+    + '  twice: (n) => n * 2,\n'
+    + '};\n';
+  assert.equal(fileRefusal(src), 'reads the clock');   // the whole-file answer
+  assert.equal(loadRefusal(src), null);                // nothing reads it on the way IN
+});
+
+test('a SHORTHAND METHOD in an object literal is deferred too', () => {
+  assert.equal(loadRefusal('module.exports = { at(v) { return new Date(v); } };\n'), null);
+});
+
+test('an IIFE in property position runs at import, in BOTH spellings', () => {
+  // `fnBodySpan` refuses the wrapped one because a parenthesised group is not followed
+  // by `=>`. The bare one needs `invoked`, and nothing was checking it.
+  assert.equal(loadRefusal('module.exports = { x: (() => Date.now())() };\n'),
+    'reads the clock');
+  assert.equal(loadRefusal('module.exports = { x: function () { return Date.now(); }() };\n'),
+    'reads the clock');
+});
+
+test('a GETTER is not deferred, because reading a property RUNS it', () => {
+  // `exportedFunctions` reads every export to enumerate it, so an accessor body is
+  // reachable in a way an ordinary method's is not. The guard is that the name must sit
+  // directly after `{` or `,`, and a getter's does not — `get` is in the way.
+  assert.equal(loadRefusal('module.exports = { get x() { return Date.now(); } };\n'),
+    'reads the clock');
+});
+
+test('an IIFE bound to a NAME still runs at import', () => {
+  // The dangerous direction, and it shipped: blanking this body called the file clean,
+  // which is a file the gate exists to refuse getting loaded. The wrapped spelling was
+  // already refused, but only because the initializer scan gave up on a parenthesised
+  // group — correct by accident, in the one place an accident is a loaded module.
+  assert.equal(loadRefusal('const x = function () { return Date.now(); }();\n'),
+    'reads the clock');
+  assert.equal(loadRefusal('const x = (function () { return Date.now(); })();\n'),
+    'reads the clock');
+  // ...and an ordinary function expression is still deferred, so this cannot pass by
+  // refusing everything.
+  assert.equal(loadRefusal('const f = function () { return Date.now(); };\n'), null);
+});
+
 test('a function is refused for what its FREE NAMES reach', () => {
   // The hole that makes "narrow the file gate and stop" unsafe. `slugA`'s own source
   // mentions nothing gated; `stamp` is not exported, so nothing else looks at it.
