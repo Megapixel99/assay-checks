@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
-  Accepted, Config, ConfigError, applyBaseline, load, writeBaseline,
+  Accepted, COMPLETING, Config, ConfigError, FAMILIES, applyBaseline, load,
+  writeBaseline,
 } from '../src/config.js';
 import { Item } from '../src/verdicts.js';
 
@@ -285,4 +286,53 @@ test('no source file contains a NUL byte', () => {
     }
   };
   walk(SRC);
+});
+
+// --------------------------------------------------------------------------- //
+// A legal `from` and a complete run are DIFFERENT QUESTIONS
+//
+// Conflating them is a defect in whichever direction you resolve it, and both
+// directions are asserted below rather than described.
+// --------------------------------------------------------------------------- //
+
+const FOUR = ['runners', 'anchors', 'diff', 'scan'];
+
+test('adding sweep did NOT make every existing config incomplete', () => {
+  // THE REGRESSION THAT WAS NOT ACCEPTED. `sweep` is a legal `from`, but it is not one
+  // of the audits an UNTAGGED line could have come from — because `accept` always
+  // writes `from`, so every untagged line that can exist was written before `sweep`
+  // did, and no line older than a command was produced by it.
+  //
+  // Had `sweep` joined the completeness set, every already-written `assay.json` would
+  // quietly stop having its untagged entries checked: the tool doing less, reporting a
+  // caveat, on configs that were fine the day before.
+  const entry = new Accepted('an old untagged line', 'read it', null);
+  const [, stale, unchecked] = applyBaseline([], [entry], FOUR);
+  assert.deepEqual(stale.map((e) => e.line), ['an old untagged line']);
+  assert.deepEqual(unchecked, []);
+});
+
+test('a CROSS line is NOT called stale by a run that never swept', () => {
+  // THE CRY-WOLF FAILURE, in the direction the other resolution would have produced.
+  // Leave `sweep` out of the legal tags and a cross finding lands untagged — where a
+  // run complete by the four-audit definition, having never swept, calls it stale on a
+  // clean tree.
+  const entry = new Accepted('a cross line', 'read it', 'sweep');
+  const [, stale, unchecked] = applyBaseline([], [entry], FOUR);
+  assert.deepEqual(stale, []);
+  assert.deepEqual(unchecked.map((e) => e.line), ['a cross line']);
+});
+
+test('a run that DID sweep answers the cross line', () => {
+  const entry = new Accepted('a cross line', 'read it', 'sweep');
+  const [, stale, unchecked] = applyBaseline([], [entry], [...FOUR, 'sweep']);
+  assert.deepEqual(stale.map((e) => e.line), ['a cross line']);
+  assert.deepEqual(unchecked, []);
+});
+
+test('sweep is a LEGAL from so accept can write it', () => {
+  // Without this the tag is refused at load and `assay accept` writes a config its own
+  // loader rejects.
+  assert.ok(FAMILIES.includes('sweep'));
+  assert.ok(!COMPLETING.includes('sweep'));
 });

@@ -63,6 +63,8 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] [--json] <command>
   diff [--base REF]           does this change carry the checks it needs?
   all  [--base REF]           runners + anchors + diff
        [--scan PATH...]       ...and the sameness half over these paths
+       [--sweep PATH...]      ...and the CROSS half over these
+       [--against B]          ...against the other half's bundle
   accept [LINE] --reason R    write a finding into the baseline, with a reason
   scan PATH...                discover functions that answer the same question
   pair FILE::NAME FILE::NAME  compare two named functions
@@ -91,8 +93,8 @@ exit: 0 nothing to read, 1 findings, 2 could not run
 export function parseArgs(argv) {
   const opts = {
     root: '.', config: null, quiet: false, base: 'origin/main',
-    cmd: null, positional: [], into: [], scan: [], against: [], asJson: false,
-    stdin: false, name: null, reason: null, withCmd: null, cross: false,
+    cmd: null, positional: [], into: [], scan: [], against: [], againstPaths: [],
+    asJson: false, stdin: false, name: null, reason: null, withCmd: null, cross: false,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -107,8 +109,14 @@ export function parseArgs(argv) {
     else if (arg === '--reason') { i += 1; opts.reason = argv[i]; }
     else if (arg === '--with') { i += 1; opts.withCmd = argv[i]; }
     else if (arg === '--name') { i += 1; opts.name = argv[i]; }
-    else if (arg === '--in' || arg === '--scan' || arg === '--against') {
-      const target = { '--in': opts.into, '--scan': opts.scan, '--against': opts.against }[arg];
+    else if (arg === '--in' || arg === '--scan' || arg === '--against'
+      || arg === '--sweep') {
+      const target = {
+        '--in': opts.into,
+        '--scan': opts.scan,
+        '--against': opts.against,
+        '--sweep': opts.againstPaths,
+      }[arg];
       i += 1;
       while (i < argv.length && !argv[i].startsWith('-')) { target.push(argv[i]); i += 1; }
       i -= 1;
@@ -428,7 +436,7 @@ function queryFlags(opts) {
  * HALF, and saying otherwise is how a `same answer` line gets called stale on a clean
  * tree — so `scan` joins the performed set only when a scan actually ran.
  */
-async function auditEverything(root, opts, config, report) {
+async function auditEverything(root, opts, config, report, document = null) {
   const families = new Map();
   const performed = [];
   // A SEPARATE REPORT PER AUDIT, so a finding can be attributed to the audit that
@@ -454,9 +462,67 @@ async function auditEverything(root, opts, config, report) {
       const scan = await collect(opts.scan);
       group(scan);
       reportScan(scan, rep);
+      // The census as DATA travels on the SHARED report, because that is the one a
+      // renderer sees. A sub-report is only ever a way to attribute findings to the
+      // audit that produced them — so setting it on `rep` would drop it, and
+      // `assay all --scan --json` answered `"scan": null` here while the Python half
+      // answered with the census. One invocation, two documents, decided by which
+      // binary CI installed.
+      report.scan = scan.toDict();
+    });
+  }
+  // THE CROSS HALF JOINS `performed` ONLY WHEN IT ACTUALLY RAN, exactly as `scan` does,
+  // and for the same reason: a run that names an audit it did not perform can call a
+  // line stale that nothing in the run could have fired.
+  if (document) {
+    await perform('sweep', async (rep) => {
+      const scan = await collect(opts.againstPaths, new Scan(), true);
+      const theirs = document.language || 'unknown';
+      for (const [key, mine, them] of crossBuckets(scan, document)) {
+        rep.finding(
+          `same answer across languages (${key}): ${mine.join(', ')} [javascript]  vs  `
+          + `${them.join(', ')} [${theirs}]`, mine[0],
+          'no input in the shared ladder told them apart — READ them; only a person '
+          + 'decides whether the duplication is a defect',
+        );
+      }
+      reportScan(scan, rep);
+      if (document.census) reportCensus(document.census, rep, `[${theirs}]`);
+      report.other = {
+        language: theirs, records: (document.records || []).length,
+        census: document.census ?? null,
+      };
     });
   }
   return { families, performed };
+}
+
+/**
+ * The bundle `all` and `accept` will sweep against: `{ document }`, `{}` when none was
+ * asked for, or `{ unresolved }`. Resolved BEFORE any audit runs.
+ *
+ * A bundle this half cannot read is exit 2, and finding that out after `runners`,
+ * `anchors` and `diff` have all reported would bury the reason under three audits the
+ * caller was not asking about — and, worse, print their findings from a run that then
+ * exits 2, which reads as though those findings were the failure.
+ */
+function farSide(opts) {
+  if (!opts.against.length) return {};
+  const found = otherSide(opts.against, opts.withCmd);
+  if (found.unresolved) return found;
+  if (found.document.language === 'javascript') {
+    return {
+      unresolved: '--against is a javascript bundle and this is the javascript half — '
+        + "`--scan` folds in one language's own ladder, which is stronger",
+    };
+  }
+  if (!opts.againstPaths.length) {
+    return {
+      unresolved: '--against needs --sweep PATH: the bundle is the OTHER half\'s tree '
+        + 'and this is the one to compare against it',
+    };
+  }
+  return found;
 }
 
 // The suffix decides which half a reference belongs to. Inferred rather than declared,
@@ -1154,7 +1220,10 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       return finish(report, config, write, opts, ['diff']);
 
     case 'all': {
-      const { performed } = await auditEverything(root, opts, config, report);
+      const far = farSide(opts);
+      if (far.unresolved) return fail(opts, write, far.unresolved);
+      const { performed } = await auditEverything(root, opts, config, report,
+        far.document || null);
       return finish(report, config, write, opts, performed);
     }
 
@@ -1164,7 +1233,10 @@ export async function run(argv, write = (s) => process.stdout.write(s),
           + 'cannot be told from an oversight,\n       and the baseline is the table '
           + 'that accumulates most and rots first.');
       }
-      const { families } = await auditEverything(root, opts, config, report);
+      const far = farSide(opts);
+      if (far.unresolved) return fail(opts, write, far.unresolved);
+      const { families } = await auditEverything(root, opts, config, report,
+        far.document || null);
       const known = new Set(config.baselineLines);
       const fired = new Set(report.findings.map((i) => i.message));
       const line = opts.positional[0];

@@ -306,6 +306,42 @@ class TheTwoHalvesAgree(unittest.TestCase):
         for source in (py("cli.py"), js("cli.js")):
             self.assertIn("NOT checked for staleness", source)
 
+    def test_both_halves_carry_the_CENSUS_AS_DATA_out_of_a_complete_run(self):
+        """`all --scan --json` answered `"scan": null` in JavaScript and the census in
+        Python — one documented invocation, two different documents, decided by which
+        binary CI installed. A consumer merging two reports has no way to see that.
+
+        The cause is the same in both halves and is why this is easy to get wrong: the
+        sub-report handed to each audit exists ONLY to attribute findings, so the
+        census has to be set on the SHARED report or it is dropped on the floor.
+        """
+        self.assertIn("report.scan = scan.to_dict()", py("cli.py"))
+        self.assertIn("report.scan = scan.toDict();", js("cli.js"))
+        # ...on the SHARED report in both, never on the per-audit one.
+        self.assertNotIn("rep.scan =", py("cli.py"))
+        self.assertNotIn("rep.scan =", js("cli.js"))
+
+    def test_a_legal_FROM_and_a_COMPLETE_RUN_are_different_questions(self):
+        """`FAMILIES` answers "is this a legal `from`?"; `COMPLETING` answers "may a run
+        that skipped X call an UNTAGGED line stale?". Conflating them is a defect in
+        whichever direction you resolve it — put `sweep` in the completeness set and
+        every existing `assay all --scan` stops being complete, so untagged entries in
+        already-written configs silently stop being checked; leave `sweep` out of the
+        legal tags and a cross finding lands untagged, where `all --scan` calls it
+        stale on a clean tree.
+
+        The two sets differ by exactly `sweep`, in both halves, and that is asserted
+        rather than described."""
+        from assay.config import COMPLETING, FAMILIES         # noqa: PLC0415
+
+        self.assertEqual(set(FAMILIES) - set(COMPLETING), {"sweep"})
+        found = re.search(r"export const COMPLETING = \[([^\]]+)\]", js("config.js"))
+        names = tuple(re.findall(r"'([^']+)'", found.group(1)))
+        self.assertEqual(names, COMPLETING)
+        # And the completeness check reads COMPLETING in both halves, not FAMILIES.
+        self.assertIn("set(COMPLETING) <= performed", py("config.py"))
+        self.assertIn("COMPLETING.every((f) => did.has(f))", js("config.js"))
+
     def test_both_halves_know_the_same_set_of_baseline_FAMILIES(self):
         """`from` names the command that can produce a line, and the two halves have
         to agree on what those are or one `assay.json` is valid to one binary and a
@@ -648,12 +684,19 @@ class TheTwoHalvesAgree(unittest.TestCase):
         be the duplication this package exists to find, and they would disagree in
         silence: `accept` would tag a line with a command `all` no longer performs, and
         that line could then never be called stale."""
-        self.assertIn("_audit_everything(args, config, report)", py("cli.py"))
-        self.assertIn("auditEverything(root, opts, config, report)", js("cli.js"))
+        self.assertIn("_audit_everything(args, config, report, document)", py("cli.py"))
+        self.assertIn("auditEverything(root, opts, config, report,", js("cli.js"))
         # ...and each half CALLS it exactly twice, from `all` and from `accept`. A
         # third call site would be a third opinion about what a complete run is.
         self.assertEqual(py("cli.py").count("= _audit_everything("), 2)
         self.assertEqual(js("cli.js").count("= await auditEverything("), 2)
+        # THE FAR SIDE IS RESOLVED IN ONE PLACE TOO, and that is the same rule one step
+        # out. `sweep` joins `performed` only when a bundle was actually read, so two
+        # resolvers could disagree about whether this run swept — and then `accept`
+        # would tag a line `from: sweep` that `all` never performs, which is a line
+        # nothing can ever call stale.
+        self.assertEqual(py("cli.py").count("= _far_side(args, out)"), 2)
+        self.assertEqual(js("cli.js").count("= farSide(opts)"), 2)
 
     def test_the_CROSS_LADDER_is_ONE_DOCUMENT_carried_by_BOTH_halves(self):
         """The proof `assay cross` rests on, and the reason the shape check below is

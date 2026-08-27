@@ -15,7 +15,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from assay.config import (Accepted, Config, ConfigError,  # noqa: E402
+from assay.config import (COMPLETING, FAMILIES,  # noqa: E402
+                          Accepted, Config, ConfigError,
                          FAMILIES, apply_baseline, load,
                          write_baseline)
 from assay.verdicts import Item  # noqa: E402
@@ -251,6 +252,50 @@ class StalenessIsPerLine(unittest.TestCase):
         _s, stale, unchecked = apply_baseline([], [entry], ("runners", "diff"))
         self.assertEqual(stale, [])
         self.assertEqual([e.line for e in unchecked], ["an anchors finding"])
+
+    # ---- a legal `from` and a complete run are DIFFERENT QUESTIONS -------- #
+    #
+    # Conflating them is a defect in whichever direction you resolve it, and both
+    # directions are asserted below rather than described.
+
+    FOUR = ("runners", "anchors", "diff", "scan")
+
+    def test_adding_sweep_did_NOT_make_every_existing_config_incomplete(self):
+        """THE REGRESSION THAT WAS NOT ACCEPTED. `sweep` is a legal `from`, but it is
+        not one of the audits an UNTAGGED line could have come from — because `accept`
+        always writes `from`, so every untagged line that can exist was written before
+        `sweep` did, and no line older than a command was produced by it.
+
+        Had `sweep` joined the completeness set, every already-written `assay.json`
+        would quietly stop having its untagged entries checked: the tool doing less,
+        reporting a caveat, on configs that were fine the day before.
+        """
+        entry = Accepted("an old untagged line", "read it", None)
+        _s, stale, unchecked = apply_baseline([], [entry], self.FOUR)
+        self.assertEqual([e.line for e in stale], ["an old untagged line"])
+        self.assertEqual(unchecked, [])
+
+    def test_a_CROSS_line_is_NOT_called_stale_by_a_run_that_never_swept(self):
+        """THE CRY-WOLF FAILURE, in the direction the other resolution would have
+        produced. Leave `sweep` out of the legal tags and a cross finding lands
+        untagged — where a run complete by the four-audit definition, having never
+        swept, calls it stale on a clean tree."""
+        entry = Accepted("a cross line", "read it", "sweep")
+        _s, stale, unchecked = apply_baseline([], [entry], self.FOUR)
+        self.assertEqual(stale, [])
+        self.assertEqual([e.line for e in unchecked], ["a cross line"])
+
+    def test_a_run_that_DID_sweep_answers_the_cross_line(self):
+        entry = Accepted("a cross line", "read it", "sweep")
+        _s, stale, unchecked = apply_baseline([], [entry], self.FOUR + ("sweep",))
+        self.assertEqual([e.line for e in stale], ["a cross line"])
+        self.assertEqual(unchecked, [])
+
+    def test_sweep_is_a_LEGAL_from_so_accept_can_write_it(self):
+        """Without this the tag is refused at load and `assay accept` writes a config
+        its own loader rejects."""
+        self.assertIn("sweep", FAMILIES)
+        self.assertNotIn("sweep", COMPLETING)
 
     def test_a_line_that_FIRED_is_suppressed_whatever_the_run_performed(self):
         """Suppression is safe from any run: a line that fires is a line that fires."""

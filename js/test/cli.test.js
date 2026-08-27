@@ -1661,3 +1661,95 @@ test('a look from why --cross NEVER fails the run', async () => {
     assert.equal(code, 0);
   }
 });
+
+// --------------------------------------------------------------------------- //
+// all --sweep PATH --against BUNDLE — the cross half, inside the complete run
+//
+// `all` is the command that decides whether a baseline line may be called stale, so a
+// cross finding `all` could not produce is a line nothing can ever answer.
+// --------------------------------------------------------------------------- //
+
+async function crossAll(root, ...extra) {
+  return cli('--root', root, 'all', '--base', 'HEAD', ...extra);
+}
+
+test('all --sweep reports the cross finding and the far census', async () => {
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { code, text } = await crossAll(root, '--sweep', root, '--against', against);
+  assert.equal(code, 1, text);
+  assert.match(text, /same answer across languages/);
+  assert.match(text, /\[python\]/);
+});
+
+test('sweep joins PERFORMED only when it actually RAN', async () => {
+  // `performed` is what lets a TAGGED line be answered by the one command that fires
+  // it. A run that named an audit it did not perform would call a line stale that
+  // nothing in the run could have fired — the cry-wolf failure, one level up.
+  //
+  // A baseline has to EXIST for `performed` to be reported at all, which is why this
+  // fixture writes one: `report.baseline` is null when there is nothing to apply.
+  const config = JSON.stringify({
+    baseline: [{ line: 'a cross line', reason: 'read it', from: 'sweep' }],
+  });
+  const root = tree({ 'm.js': CROSS_TWINS, 'assay.json': config });
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+
+  let { text } = await cli('--json', '--root', root, 'all', '--base', 'HEAD');
+  let data = JSON.parse(text);
+  assert.ok(!data.baseline.performed.includes('sweep'));
+  // ...and the line it cannot answer is counted as NOT CHECKED rather than stale.
+  assert.deepEqual(data.baseline.unchecked.map((u) => u.line), ['a cross line']);
+
+  ({ text } = await cli('--json', '--root', root, 'all', '--base', 'HEAD',
+    '--sweep', root, '--against', against));
+  data = JSON.parse(text);
+  assert.ok(data.baseline.performed.includes('sweep'));
+  assert.deepEqual(data.baseline.unchecked, []);
+  assert.deepEqual(data.baseline.stale, ['a cross line']);
+});
+
+test('a BROKEN far side exits 2 before any audit reports', async () => {
+  // Three audits reporting from a run that then exits 2 reads as though their findings
+  // were the failure.
+  const broken = path.join(tree({}), 'broken.json');
+  writeFileSync(broken, '{not json', 'utf8');
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { code, text } = await crossAll(root, '--sweep', root, '--against', broken);
+  assert.equal(code, 2);
+  assert.match(text, /assay bundle/);
+  assert.doesNotMatch(text, /functions,/);
+});
+
+test('--against WITHOUT --sweep is an error rather than a silent skip', async () => {
+  // A flag accepted and inert is the shape of a shipped defect this package carries a
+  // comment about.
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { code, text } = await crossAll(root, '--against', against);
+  assert.equal(code, 2);
+  assert.match(text, /--sweep/);
+});
+
+test('all --against a bundle of its OWN language is refused', async () => {
+  const { document } = await bundleOf(tree({ 'm.js': CROSS_TWINS }));
+  const same = path.join(tree({}), 'same.json');
+  writeFileSync(same, JSON.stringify(document), 'utf8');
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { code, text } = await crossAll(root, '--sweep', root, '--against', same);
+  assert.equal(code, 2);
+  assert.match(text, /--scan/);
+});
+
+test('all --scan carries the CENSUS AS DATA', async () => {
+  // It answered `"scan": null` here while the Python half answered with the census —
+  // one documented invocation, two different documents, decided by which binary CI
+  // installed. The sub-report each audit is handed exists only to attribute findings,
+  // so a census set on it is dropped on the floor.
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { text } = await cli('--json', '--root', root, 'all', '--base', 'HEAD',
+    '--scan', root);
+  const data = JSON.parse(text);
+  assert.notEqual(data.scan, null);
+  assert.equal(data.scan.probed, 2);
+});

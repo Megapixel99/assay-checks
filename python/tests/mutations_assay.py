@@ -779,8 +779,64 @@ MUTATIONS = [
             stale.append(entry)'''),
     ("config: an untagged line is called stale by a PARTIAL run",
      "config.py",
-     '''    complete = set(FAMILIES) <= performed''',
+     '''    complete = set(COMPLETING) <= performed''',
      '''    complete = True'''),
+    # PUT `sweep` IN THE COMPLETENESS SET and every existing `assay all --scan` stops
+    # being a complete run — so untagged entries in every already-written `assay.json`
+    # silently stop being checked for staleness. The tool quietly doing less, reported
+    # as a caveat nobody asked for, on configs that were fine yesterday.
+    ("config: completeness absorbs `sweep`, so old configs stop being checked",
+     "config.py",
+     '''COMPLETING = ("runners", "anchors", "diff", "scan")''',
+     '''COMPLETING = ("runners", "anchors", "diff", "scan", "sweep")'''),
+    ("js config: completeness absorbs `sweep`, so old configs stop being checked",
+     "config.js",
+     '''export const COMPLETING = ['runners', 'anchors', 'diff', 'scan'];''',
+     '''export const COMPLETING = ['runners', 'anchors', 'diff', 'scan', 'sweep'];'''),
+    ("config: `sweep` is not a legal `from`, so a cross line cannot be tagged",
+     "config.py",
+     '''FAMILIES = ("runners", "anchors", "diff", "scan", "sweep")''',
+     '''FAMILIES = ("runners", "anchors", "diff", "scan")'''),
+    # RESHAPED TO STAY SILENT. `if True:` sent a None document into `sweep_half`, so
+    # the TOOL raised — and a crash is loud, which demonstrates the opposite of what
+    # this entry is here to demonstrate. The guard is kept and what it DECIDES is
+    # changed instead: the run claims it swept when it never did, which is the shape
+    # that lets a `from: sweep` line be called stale by a run that could not have
+    # fired it.
+    ("cli: `all` claims it swept when no far side was given",
+     "cli.py",
+     '''    if document is not None:
+        perform("sweep", sweep_half)
+    return families, performed''',
+     '''    performed.append("sweep")
+    if document is not None:
+        perform("sweep", sweep_half)
+    return families, performed'''),
+    # THE CENSUS AS DATA, DROPPED ON THE FLOOR. The sub-report each audit is handed
+    # exists only to attribute findings, so a census set on it never reaches the
+    # renderer — and `all --scan --json` answers `"scan": null` while the other half
+    # answers with the census. One documented invocation, two documents.
+    ("cli.js: the complete run drops its census on the per-audit report",
+     "cli.js",
+     '''      report.scan = scan.toDict();
+    });''',
+     '''      rep.scan = scan.toDict();
+    });'''),
+    ("cli: the complete run drops its census on the per-audit report",
+     "cli.py",
+     '''        report.scan = scan.to_dict()
+
+    def sweep_half(rep):''',
+     '''        rep.scan = scan.to_dict()
+
+    def sweep_half(rep):'''),
+    ("cli.js: `all` claims it swept when no far side was given",
+     "cli.js",
+     '''  if (document) {
+    await perform('sweep', async (rep) => {''',
+     '''  performed.push('sweep');
+  if (document) {
+    await perform('sweep', async (rep) => {'''),
     ("config: the baseline matches on a prefix rather than the exact message",
      "config.py",
      '''    still = [f for f in findings if f.message not in known]''',
@@ -1633,7 +1689,7 @@ MUTATIONS += [
      """    else stale.push(entry);"""),
     ("js config: an untagged line is called stale by a PARTIAL run",
      "config.js",
-     """  const complete = FAMILIES.every((f) => did.has(f));""",
+     """  const complete = COMPLETING.every((f) => did.has(f));""",
      """  const complete = true;"""),
 
     # ---- the baseline, and the cry-wolf failure ------------------------------- #
