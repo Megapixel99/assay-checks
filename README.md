@@ -632,6 +632,12 @@ IIFEs, class fields — because that is what running an import actually executes
 refusing the file for it took every pure helper beside it down with it: on a barrel of
 ten Handlebars helpers, two clock-using ones cost the other eight their eligibility.
 
+A body is deferred **wherever a body cannot run** — under a declaration, bound to a
+name, or as an object-literal property or shorthand method, which is how CommonJS
+exposes a barrel. An **IIFE** is refused in every position: it runs on the way in. So is
+an **accessor** — `{ get x() { … } }` runs when the property is *read*, and enumerating
+a module's exports reads every one of them.
+
 *May this function be called?* is the second question, and `fn.toString()` cannot answer
 it alone — **a free name resolves in a module scope the function's own text cannot
 see**. So the per-function gate runs over its real source (including the **declared

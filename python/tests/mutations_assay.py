@@ -1114,6 +1114,22 @@ MUTATIONS += [
      """      unloadable_paths: Object.fromEntries([...this.unloadable]
         .map(([p, why]) => [p, why.split('(')[0].trim()])),"""),
 
+    # ---- the load gate defers a body only where a body cannot run ------------ #
+    # Both are versions this tool actually shipped, and they fail in OPPOSITE
+    # directions. The first over-refuses: an object-literal barrel is how CommonJS
+    # exposes helpers, and a clock in one property took every pure helper beside it.
+    ("js sameness: an object-literal barrel is refused whole again (a shipped defect)",
+     "sameness.js",
+     """  return { id, local, imported, decls, bodies: propertyBodies(text), text };""",
+     """  return { id, local, imported, decls, bodies: [], text };"""),
+    # The second UNDER-refuses, which is the direction that loads a file the gate exists
+    # to refuse: `const x = function () { … }()` runs on the way in, and blanking its
+    # body called the file clean.
+    ("js sameness: an immediately invoked function is deferred (a shipped defect)",
+     "sameness.js",
+     """    return invoked(text, close) ? null : [brace + 1, close];""",
+     """    return [brace + 1, close];"""),
+
     # ---- gates that must read code, not prose -------------------------------- #
     ("js sameness: the purity gates read prose again (a shipped defect)",
      "sameness.js",

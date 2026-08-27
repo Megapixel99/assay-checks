@@ -571,6 +571,85 @@ function readDecl(text, at, kw) {
 }
 
 /**
+ * Whether the function whose body closes at `close` is CALLED right there.
+ *
+ * `const x = function () { return Date.now(); }();` reads at import, and blanking that
+ * body said the file was clean — the dangerous direction, because the answer is a file
+ * the gate exists to refuse getting loaded. The wrapped spelling
+ * `(function () { … })()` was already refused, but only because the parenthesised group
+ * is not an arrow and the initializer scan gave up on it: correct by accident, in the
+ * one place where an accident is a loaded module.
+ */
+function invoked(text, close) {
+  return text[nextNonSpace(text, close + 1)] === '(';
+}
+
+/** The end of one object-literal property value: its `,` or the object's own `}`. */
+function propertyEnd(text, from) {
+  let depth = 0;
+  for (let i = from; i < text.length; i += 1) {
+    const ch = text[i];
+    if (OPENERS.includes(ch)) depth += 1;
+    else if (CLOSERS.includes(ch)) {
+      if (depth === 0) return i;
+      depth -= 1;
+    } else if (ch === ',' && depth === 0) return i;
+  }
+  return text.length;
+}
+
+/**
+ * Function bodies sitting in OBJECT-LITERAL property position, which only run when
+ * called just as a declaration's does.
+ *
+ * `module.exports = { at: (v) => new Date(v), pure: (n) => n * 2 }` is how CommonJS
+ * exposes a barrel, and nothing in it is a declaration keyword at depth 0 — so the
+ * clock in one property refused the file and took every pure helper with it. That is
+ * the same defect the load gate was written to fix, surviving in the shape most of a
+ * CJS estate is written in.
+ *
+ * TWO KINDS ARE DELIBERATELY NOT DEFERRED.
+ *
+ *   * An IIFE. `{ x: (() => Date.now())() }` runs on the way in, and `fnBodySpan`
+ *     refuses it: the parenthesised group is not followed by `=>`, and `invoked`
+ *     catches the unwrapped spelling.
+ *   * AN ACCESSOR. `{ get x() { … } }` runs when the property is READ, and
+ *     `exportedFunctions` reads every export to enumerate it — so a getter body is
+ *     reachable in a way an ordinary method's is not. It is excluded because the name
+ *     must sit directly after `{` or `,`, and a getter's does not: `get` is in the way.
+ *     That is a real guard rather than a coincidence, and there is a test that says so.
+ *
+ * `async` and generator properties are not deferred either, for want of the same
+ * check — over-refusal, which costs coverage and says so in the census.
+ */
+function propertyBodies(text) {
+  const out = [];
+  const word = /[A-Za-z_$][\w$]*/g;
+  let m = word.exec(text);
+  while (m !== null) {
+    const at = m.index;
+    const prev = wordBefore(text, at);
+    if (prev === '{' || prev === ',') {
+      const after = nextNonSpace(text, at + m[0].length);
+      if (text[after] === ':') {
+        const span = fnBodySpan(text, after + 1, propertyEnd(text, after + 1));
+        if (span) out.push(span);
+      } else if (text[after] === '(') {
+        // A shorthand method: `at(v) { … }`.
+        const closeParen = matchBracket(text, after);
+        const brace = closeParen === -1 ? -1 : nextNonSpace(text, closeParen + 1);
+        if (brace !== -1 && text[brace] === '{') {
+          const close = matchBracket(text, brace);
+          if (close !== -1 && !invoked(text, close)) out.push([brace + 1, close]);
+        }
+      }
+    }
+    m = word.exec(text);
+  }
+  return out;
+}
+
+/**
  * The span of a function/arrow initializer's BODY, or null when the initializer is not
  * a function — in which case it is an expression that runs at import and keeps its text.
  */
@@ -585,7 +664,8 @@ function fnBodySpan(text, from, end) {
     const brace = text.indexOf('{', closeParen);
     if (brace === -1 || brace > end) return null;
     const close = matchBracket(text, brace);
-    return close === -1 ? null : [brace + 1, close];
+    if (close === -1) return null;
+    return invoked(text, close) ? null : [brace + 1, close];
   }
   // An arrow. Its parameter list is either a parenthesised group or a single name, and
   // the body is everything after `=>` — braced or not. AN EXPRESSION BODY IS STILL
@@ -608,7 +688,8 @@ function fnBodySpan(text, from, end) {
   const b = nextNonSpace(text, arrow + 2);
   if (text[b] === '{') {
     const close = matchBracket(text, b);
-    return close === -1 ? null : [b + 1, close];
+    if (close === -1) return null;
+    return invoked(text, close) ? null : [b + 1, close];
   }
   return [b, end];
 }
@@ -815,7 +896,7 @@ export function moduleBindings(source, id = '') {
   for (const m of spec.matchAll(/\b(?:const|let|var)\s*([^=;]*)=\s*(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]*)['"]/g)) {
     for (const n of m[1].match(/[A-Za-z_$][\w$]*/g) || []) imported.set(n, m[2]);
   }
-  return { id, local, imported, decls, text };
+  return { id, local, imported, decls, bodies: propertyBodies(text), text };
 }
 
 /**
@@ -827,9 +908,9 @@ export function moduleBindings(source, id = '') {
  */
 function moduleScopeSource(source, mod) {
   const chars = [...source];
-  for (const d of mod.decls) {
-    if (!d.deferred) continue;
-    for (let i = d.deferred[0]; i < d.deferred[1] && i < chars.length; i += 1) {
+  const spans = mod.decls.filter((d) => d.deferred).map((d) => d.deferred);
+  for (const span of spans.concat(mod.bodies)) {
+    for (let i = span[0]; i < span[1] && i < chars.length; i += 1) {
       if (chars[i] !== '\n') chars[i] = ' ';
     }
   }
