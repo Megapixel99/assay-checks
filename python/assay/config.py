@@ -60,7 +60,28 @@ CONFIG_NAMES = ("assay.json", ".assay.json")
 # `pair`, `search` and `why` are absent on purpose: the first two answer about a pair
 # somebody named rather than auditing a tree, and the third produces no findings at
 # all. Nothing they print is a line a CI run would accept.
-FAMILIES = ("runners", "anchors", "diff", "scan")
+FAMILIES = ("runners", "anchors", "diff", "scan", "sweep")
+
+# WHAT AN UNTAGGED LINE COULD HAVE COME FROM, which is NOT the same set and the
+# difference is load-bearing.
+#
+# `FAMILIES` answers "is this a legal `from`?". This answers "may a run that did not
+# perform X call an UNTAGGED line stale?" — and conflating the two is a defect in
+# whichever direction you resolve it. Put `sweep` in here and every existing
+# `assay all --scan` stops being a complete run, so untagged entries in every
+# already-written `assay.json` silently stop being checked for staleness — the tool
+# quietly doing less, which is the failure this package exists to report. Leave `sweep`
+# out of `FAMILIES` instead and a cross finding cannot be tagged at all, so it lands
+# untagged and `all --scan` — complete by this definition, having never swept — calls
+# it stale on a clean tree. That is the cry-wolf defect `apply_baseline` already
+# carries a comment about.
+#
+# The two sets differ by exactly one name, and the reason it is safe is a fact about
+# TIME rather than a convention: `assay accept` always writes `from`, so the only
+# untagged lines that can exist were written before `sweep` did, and no line older than
+# a command can have been produced by it. A line hand-written untagged for a cross
+# finding is outside that — tag it, which is what the tool would have done.
+COMPLETING = ("runners", "anchors", "diff", "scan")
 
 
 class Accepted:
@@ -275,7 +296,7 @@ def apply_baseline(findings, accepted, performed=()):
     seen = {f.message for f in findings}
     still = [f for f in findings if f.message not in known]
     performed = frozenset(performed or ())
-    complete = set(FAMILIES) <= performed
+    complete = set(COMPLETING) <= performed
     stale, unchecked = [], []
     for entry in sorted(accepted, key=lambda a: a.line):
         if entry.line in seen:

@@ -161,7 +161,7 @@ def cmd_diff(args, config, out):
     return _finish(args, report, config, out, ("diff",))
 
 
-def _audit_everything(args, config, report):
+def _audit_everything(args, config, report, document=None):
     """Every audit, folded into `report`. Returns ({message: family}, performed).
 
     ONE PLACE KNOWS WHAT A COMPLETE RUN IS, and `assay accept` is why it has to be
@@ -206,18 +206,68 @@ def _audit_everything(args, config, report):
         # audit that produced them.
         report.scan = scan.to_dict()
 
+    def sweep_half(rep):
+        scan = collect(args.against_paths, mode="cross")
+        theirs = document.get("language") or "unknown"
+        for key, mine, them in _cross_buckets(scan, document):
+            rep.finding(
+                "same answer across languages (%s): %s [python]  vs  %s [%s]"
+                % (key[0], ", ".join(mine), ", ".join(them), theirs), mine[0],
+                "no input in the shared ladder told them apart — READ them; only a "
+                "person decides whether the duplication is a defect")
+        report_scan(scan, rep)
+        if document.get("census"):
+            report_census(document["census"], rep, label="[%s]" % theirs)
+        report.other = {"language": theirs,
+                        "records": len(document.get("records") or []),
+                        "census": document.get("census")}
+
     perform("runners", runners)
     perform("anchors", lambda rep: audit_anchors(args.root, config, rep))
     perform("diff", lambda rep: audit_diff(args.root, args.base, config, rep))
     if getattr(args, "scan", None):
         perform("scan", scan_half)
+    # THE CROSS HALF JOINS `performed` ONLY WHEN IT ACTUALLY RAN, exactly as `scan`
+    # does, and for the same reason: a run that names an audit it did not perform can
+    # call a line stale that nothing in the run could have fired.
+    if document is not None:
+        perform("sweep", sweep_half)
     return families, performed
 
 
+def _far_side(args, out):
+    """The bundle `all` and `accept` will sweep against: (document|None, None) or an
+    exit code. Resolved BEFORE any audit runs.
+
+    A bundle this half cannot read is exit 2, and finding that out after `runners`,
+    `anchors` and `diff` have all reported would bury the reason under three audits
+    the caller was not asking about — and, worse, print their findings from a run that
+    then exits 2, which reads as though those findings were the failure.
+    """
+    if not getattr(args, "against", None):
+        return None, None
+    document, why = _other_side(args.against, args.with_cmd)
+    if document is None:
+        return None, _fail(args, out, why)
+    if document.get("language") == "python":
+        return None, _fail(args, out,
+                           "--against is a python bundle and this is the python half "
+                           "— `--scan` folds in one language's own ladder, which is "
+                           "stronger")
+    if not getattr(args, "against_paths", None):
+        return None, _fail(args, out,
+                           "--against needs --sweep PATH: the bundle is the OTHER "
+                           "half's tree and this is the one to compare against it")
+    return document, None
+
+
 def cmd_all(args, config, out):
-    """Every audit in one run — and, with `--scan`, the complete one."""
+    """Every audit in one run — and, with `--scan` and `--sweep`, the complete one."""
+    document, code = _far_side(args, out)
+    if code is not None:
+        return code
     report = Report()
-    _families, performed = _audit_everything(args, config, report)
+    _families, performed = _audit_everything(args, config, report, document)
     return _finish(args, report, config, out, performed)
 
 
@@ -247,7 +297,10 @@ def cmd_accept(args, config, out):
                      "from an oversight,\n       and the baseline is the table that "
                      "accumulates most and rots first.")
     report = Report()
-    families, _performed = _audit_everything(args, config, report)
+    document, code = _far_side(args, out)
+    if code is not None:
+        return code
+    families, _performed = _audit_everything(args, config, report, document)
     known = set(config.baseline_lines)
     fired = {i.message for i in report.findings}
 
@@ -1051,6 +1104,12 @@ def build_parser():
         if name in ("all", "accept"):
             p.add_argument("--scan", nargs="+",
                            help="also run the sameness half over these paths")
+            p.add_argument("--sweep", dest="against_paths", nargs="+",
+                           help="...and the CROSS half over these, against --against")
+            p.add_argument("--against", nargs="+", metavar="BUNDLE.json|PATH",
+                           help="the other half's bundle, or its paths with --with")
+            p.add_argument("--with", dest="with_cmd", default=None, metavar="CMD",
+                           help="run CMD `bundle PATHS` for the other half")
         if name == "accept":
             p.add_argument("line", nargs="?", metavar="LINE",
                            help="one finding's exact text (default: every new one)")

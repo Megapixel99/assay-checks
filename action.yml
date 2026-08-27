@@ -29,9 +29,17 @@ inputs:
     default: ''
   against:
     description: >-
-      For `sweep` and `search`: the OTHER half's `assay bundle` document, or its paths
-      when `with` is given. `sweep` requires it; `search` takes it beside or instead of
-      `paths`, and needs one of the two. Ignored by everything else.
+      For `sweep`, `search` and `all`: the OTHER half's `assay bundle` document, or its
+      paths when `with` is given. `sweep` requires it; `search` takes it beside or
+      instead of `paths`, and needs one of the two; `all` needs `sweep-paths` with it.
+      Ignored by everything else.
+    required: false
+    default: ''
+  sweep-paths:
+    description: >-
+      For `all`: the paths on THIS side to compare against `against`. It is separate
+      from `paths` because with `all` those already mean `--scan`, and the two halves
+      audit different things — folding them together would sweep a tree nobody named.
     required: false
     default: ''
   with:
@@ -113,6 +121,7 @@ runs:
         # quietly swept nothing would report a clean audit for a comparison it never
         # made.
         [ -n "${{ inputs.against }}" ] && args+=(--against ${{ inputs.against }})
+        [ -n "${{ inputs.sweep-paths }}" ] && args+=(--sweep ${{ inputs.sweep-paths }})
         [ -n "${{ inputs.with }}" ] && args+=(--with "${{ inputs.with }}")
         # WITH `all`, PATHS MEAN `--scan`. `all` takes no positional arguments, and
         # without the sameness half the run has not performed every audit able to
