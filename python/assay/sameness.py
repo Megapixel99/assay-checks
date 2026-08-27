@@ -85,6 +85,12 @@ LADDER_VERSION = "v3"
 # it and the other reads it, which makes it a published interface with the same claim
 # on stability as the exit codes.
 PROBE_SCHEMA = 1
+
+# A BUNDLE IS VERSIONED APART FROM A RECORD, because the two can move independently:
+# adding a key to the envelope that carries many records does not change what any one
+# record means by `vector`, and a consumer that only reads records should not be told
+# its records expired.
+BUNDLE_SCHEMA = 1
 # What a snippet read from stdin is called. It collides with nothing a
 # tree can contain, so `search` excluding the query by REFERENCE needs no
 # special case for it.
@@ -377,9 +383,14 @@ def ladder(arity):
     return out
 
 
+def native_key(arity):
+    """What makes two NATIVE vectors comparable, from the arity alone."""
+    return "arity%d/%s" % (arity, LADDER_VERSION)
+
+
 def ladder_key(func):
     """What makes two vectors comparable. Carried on every vector and CHECKED."""
-    return "arity%d/%s" % (len(func.params), LADDER_VERSION)
+    return native_key(len(func.params))
 
 
 # --------------------------------------------------------------------------- #
@@ -850,6 +861,7 @@ class Scan:
     def __init__(self):
         self.probed = {}         # ref -> vector
         self.keys = {}           # ref -> ladder key
+        self.arity = {}          # ref -> declared parameter count
         self.skipped = {}        # ref -> reason        (FUNCTIONS)
         self.unloadable = {}     # path -> reason       (FILES)
         self.groups = []         # [[ref, ...]] — same-answer candidates
@@ -915,8 +927,38 @@ class Scan:
         return self._tally(self.unloadable.values())
 
 
-def collect(paths, python=None, scan=None):
-    """Probe every function under `paths`. Returns a Scan."""
+UNSTATEABLE = "an outcome the interlingua cannot state"
+
+
+def admit(vector, arity, mode):
+    """(key, None) if this vector may be bucketed, else (None, why it may not).
+
+    ONE PLACE DECIDES WHAT IS COMPARABLE, and for the cross ladder that is not a
+    convenience. `compare_cross` refuses a pair three ways — an `X:` rung, a key
+    mismatch, an undiscriminated vector — and a bucketing scan that filtered on fewer
+    of them would call two functions `same` that the pairwise command, asked about the
+    same two, calls `look`. Two answers to one question, and the weaker one is the
+    one that prints a finding.
+    """
+    if mode == "cross":
+        if any(o.startswith("X:") for o in vector):
+            return None, UNSTATEABLE
+        if cross_discriminating(vector, cross_ladder(arity)) is None:
+            return None, "not discriminated by the ladder"
+        return cross_key(arity), None
+    if discriminating(vector, ladder(arity)) is None:
+        return None, "not discriminated by the ladder"
+    return native_key(arity), None
+
+
+def collect(paths, python=None, scan=None, mode="native"):
+    """Probe every function under `paths`. Returns a Scan.
+
+    `mode="cross"` walks the SHARED ladder and renders the interlingua, which is what
+    makes one tree's Scan comparable with the other half's. Same gate, same subprocess,
+    same census — only the rungs and the rendering change, so a function this half
+    refuses is refused for the same reason either way.
+    """
     out = scan or Scan()
     for path in python_files(paths):
         out.files += 1
@@ -927,15 +969,17 @@ def collect(paths, python=None, scan=None):
         for name in sorted(mod.funcs):
             func = mod.funcs[name]
             out.functions += 1
-            vector, why = probe(func, python)
+            vector, why = probe(func, python, mode=mode)
             if vector is None:
                 out.skipped[func.ref] = why
                 continue
-            if discriminating(vector, ladder(len(func.params))) is None:
-                out.skipped[func.ref] = "not discriminated by the ladder"
+            key, why = admit(vector, len(func.params), mode)
+            if key is None:
+                out.skipped[func.ref] = why
                 continue
             out.probed[func.ref] = vector
-            out.keys[func.ref] = ladder_key(func)
+            out.keys[func.ref] = key
+            out.arity[func.ref] = len(func.params)
     return out
 
 
@@ -1060,12 +1104,36 @@ def report_scan(scan, report=None):
                     grp[0],
                     "no input in the ladder told them apart — READ them; only a "
                     "person decides whether the duplication is a defect")
-    rep.note("\n%d files, %d not loaded" % (scan.files, len(scan.unloadable)))
-    for why, count in scan.file_census():
+    return report_census(scan.to_dict(), rep)
+
+
+def report_census(census, report=None, label=""):
+    """The two populations, rendered from the census DATA rather than from a Scan.
+
+    `assay sweep` reads the OTHER half's census out of a bundle and has no Scan to
+    render it from. A second renderer for that would be a second place describing one
+    population, and the two would drift exactly the way two hand-kept lists drift —
+    so the renderer is defined over the data both paths already carry.
+
+    THE TALLIES ARE RE-SORTED HERE and that is not redundant. A live Scan tallies
+    largest-bucket-first, which is the order worth reading; a bundle's census has been
+    through JSON with its keys sorted, so the same data arrives alphabetical. Trusting
+    the incoming order would print one population by size and the other by spelling,
+    for no reason a reader could see.
+    """
+    rep = report or Report()
+    head = ("%s " % label) if label else ""
+
+    def ranked(counts):
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    rep.note("\n%s%d files, %d not loaded"
+             % (head, census["files"], len(census["unloadable_paths"])))
+    for why, count in ranked(census["unloadable"]):
         rep.note("  %-44s %d" % (why, count))
-    rep.note("%d functions, %d probed, %d not probed"
-             % (scan.functions, len(scan.probed), len(scan.skipped)))
-    for why, count in scan.census():
+    rep.note("%s%d functions, %d probed, %d not probed"
+             % (head, census["functions"], census["probed"], census["not_probed"]))
+    for why, count in ranked(census["skipped"]):
         rep.note("  %-44s %d" % (why, count))
     rep.note("  (a not-probed function is a `look`, never a finding — "
              "\"we found none\" and \"we never looked\" are different claims)")

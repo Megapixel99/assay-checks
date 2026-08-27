@@ -11,17 +11,31 @@ branding:
 inputs:
   command:
     description: >-
-      runners | anchors | diff | all | scan | pair | search | why | probe | cross.
-      `all` is the usual choice for a pull request. `accept` is deliberately absent:
-      it WRITES to assay.json, and a CI job that edits its own config is a job whose
-      record nobody read.
+      runners | anchors | diff | all | scan | pair | search | why | probe | cross |
+      bundle | sweep. `all` is the usual choice for a pull request. `accept` is
+      deliberately absent: it WRITES to assay.json, and a CI job that edits its own
+      config is a job whose record nobody read.
     required: false
     default: all
   paths:
     description: >-
-      Paths for `scan`, the FILE::NAME references for `pair`, `search`, `why`, `probe`
-      and `cross`, or — with `all` — the paths to fold the sameness half in over, which
-      is what makes that run COMPLETE enough to call a baseline line stale.
+      Paths for `scan`, `bundle` and `sweep`, the FILE::NAME references for `pair`,
+      `search`, `why`, `probe` and `cross`, or — with `all` — the paths to fold the
+      sameness half in over, which is what makes that run COMPLETE enough to call a
+      baseline line stale.
+    required: false
+    default: ''
+  against:
+    description: >-
+      For `sweep`: the OTHER half's `assay bundle` document, or its paths when `with`
+      is given. Required by `sweep` and ignored by everything else.
+    required: false
+    default: ''
+  with:
+    description: >-
+      For `sweep` and `cross`: the command that runs the OTHER half, e.g. `assay-js`.
+      Both packages install a binary called `assay`, so this is named rather than
+      guessed — a half that guessed would run itself and compare a tree with itself.
     required: false
     default: ''
   root:
@@ -89,6 +103,13 @@ runs:
         case "${{ inputs.command }}" in
           diff|all) [ -n "$base" ] && args+=(--base "$base") ;;
         esac
+        # `sweep` cannot run without a far side, and the two flags that name one are
+        # passed through rather than inferred. An empty `against` reaching the tool is
+        # an exit 2 that says what is missing, which is the right failure: a step that
+        # quietly swept nothing would report a clean audit for a comparison it never
+        # made.
+        [ -n "${{ inputs.against }}" ] && args+=(--against ${{ inputs.against }})
+        [ -n "${{ inputs.with }}" ] && args+=(--with "${{ inputs.with }}")
         # WITH `all`, PATHS MEAN `--scan`. `all` takes no positional arguments, and
         # without the sameness half the run has not performed every audit able to
         # produce a baseline line — so an untagged accepted finding can be fixed and

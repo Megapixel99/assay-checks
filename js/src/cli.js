@@ -6,6 +6,7 @@
  *     does the tree already answer this?   assay scan | pair | search
  *     why was my function not probed?      assay why FILE::NAME
  *     ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
+ *     ...for a whole tree, not one pair?   assay bundle PATHS | assay sweep PATHS
  *     I have read this one and accept it   assay accept --reason "..." [LINE]
  *
  * EXIT CODES, identical for every subcommand, because scripts depend on them more than
@@ -43,9 +44,10 @@ import {
   applyBaseline, CONFIG_NAMES, ConfigError, load, writeBaseline,
 } from './config.js';
 import {
-  collect, compare, compareCross, crossKey, crossLadder, discriminating,
-  discriminationDetail, displayPath, fileRefusal, group, jsFiles, ladder, ladderKey,
-  probeFile, PROBE_SCHEMA, reportScan, Scan, SNIPPET_PATH, stripNonCode,
+  BUNDLE_SCHEMA, collect, compare, compareCross, crossKey, crossLadder,
+  discriminating, discriminationDetail, displayPath, fileRefusal, group, jsFiles,
+  ladder, ladderKey, probeFile, PROBE_SCHEMA, reportCensus, reportScan, Scan,
+  SNIPPET_PATH, stripNonCode,
 } from './sameness.js';
 import { relativeSpecifiers } from './probe.js';
 import { FINDING, Report, render, renderJson } from './verdicts.js';
@@ -68,6 +70,9 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] [--json] <command>
       --stdin [--name N]      ...about a function that is not a file yet
   probe FILE::NAME            one function's cross-language vector, as JSON on stdout
   cross A B [--with CMD]      compare a JavaScript function to a Python one
+  bundle PATH...              a whole tree's cross vectors, as JSON on stdout
+  sweep PATH... --against B   which functions here does the OTHER language answer?
+        [--with CMD]          ...building B with the other binary over those paths
 
   --json                      one JSON object instead of the prose report
 
@@ -82,7 +87,7 @@ exit: 0 nothing to read, 1 findings, 2 could not run
 export function parseArgs(argv) {
   const opts = {
     root: '.', config: null, quiet: false, base: 'origin/main',
-    cmd: null, positional: [], into: [], scan: [], asJson: false,
+    cmd: null, positional: [], into: [], scan: [], against: [], asJson: false,
     stdin: false, name: null, reason: null, withCmd: null,
   };
   const rest = [];
@@ -97,8 +102,8 @@ export function parseArgs(argv) {
     else if (arg === '--reason') { i += 1; opts.reason = argv[i]; }
     else if (arg === '--with') { i += 1; opts.withCmd = argv[i]; }
     else if (arg === '--name') { i += 1; opts.name = argv[i]; }
-    else if (arg === '--in' || arg === '--scan') {
-      const target = arg === '--in' ? opts.into : opts.scan;
+    else if (arg === '--in' || arg === '--scan' || arg === '--against') {
+      const target = { '--in': opts.into, '--scan': opts.scan, '--against': opts.against }[arg];
       i += 1;
       while (i < argv.length && !argv[i].startsWith('-')) { target.push(argv[i]); i += 1; }
       i -= 1;
@@ -416,6 +421,169 @@ export function languageOf(ref) {
 
 const CROSS_TIMEOUT_MS = 120000;
 
+const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
+
+const BUNDLE_TIMEOUT_MS = 900000;   // the OTHER half's `bundle`: a whole tree, not one
+
+/**
+ * Every function under `targets` as CROSS records, plus the census. One object.
+ *
+ * THE RECORDS ARE THE SAME SHAPE `assay probe` WRITES, and that is the point of the
+ * envelope rather than a nicety: a bundle entry lifted out on its own is a record
+ * `assay cross` already reads, so the two commands cannot come to mean different things
+ * by `vector` without one of them failing its own schema check.
+ *
+ * A REFUSED FUNCTION IS IN THE CENSUS AND NOT IN `records`. Both facts are carried,
+ * because a bundle whose `records` list is short and whose census is missing says
+ * "nothing here answers that" for a tree it never managed to probe — which is the one
+ * claim this tool exists to refuse to make.
+ */
+async function bundleDocument(targets) {
+  const scan = await collect(targets, new Scan(), true);
+  const records = [...scan.probed.keys()].sort().map((ref) => ({
+    assay_probe: PROBE_SCHEMA,
+    ref,
+    language: 'javascript',
+    arity: scan.arity.get(ref),
+    ladder: scan.keys.get(ref),
+    vector: scan.probed.get(ref),
+    error: null,
+  }));
+  return {
+    assay_bundle: BUNDLE_SCHEMA,
+    assay_probe: PROBE_SCHEMA,
+    language: 'javascript',
+    records,
+    census: scan.toDict(),
+    error: null,
+  };
+}
+
+/**
+ * An `assay bundle` document from a file: `{ document }` or `{ unresolved }`.
+ *
+ * THE SCHEMA IS CHECKED, for the reason a record's is: a bundle from a version that
+ * meant something else by `vector` would be compared anyway, and comparing a new answer
+ * against the wrong earlier answer is precisely the defect a difference checker exists
+ * to catch.
+ */
+function readBundle(file) {
+  let document;
+  try {
+    document = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    return { unresolved: `cannot read ${file} as an \`assay bundle\` document (${err.message})` };
+  }
+  if (typeof document !== 'object' || document === null || !('assay_bundle' in document)) {
+    return { unresolved: `${file} is not an \`assay bundle\` document` };
+  }
+  if (document.assay_bundle !== BUNDLE_SCHEMA) {
+    return {
+      unresolved: `${file} was written by bundle schema ${document.assay_bundle} and `
+        + `this is schema ${BUNDLE_SCHEMA} — the two do not mean the same thing by `
+        + '`records`',
+    };
+  }
+  if (document.assay_probe !== PROBE_SCHEMA) {
+    return {
+      unresolved: `${file} carries records of schema ${document.assay_probe} and this `
+        + `is schema ${PROBE_SCHEMA} — the two do not mean the same thing by \`vector\``,
+    };
+  }
+  if (document.error) {
+    return { unresolved: `${file} is a bundle that could not be built: ${document.error}` };
+  }
+  return { document };
+}
+
+/**
+ * The other half's bundle: `{ document }` or `{ unresolved }`.
+ *
+ * TWO WAYS IN, and they are the two `cross` already has minus the one that cannot
+ * apply. A `.json` path is a bundle somebody produced. Anything else is a list of paths
+ * in the OTHER language, which needs the other binary — and `--with CMD` is how you say
+ * where it is, rather than guessing at a command name that is `assay` for both packages.
+ */
+function otherSide(against, withCmd) {
+  if (against.length === 1 && against[0].endsWith('.json') && existsSync(against[0])) {
+    return readBundle(against[0]);
+  }
+  const named = against.join(' ');
+  if (!withCmd) {
+    return {
+      unresolved: `--against ${named} does not name a bundle this half can read.\n`
+        + `       Run \`assay bundle ${named} > other.json\` with the OTHER half's `
+        + 'binary and pass\n       other.json here, or give --with CMD so this can run '
+        + 'it for you.',
+    };
+  }
+  const parts = withCmd.split(/\s+/).filter(Boolean);
+  let stdout;
+  try {
+    stdout = execFileSync(parts[0], [...parts.slice(1), 'bundle', ...against],
+      { encoding: 'utf8', timeout: BUNDLE_TIMEOUT_MS, maxBuffer: MAX_BUNDLE_BYTES });
+  } catch (err) {
+    return { unresolved: `--with '${withCmd}' could not run (${err.message})` };
+  }
+  let document;
+  try {
+    document = JSON.parse(stdout);
+  } catch {
+    return { unresolved: `--with '${withCmd}' did not print an \`assay bundle\` document` };
+  }
+  if (document.assay_bundle !== BUNDLE_SCHEMA) {
+    return {
+      unresolved: `--with '${withCmd}' wrote bundle schema ${document.assay_bundle} and `
+        + `this is schema ${BUNDLE_SCHEMA}`,
+    };
+  }
+  // BOTH SCHEMAS, on this path as on the file one. The envelope and the record are
+  // versioned apart, so a far binary whose bundle schema happens to match can still
+  // mean something else by `vector` — and that is the comparison the check exists to
+  // refuse, not the one it exists to allow.
+  if (document.assay_probe !== PROBE_SCHEMA) {
+    return {
+      unresolved: `--with '${withCmd}' wrote records of schema ${document.assay_probe} `
+        + `and this is schema ${PROBE_SCHEMA}`,
+    };
+  }
+  if (document.error) {
+    return { unresolved: `--with '${withCmd}' could not build a bundle: ${document.error}` };
+  }
+  return { document };
+}
+
+/**
+ * The buckets both trees are in: `[[key, mine, theirs], ...]`, sorted.
+ *
+ * THE BUCKET IS THE COMPARISON, and it is a legitimate one only because `collect`
+ * already refused everything `compareCross` would have refused: a vector holding an
+ * outcome the interlingua cannot state, and a vector the ladder never told apart from a
+ * constant. What survives to a bucket is a pair that command would have called `same`.
+ * If that stops being true, this prints findings the pairwise command disagrees with,
+ * and the weaker answer is the one on screen.
+ */
+function crossBuckets(scan, document) {
+  const buckets = new Map();
+  for (const [ref, vector] of scan.probed) {
+    const key = `${scan.keys.get(ref)}|${vector.join(' ')}`;
+    if (!buckets.has(key)) buckets.set(key, { ladder: scan.keys.get(ref), mine: [], theirs: [] });
+    buckets.get(key).mine.push(ref);
+  }
+  for (const record of document.records || []) {
+    const key = `${record.ladder}|${(record.vector || []).join(' ')}`;
+    if (buckets.has(key)) buckets.get(key).theirs.push(record.ref);
+  }
+  const first = (row) => [row[1][0], row[2][0]];
+  return [...buckets.values()]
+    .filter((b) => b.theirs.length)
+    .map((b) => [b.ladder, b.mine.sort(), b.theirs.sort()])
+    // Ordered on the two REFS rather than on the two of them concatenated, because
+    // that is what the Python half orders on — and one report printed in two orders is
+    // one more thing a polyglot project has to know which binary produced.
+    .sort((a, b) => (first(a) < first(b) ? -1 : first(a) > first(b) ? 1 : 0));
+}
+
 /**
  * The same object with its keys in sorted order, all the way down.
  *
@@ -712,6 +880,78 @@ export async function run(argv, write = (s) => process.stdout.write(s),
         }, 2);
       }
       return said({ ...found.record, error: null }, 0);
+    }
+
+    case 'bundle': {
+      // `assay cross` answers about two functions somebody already suspected. Nobody
+      // suspects the pair that matters: a validator written once in the API and again
+      // in the front end, by two people, a year apart, is exactly the duplication no
+      // one goes looking for. Finding it means probing both trees, and the halves do
+      // not invoke each other — so one writes a bundle and the other reads it.
+      //
+      // IT WRITES JSON ON STDOUT and emits ONE SHAPE on every path: a broken
+      // invocation is the same document with `error` set and exit 2, so a consumer
+      // never has to ask which of two shapes it received.
+      const said = (document, code) => {
+        write(`${JSON.stringify(sortedKeys(document), null, 2)}\n`);
+        return code;
+      };
+      const envelope = {
+        assay_bundle: BUNDLE_SCHEMA, assay_probe: PROBE_SCHEMA, language: 'javascript',
+      };
+      if (!opts.positional.length) {
+        return said({
+          ...envelope, records: [], census: null, error: 'bundle needs a path',
+        }, 2);
+      }
+      return said(await bundleDocument(opts.positional), 0);
+    }
+
+    case 'sweep': {
+      // Which functions in THIS tree does the other language already answer?
+      //
+      // `cross` needs the pair named. This needs neither name, which is what makes it
+      // the command that finds the duplication a polyglot repository actually
+      // accumulates: two implementations of one rule, one per language, that no
+      // differential test covers because writing one means agreeing by hand on what
+      // `false` and `False` have in common.
+      if (!opts.positional.length) return fail(opts, write, 'sweep needs a path');
+      const found = otherSide(opts.against, opts.withCmd);
+      if (found.unresolved) return fail(opts, write, found.unresolved);
+      const document = found.document;
+      if (document.language === 'javascript') {
+        return fail(opts, write,
+          '--against is a javascript bundle and this is the javascript half — `scan` '
+          + "compares one language's functions on its own ladder, which is stronger");
+      }
+      const theirs = document.language || 'unknown';
+      const scan = await collect(opts.positional, new Scan(), true);
+      const shared = crossBuckets(scan, document);
+      for (const [key, mine, them] of shared) {
+        report.finding(
+          `same answer across languages (${key}): ${mine.join(', ')} [javascript]  vs  `
+          + `${them.join(', ')} [${theirs}]`, mine[0],
+          'no input in the shared ladder told them apart — READ them; only a person '
+          + 'decides whether the duplication is a defect',
+        );
+      }
+      if (!shared.length) {
+        report.note('\nsame   none — no function here shares an outcome vector with '
+          + `one in the ${theirs} bundle`);
+      }
+      reportScan(scan, report);
+      // BOTH CENSUSES ARE PRINTED, and the other half's is the one that would
+      // otherwise lie by omission. A function the OTHER binary refused was never
+      // compared, and a report that says `same none` while staying quiet about the two
+      // hundred functions the far side never probed is reporting "we never looked" as
+      // "we found none" — across a boundary where the reader has no way to check.
+      if (document.census) reportCensus(document.census, report, `[${theirs}]`);
+      report.scan = scan.toDict();
+      report.other = {
+        language: theirs, records: (document.records || []).length,
+        census: document.census ?? null,
+      };
+      return finish(report, config, write, opts);
     }
 
     case 'cross': {

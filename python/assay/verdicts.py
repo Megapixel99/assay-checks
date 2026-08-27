@@ -77,6 +77,12 @@ class Report:
         # Set by whoever applied the baseline, because that is the only place that
         # knows whether the run was COMPLETE enough to call a line stale.
         self.baseline = None
+        # THE OTHER HALF'S CENSUS, when a command compared this tree against one the
+        # other binary probed. It is kept apart from `scan` because it is a different
+        # population measured by a different process: merging the two would print one
+        # number for two trees and let a far side that probed nothing disappear into
+        # a near side that probed plenty.
+        self.other = None
 
     def add(self, verdict, message, where=None, detail=None):
         self.items.append(Item(verdict, message, where, detail))
@@ -153,6 +159,7 @@ def render_json(report, out, meta=None, error=None):
         "notes": list(report.sections),
         "baseline": report.baseline,
         "scan": report.scan,
+        "other": report.other,
         "exit_code": 2 if error else report.exit_code(),
     })
     # `ensure_ascii=False` because the JavaScript half's `JSON.stringify` writes UTF-8

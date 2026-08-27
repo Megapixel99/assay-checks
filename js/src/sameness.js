@@ -71,6 +71,14 @@ export const LADDER_VERSION = 'v3';
  * on stability as the exit codes.
  */
 export const PROBE_SCHEMA = 1;
+
+/**
+ * The shape of an `assay bundle` document, versioned APART from the record it carries,
+ * because the two can move independently: adding a key to the envelope that holds many
+ * records does not change what any one record means by `vector`, and a consumer that
+ * only reads records should not be told its records expired.
+ */
+export const BUNDLE_SCHEMA = 1;
 // What a snippet read from stdin is called. It collides with nothing a tree can
 // contain, so `search` excluding the query by REFERENCE needs no special case for
 // it. The Python half carries the same string.
@@ -1729,6 +1737,7 @@ export class Scan {
   constructor() {
     this.probed = new Map();      // ref -> vector
     this.keys = new Map();        // ref -> ladder key
+    this.arity = new Map();       // ref -> declared parameter count
     this.skipped = new Map();     // ref -> reason   (FUNCTIONS)
     this.unloadable = new Map();  // path -> reason  (FILES)
     this.groups = [];
@@ -1790,7 +1799,41 @@ export class Scan {
   }
 }
 
-export async function collect(targets, scan = new Scan()) {
+export const UNSTATEABLE = 'an outcome the interlingua cannot state';
+
+/**
+ * `{ key }` if this vector may be bucketed, else `{ why }` it may not.
+ *
+ * ONE PLACE DECIDES WHAT IS COMPARABLE, and for the cross ladder that is not a
+ * convenience. `compareCross` refuses a pair three ways — an `X:` rung, a key
+ * mismatch, an undiscriminated vector — and a bucketing scan that filtered on fewer of
+ * them would call two functions `same` that the pairwise command, asked about the same
+ * two, calls `look`. Two answers to one question, and the weaker one is the one that
+ * prints a finding.
+ */
+export function admit(vector, arity, cross) {
+  if (cross) {
+    if (vector.some((o) => o.startsWith('X:'))) return { why: UNSTATEABLE };
+    if (crossDiscriminating(vector, crossLadder(arity)) === null) {
+      return { why: 'not discriminated by the ladder' };
+    }
+    return { key: crossKey(arity) };
+  }
+  if (discriminating(vector, ladder(arity)) === null) {
+    return { why: 'not discriminated by the ladder' };
+  }
+  return { key: ladderKey(arity) };
+}
+
+/**
+ * Probe every function under `targets`. Returns a Scan.
+ *
+ * `cross` walks the SHARED ladder and renders the interlingua, which is what makes one
+ * tree's Scan comparable with the other half's. Same gate, same child, same census —
+ * only the rungs and the rendering change, so a function this half refuses is refused
+ * for the same reason either way.
+ */
+export async function collect(targets, scan = new Scan(), cross = false) {
   for (const file of jsFiles(targets)) {
     let source;
     try {
@@ -1811,7 +1854,7 @@ export async function collect(targets, scan = new Scan()) {
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
-    const result = await probeFile(file, PROBE_TIMEOUT_MS, source);
+    const result = await probeFile(file, PROBE_TIMEOUT_MS, source, cross);
     if (result.error) {
       scan.unloadable.set(rel, result.error);
       continue;
@@ -1823,12 +1866,14 @@ export async function collect(targets, scan = new Scan()) {
         scan.skipped.set(ref, entry.skip);
         continue;
       }
-      if (discriminating(entry.vector, ladder(entry.arity)) === null) {
-        scan.skipped.set(ref, 'not discriminated by the ladder');
+      const admitted = admit(entry.vector, entry.arity, cross);
+      if (admitted.key === undefined) {
+        scan.skipped.set(ref, admitted.why);
         continue;
       }
       scan.probed.set(ref, entry.vector);
-      scan.keys.set(ref, ladderKey(entry.arity));
+      scan.keys.set(ref, admitted.key);
+      scan.arity.set(ref, entry.arity);
     }
   }
   return scan;
@@ -1865,13 +1910,35 @@ export function reportScan(scan, report = new Report()) {
       + 'whether the duplication is a defect',
     );
   }
-  report.note(`\n${scan.files} files, ${scan.unloadable.size} not loaded`);
-  for (const [why, count] of scan.fileCensus()) {
+  return reportCensus(scan.toDict(), report);
+}
+
+/**
+ * The two populations, rendered from the census DATA rather than from a Scan.
+ *
+ * `assay sweep` reads the OTHER half's census out of a bundle and has no Scan to
+ * render it from. A second renderer for that would be a second place describing one
+ * population, and the two would drift exactly the way two hand-kept lists drift — so
+ * the renderer is defined over the data both paths already carry.
+ *
+ * THE TALLIES ARE RE-SORTED HERE and that is not redundant. A live Scan tallies
+ * largest-bucket-first, which is the order worth reading; a bundle's census has been
+ * through JSON with its keys sorted, so the same data arrives alphabetical. Trusting
+ * the incoming order would print one population by size and the other by spelling, for
+ * no reason a reader could see.
+ */
+export function reportCensus(census, report = new Report(), label = '') {
+  const head = label ? `${label} ` : '';
+  const ranked = (counts) => Object.entries(counts)
+    .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  report.note(`\n${head}${census.files} files, `
+    + `${Object.keys(census.unloadable_paths).length} not loaded`);
+  for (const [why, count] of ranked(census.unloadable)) {
     report.note(`  ${why.padEnd(44)} ${count}`);
   }
-  report.note(`${scan.functions} functions, ${scan.probed.size} probed, `
-    + `${scan.skipped.size} not probed`);
-  for (const [why, count] of scan.census()) {
+  report.note(`${head}${census.functions} functions, ${census.probed} probed, `
+    + `${census.not_probed} not probed`);
+  for (const [why, count] of ranked(census.skipped)) {
     report.note(`  ${why.padEnd(44)} ${count}`);
   }
   report.note('  (a not-probed function is a `look`, never a finding — '

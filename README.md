@@ -154,6 +154,8 @@ assay search src/format.py::humanize --in src/ lib/        # search before you g
 assay why src/format.py::humanize                          # ...and if it was not probed, why
 assay accept --reason "read them; merging needs the router change"   # accept what you have read
 assay cross src/format.py::humanize src/ui.mjs::pretty --with assay-js   # across the boundary
+assay sweep src/ --against js/src --with assay-js          # ...for whole trees, naming no pair
+assay bundle src/ > py.json                                # ...or hand the other half a bundle
 assay search --stdin --in src/ lib/ < draft.py             # ...before it is a file
 assay why --stdin < draft.py                               # ...and whether it can be searched for at all
 
@@ -280,6 +282,64 @@ reads like the code being wrong. So `assay probe` writes a record and `assay cro
 one — and `--with CMD` runs that first step for you when both are installed. Two
 references in the *same* language are a `look` pointing at `pair`, which compares them on
 their own language's fuller ladder.
+
+### ...and the pair nobody named: `bundle` + `sweep`
+
+`cross` answers about two functions somebody already suspected. **Nobody suspects the
+pair that matters.** A rule written once in the API and again in the front end, by two
+people, a year apart, is exactly the duplication no one goes looking for — so the
+command that finds it must not need either name.
+
+Finding it means probing *both* trees, and the halves still do not invoke each other. So
+one writes a bundle and the other sweeps against it:
+
+```bash
+assay bundle js/src > js.json           # the JavaScript binary: every function's cross vector
+assay sweep  src/ --against js.json     # the Python one: which of mine does that tree answer?
+
+# or, with both binaries installed, in one step
+assay sweep src/ --against js/src --with assay-js
+```
+
+```
+finding  same answer across languages (cross1/v3/d3b2ba61ccb7):
+         src/api.py::shout [python]  vs  src/ui.mjs::yell [javascript]
+         no input in the shared ladder told them apart — READ them; only a person
+         decides whether the duplication is a defect
+
+12 files, 0 not loaded
+41 functions, 9 probed, 32 not probed
+  zero-arity, so no input ladder applies         19
+  not discriminated by the ladder                 8
+  touches os                                      5
+[javascript] 8 files, 1 not loaded
+[javascript] 30 functions, 7 probed, 23 not probed
+  zero-arity, so no input ladder applies         14
+  could not load                                  6
+  uses `this`, so it is a method                  3
+```
+
+**A bundle is many `assay probe` records in one envelope**, byte-identically shaped, so
+an entry lifted out of one is a record `assay cross` already reads. It is versioned
+apart from the record it carries — adding a key to the envelope does not change what any
+one record means by `vector` — and both schemas are checked before anything is compared,
+because comparing a new answer against the wrong earlier answer is precisely the defect
+a difference checker exists to catch.
+
+**Both censuses are printed, and the far one is the point.** A function the *other*
+binary refused was never compared. A report that says `same none` while staying quiet
+about the twenty-three functions the far side never probed is reporting *we never
+looked* as *we found none* — across a boundary where the reader has no way to check.
+
+**A bucket is only a comparison because of what never reached it.** `sweep` groups by
+vector equality, which is legitimate only because every pair `assay cross` would refuse
+was refused first: an outcome the interlingua cannot state, and a vector no rung told
+apart from a constant. One place decides that for both commands. Two places deciding it
+is how the tree-wide command comes to print a `finding` for a pair the pairwise command
+calls a `look` — two answers to one question, and the weaker one on screen.
+
+A bundle of your own language is a `look`-shaped refusal pointing at `scan`, which
+compares one language's functions on its own fuller ladder.
 
 ---
 
@@ -740,6 +800,16 @@ exists to find, so it is checked.
     command: scan
     paths: js/src
     language: node
+
+# ...and across the two, naming no pair. `against` is the far tree; `with` is the far
+# binary, which is named rather than guessed — both packages install `assay`, so a
+# half that guessed would compare a tree with itself.
+- uses: Megapixel99/assay-checks@v0.4.0
+  with:
+    command: sweep
+    paths: src
+    against: js/src
+    with: assay-js
 ```
 
 **Running harnesses in CI: check the tree afterwards.** `assay runners` audits the
@@ -778,6 +848,7 @@ place `assay cross` needs no arranging, because both binaries are already there:
 docker run --rm -v "$PWD:/work" assay runners
 docker run --rm -v "$PWD:/work" --entrypoint assay-js assay scan src
 docker run --rm -v "$PWD:/work" assay cross src/api.py::shout src/ui.mjs::yell --with assay-js
+docker run --rm -v "$PWD:/work" assay sweep src --against js/src --with assay-js
 ```
 
 ## Limits (honest ones)
@@ -792,12 +863,13 @@ docker run --rm -v "$PWD:/work" assay cross src/api.py::shout src/ui.mjs::yell -
 - **It compares functions, not programs.** Two programs that are the same function under
   a *mapping of their arguments* (a cipher and a special case of a more general one)
   are out of reach. That needs a declared pairing, and this does not replace one.
-- **`assay cross` is a DECLARED pairing, unlike `scan`.** It answers about the two
-  functions you named; it does not discover cross-language pairs the way `scan`
-  discovers same-language ones. Discovery would mean probing every function of both
-  trees on the shared ladder and bucketing across them, which is a bigger machine and
-  a strictly weaker ladder — the cross ladder is the *intersection* of what the two
-  languages can express, so it discriminates less than either native one.
+- **Cross-language discovery runs on a strictly weaker ladder than `scan` does.**
+  `assay sweep` buckets every function of both trees on the shared ladder, which is the
+  *intersection* of what the two languages can express — so it discriminates less than
+  either native one, and a `same` it reports is worth less than a `same` from `scan`.
+  Use `cross` on a pair you already suspect and you get the same ladder; use `pair` or
+  `scan` within one language and you get a fuller one. A sweep is where to start
+  looking, not where to stop.
 - **The cross ladder is a subset, and `same` there is worth less than `same` here.**
   It holds no tuple, no `set`, no `undefined`, and one number type. Two functions it
   cannot tell apart may well be told apart by a value only one language has — which is

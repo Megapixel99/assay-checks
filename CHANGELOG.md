@@ -17,6 +17,58 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### `bundle` and `sweep`: the cross-language pair nobody named
+
+`assay cross` answered about two functions somebody already suspected. Nobody suspects
+the pair that matters — a rule written once in the API and again in the front end, by
+two people, a year apart — and the Limits section said so in as many words: discovery
+"would mean probing every function of both trees on the shared ladder and bucketing
+across them". That is what these two commands are.
+
+```bash
+assay bundle js/src > js.json           # the JavaScript binary
+assay sweep  src/ --against js.json     # the Python one
+assay sweep  src/ --against js/src --with assay-js    # ...or in one step
+```
+
+**`bundle PATHS…`** writes every function's cross vector as one JSON document on
+stdout. Its `records` are byte-identically shaped `assay probe` records, so an entry
+lifted out of one is a record `cross` already reads; `assay_bundle` is versioned apart
+from `assay_probe`, because adding a key to the envelope does not change what any one
+record means by `vector`. It emits ONE SHAPE on every path — a broken invocation is the
+same document with `error` set and exit 2.
+
+**`sweep PATHS… --against BUNDLE|PATHS`** probes this tree on the shared ladder and
+reports every function the other language already answers. `--with CMD` builds the far
+bundle for you, the way it already builds the far record for `cross`. A bundle in this
+half's own language is refused with a pointer at `scan`, which compares one language's
+functions on its own fuller ladder.
+
+**Both censuses are printed, and the far one is why.** A function the *other* binary
+refused was never compared. `same none` printed while the far side's refusals go
+unmentioned is *we never looked* reported as *we found none*, across a boundary where
+the reader has no way to check. The renderer is now defined over the census DATA rather
+than over a live `Scan`, so both halves of that report come from one place — and it
+re-sorts the tallies, because a bundle's census arrives key-sorted from JSON and the
+near one arrives largest-bucket-first.
+
+**A bucket is only a comparison because of what never reached it.** `sweep` groups by
+vector equality, which is legitimate only because `admit` — one function, used by every
+collect in both halves — refuses everything `compare_cross` refuses: an outcome the
+interlingua cannot state, and a vector no rung told apart from a constant. Two places
+deciding that is how the tree-wide command comes to print a `finding` for a pair the
+pairwise command calls a `look`.
+
+`--json` gains one key, `other`, carrying the far half's language, record count and
+census as data. The schema number does not move: the key is additive, and nothing was
+renamed.
+
+Sixteen mutations were added, eight per half. Three of them break the guards above in
+the direction that stays quiet: a bundle from another schema compared anyway, a bundle
+that could not be BUILT read as a tree with nothing in it, and a cross collect walking
+the NATIVE ladder while labelling its records `cross` — which would hand the other half
+a key that matches and a vector that means something else.
+
 ### A body is deferred wherever a body cannot run
 
 The load gate deferred a function body only under a declaration keyword —
