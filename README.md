@@ -607,7 +607,7 @@ cannot:
 |---|---|---|
 | `line` | required | the finding's exact text |
 | `reason` | required in the object form | why you accepted it |
-| `from` | optional | the command that can produce it — one of `runners`, `anchors`, `diff`, `scan` |
+| `from` | optional | the command that can produce it — one of `runners`, `anchors`, `diff`, `scan`, `sweep` |
 
 `from` is what makes staleness a property of the **line** rather than of the run; see
 below. A `from` naming no real command is a hard error rather than a line nobody can
@@ -688,6 +688,27 @@ any run: a line that fires is a line that fires.
 sameness half, and saying otherwise is how a `same answer` line got called stale on a
 clean tree. Tag your entries with `from` and any command answers its own; leave them
 untagged and the complete run is the only one that can.
+
+**`--sweep PATH --against BUNDLE` folds the cross half in as well**, so a `same answer
+across languages` line is answerable by the same run:
+
+```bash
+assay all --base origin/main --scan src --sweep src --against js.json
+assay all --base origin/main --scan src --sweep src --against js/src --with assay-js
+```
+
+**`sweep` is a legal `from` but is deliberately *not* part of what makes a run
+complete**, and those are two different questions that it would be a defect to conflate
+in either direction. Add it to completeness and every `assay.json` written before this
+release quietly stops having its untagged entries checked — the tool doing less, on
+configs that were fine yesterday. Refuse it as a tag instead and a cross finding lands
+untagged, where `all --scan` — complete by the older definition, having never swept —
+calls it stale on a clean tree.
+
+The two sets differ by exactly that one name, and it is safe for a reason about *time*
+rather than a convention: `assay accept` always writes `from`, so every untagged line
+that can exist was written before `sweep` was, and no line older than a command was
+produced by it.
 
 **Under Node this used to be impossible**, because `assay anchors` was Python-only and
 no JavaScript run performed every audit that can produce a baseline line. It does now,

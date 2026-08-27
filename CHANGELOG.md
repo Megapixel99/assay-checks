@@ -17,6 +17,56 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### `all --sweep`: the cross half joins the complete run
+
+`assay all` is the command that decides whether a baseline line may be called stale, and
+it could not perform the cross audit at all. So a `same answer across languages` finding
+could be accepted into `assay.json` and then **never answered by anything** — a line no
+run could fire, sitting in the baseline forever.
+
+```bash
+assay all --base origin/main --scan src --sweep src --against js.json
+assay all --base origin/main --scan src --sweep src --against js/src --with assay-js
+```
+
+**`FAMILIES` was doing two jobs, and splitting them is the whole change.**
+
+| | |
+|---|---|
+| `FAMILIES` | is this a legal `from`? — now includes `sweep` |
+| `COMPLETING` | may a run that skipped X call an **untagged** line stale? — does **not** include `sweep` |
+
+Conflating them is a defect in whichever direction you resolve it, and both directions
+are now tests rather than opinions:
+
+- Put `sweep` in the completeness set and **every existing `assay all --scan` stops being
+  a complete run** — untagged entries in every already-written `assay.json` silently stop
+  being checked for staleness. The tool quietly doing less, on configs that were fine the
+  day before.
+- Leave `sweep` out of the legal tags and a cross finding lands **untagged**, where
+  `all --scan` — complete by the four-audit definition, having never swept — calls it
+  stale on a clean tree. That is the cry-wolf defect `apply_baseline` already carries a
+  comment about.
+
+The two sets differ by exactly one name, and it is safe for a reason about **time**
+rather than a convention: `assay accept` always writes `from`, so every untagged line
+that can exist was written before `sweep` did, and no line older than a command can have
+been produced by it.
+
+**`sweep` joins `performed` only when it actually ran**, exactly as `scan` does. And the
+far side is resolved in ONE place for both `all` and `accept` — two resolvers could
+disagree about whether this run swept, and then `accept` would tag a line `from: sweep`
+that `all` never performs, which is a line nothing can ever call stale.
+
+**A broken `--against` is exit 2 before any audit reports.** Three audits printing
+findings from a run that then exits 2 reads as though those findings were the failure.
+
+`--against` without `--sweep` is an error rather than a silent skip: a flag accepted,
+documented and inert is the shape of a defect this package already shipped once.
+
+Four mutations were added, and one existing anchor was repaired — the completeness check
+now reads `COMPLETING`, and the mutation that pinned `FAMILIES` there had to follow it.
+
 ### `why --cross`: which gate kept this function out of the bundle
 
 `sweep` prints `41 functions, 9 probed, 32 not probed`. That is the right shape for a

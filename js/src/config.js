@@ -36,7 +36,30 @@ export const CONFIG_NAMES = ['assay.json', '.assay.json'];
  * somebody named rather than auditing a tree, and the third produces no findings at
  * all. Nothing they print is a line a CI run would accept.
  */
-export const FAMILIES = ['runners', 'anchors', 'diff', 'scan'];
+export const FAMILIES = ['runners', 'anchors', 'diff', 'scan', 'sweep'];
+
+/**
+ * What an UNTAGGED line could have come from, which is NOT the same set and the
+ * difference is load-bearing.
+ *
+ * `FAMILIES` answers "is this a legal `from`?". This answers "may a run that did not
+ * perform X call an UNTAGGED line stale?" — and conflating the two is a defect in
+ * whichever direction you resolve it. Put `sweep` in here and every existing
+ * `assay all --scan` stops being a complete run, so untagged entries in every
+ * already-written `assay.json` silently stop being checked for staleness — the tool
+ * quietly doing less, which is the failure this package exists to report. Leave `sweep`
+ * out of `FAMILIES` instead and a cross finding cannot be tagged at all, so it lands
+ * untagged and `all --scan` — complete by this definition, having never swept — calls
+ * it stale on a clean tree. That is the cry-wolf defect `applyBaseline` already carries
+ * a comment about.
+ *
+ * The two sets differ by exactly one name, and the reason it is safe is a fact about
+ * TIME rather than a convention: `assay accept` always writes `from`, so the only
+ * untagged lines that can exist were written before `sweep` did, and no line older than
+ * a command can have been produced by it. A line hand-written untagged for a cross
+ * finding is outside that — tag it, which is what the tool would have done.
+ */
+export const COMPLETING = ['runners', 'anchors', 'diff', 'scan'];
 
 export class ConfigError extends Error {}
 
@@ -231,7 +254,7 @@ export function applyBaseline(findings, accepted, performed = []) {
   const seen = new Set(findings.map((f) => f.message));
   const still = findings.filter((f) => !known.has(f.message));
   const did = new Set(performed);
-  const complete = FAMILIES.every((f) => did.has(f));
+  const complete = COMPLETING.every((f) => did.has(f));
   const stale = [];
   const unchecked = [];
   const ordered = [...accepted].sort((a, b) => (a.line < b.line ? -1 : a.line > b.line ? 1 : 0));
