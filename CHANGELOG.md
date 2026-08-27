@@ -24,7 +24,10 @@ failed a run — but two invocations that used to be accepted are now errors, an
 were flags or arguments the tool parsed and ignored. `anchors` moves the other way, and
 is the reason this is not a patch either: it stops reporting dead anchors on harnesses
 that carry a column after the replacement, so a tree red on 0.4.0 for that reason goes
-green without being edited.
+green without being edited. `anchors` also changes the **text** of both its findings,
+which matters only to a `baseline`: a line is matched whole, so an accepted anchor
+finding written against 0.4.0 stops matching and is reported stale rather than silently
+ignored. Re-accept it with `assay accept` and the new line carries the file.
 
 ### The gate asks two questions, because it guards two events
 
@@ -195,6 +198,54 @@ to silence it is needed any more — though one left in place stays harmless, an
 stale-exemption check does not fire on it. Nothing about the CLI contract, `assay.json`,
 the verdict vocabulary or the JSON schema moves. An audit that fires on correct code is
 one that gets switched off, which is why this is a fix rather than a tuning.
+
+### An anchor finding says WHERE, not just how many
+
+`assay anchors` reported `an anchor matches 2 times in ONE file` and named the
+**harness** — which is correct, since the harness is whose table has gone ambiguous,
+and unhelpful, because the second copy is usually in some other file entirely.
+Frequently it is a file added since that harness was last touched: a new helper
+elsewhere in the tree grows a line that another experiment's harness had been using as
+its anchor, and the audit goes red naming a harness nobody has edited in days. The
+reader starts from the one file that is fine and greps the tree for the one that is not.
+
+The path was already in hand — `max()` over the per-file counts had it and threw it
+away — so both halves now carry it through:
+
+```
+finding  test/mutations_api.py: an anchor matches 2 times in ONE file (src/keycheck.py) —
+         `replace(..., 1)` will take the first: 'if not os.path.isdir(d):'
+```
+
+**A tie names the first file in a sorted walk**, which is what `>` rather than `>=`
+says: two equally guilty files are one problem, and a finding whose text moves between
+them reads as two. The text is what a `baseline` entry matches whole, so an unstable one
+is an accepted line that quietly stops being accepted.
+
+**The dead-anchor finding gained the other half of the same question**: how many files
+were searched. *Matches nothing* and *there was nothing to match it against* are
+different claims, and only the first is about the anchor — a `--root` pointed one
+directory too deep makes every anchor in the tree dead at once, and without the count
+that reads as a tree full of rotted anchors rather than as a mis-invocation.
+
+### `sigterm` says what it cannot cover, which is SIGKILL
+
+Documentation only; no verdict moves and no property changes. The `sigterm` property's
+own description named "a harness killed by a timeout" among the cases trapping SIGTERM
+protects you from. **It does not.** SIGKILL cannot be caught, blocked or handled — no
+handler runs, no `finally` runs — and the ordinary way to be SIGKILLed is precisely a
+timeout: `subprocess.run(..., timeout=...)` kills the child outright, and so does the
+kill step of a CI runner that has waited long enough. A harness satisfying all seven
+properties, invoked under a timeout it then exceeds, leaves the tree mutated exactly as
+though it carried none of them.
+
+Naming the gap is the whole of the change, because the remedy is not available to this
+tool: it belongs to whatever **invoked** the harness, which has to check that the tree
+came back rather than trust that the harness was given the chance to put it back. That
+is `restore-verified`'s argument one level up — a restore that ran is not a restore that
+worked, and this is a restore that never ran at all. The README gains the shape of that
+check under *Running harnesses in CI*, and a Limits entry says plainly that `assay` does
+not see the invoker.
 
 ## 0.4.0
 

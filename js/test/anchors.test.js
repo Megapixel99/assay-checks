@@ -165,6 +165,11 @@ test('an anchor matching NOTHING is a finding', async () => {
   });
   assert.equal(report.findings.length, 1);
   assert.match(report.findings[0].message, /matches NOTHING/);
+  // ONE file, not two: the harness is not part of its own corpus. "Matches nothing"
+  // and "there was nothing to match it against" are different claims, and a root
+  // pointed one directory too deep makes every anchor dead at once — only the count
+  // tells those apart.
+  assert.match(report.findings[0].message, /in any of 1 file —/);
 });
 
 test('an anchor matching TWICE IN ONE FILE is a finding', async () => {
@@ -174,6 +179,37 @@ test('an anchor matching TWICE IN ONE FILE is a finding', async () => {
   });
   assert.equal(report.findings.length, 1);
   assert.match(report.findings[0].message, /matches 2 times in ONE file/);
+});
+
+test('the finding NAMES THE FILE holding the copies', async () => {
+  // The finding is about the HARNESS, and the copies are usually somewhere else —
+  // often a file added since that harness was last touched. A reader given only the
+  // count starts from the file they already know about and greps the tree for the one
+  // they do not.
+  const report = await audit({
+    'src/thing.js': TARGET,
+    'src/elsewhere.js': 'export function a(x) {\n  return x;\n}\n\nexport function b(x) {\n  return x;\n}\n',
+    'mutations-a.js': harness("[['label', '  return x;', '  return 0;']]"),
+  });
+  assert.equal(report.findings.length, 1);
+  assert.match(report.findings[0].message, /\(src\/elsewhere\.js\)/);
+  // AND NOT the file the reader would have started from: `src/thing.js` holds no copy
+  // at all, so naming it would be worse than naming nothing.
+  assert.doesNotMatch(report.findings[0].message, /thing\.js/);
+});
+
+test('a TIE names the same file every run', async () => {
+  // Two files equally guilty is one problem, not two. `>` rather than `>=` over a
+  // sorted walk keeps the finding's text stable, and the text is what a `baseline`
+  // entry matches whole.
+  const files = {
+    'b_two.js': 'export function a(x) {\n  return x;\n}\n\nexport function b(x) {\n  return x;\n}\n',
+    'a_two.js': 'export function c(x) {\n  return x;\n}\n\nexport function d(x) {\n  return x;\n}\n',
+    'mutations-a.js': harness("[['label', '  return x;', '  return 0;']]"),
+  };
+  const first = (await audit(files)).findings[0].message;
+  assert.match(first, /a_two\.js/);
+  assert.equal(first, (await audit(files)).findings[0].message);
 });
 
 test('the same anchor once in TWO files is not ambiguous', async () => {

@@ -133,6 +133,38 @@ class Auditing(unittest.TestCase):
         self.assertEqual(rep.exit_code(), 1)
         self.assertIn("matches 2 times", rep.findings[0].message)
 
+    def test_the_finding_NAMES_THE_FILE_holding_the_copies(self):
+        """The finding is about the HARNESS, and the copies are usually somewhere
+        else — often a file added since that harness was last touched. A reader given
+        only the count starts from the file they already know about and greps the tree
+        for the one they do not, which is the whole distance between a finding that
+        can be acted on and one that has to be investigated first.
+        """
+        rep = self.audit({
+            "a.py": TARGET,
+            "elsewhere.py":
+                'def one(x):\n    return x + 1\n\n\ndef two(x):\n    return x + 1\n',
+            "mutations_a.py":
+                'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'})
+        self.assertEqual(rep.exit_code(), 1)
+        self.assertIn("elsewhere.py", rep.findings[0].message)
+        # AND NOT the file the reader would have started from. `a.py` holds one copy,
+        # so it is innocent and naming it would be worse than naming nothing.
+        self.assertNotIn("a.py", rep.findings[0].message.split("(")[1])
+
+    def test_a_TIE_names_the_same_file_every_run(self):
+        """Two files equally guilty is one problem, not two. `>` rather than `>=`
+        over a sorted walk is what keeps the finding's text stable, and the text is
+        what a `baseline` entry matches whole."""
+        files = {
+            "b_two.py": 'def a(x):\n    return x + 1\n\n\ndef b(x):\n    return x + 1\n',
+            "a_two.py": 'def c(x):\n    return x + 1\n\n\ndef d(x):\n    return x + 1\n',
+            "mutations_a.py":
+                'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'}
+        first = self.audit(files).findings[0].message
+        self.assertIn("a_two.py", first)
+        self.assertEqual(first, self.audit(files).findings[0].message)
+
     def test_the_same_anchor_ONCE_IN_EACH_OF_TWO_FILES_is_not_ambiguous(self):
         """Counting in total rather than per file would make this a finding, and a
         harness that names its target is not confused by it. Crying wolf here is how
@@ -158,6 +190,12 @@ class Auditing(unittest.TestCase):
                 'MUTATIONS = [("label", "    nothing like this", "    or this")]\n'})
         self.assertEqual(rep.exit_code(), 1)
         self.assertIn("matches NOTHING", rep.findings[0].message)
+        # HOW MANY FILES WERE SEARCHED. "Matches nothing" and "there was nothing to
+        # match it against" are different claims, and a root pointed one directory
+        # too deep makes every anchor dead at once. Only the count tells them apart.
+        # ONE, not two: the harness is not part of its own corpus, so the only file
+        # searched is `a.py`. The count is the corpus rule made visible.
+        self.assertIn("in any of 1 file —", rep.findings[0].message)
 
     def test_a_table_shape_it_cannot_read_is_a_LOOK_not_a_guess(self):
         """A wrong conviction about a table this audit has never seen is worse than

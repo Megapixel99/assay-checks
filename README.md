@@ -78,6 +78,21 @@ tree wrong — and every suite after it scores code nobody wrote. Hashing before
 comparing after is the check, and the detector wants both halves of it: a digest nothing
 compares is arithmetic, and a message nothing computes is a string.
 
+**And `sigterm` has a blind spot of its own, which is SIGKILL.** SIGKILL cannot be
+caught, blocked or handled: no handler runs, no `finally` runs, and no property in the
+table above would have helped. The ordinary way to be SIGKILLed is not an impatient
+person but a **timeout** — `subprocess.run(..., timeout=...)` kills the child outright,
+and so does the kill step of a CI runner that has waited long enough. So a harness
+satisfying all seven, invoked under a timeout it then exceeds, leaves the tree mutated
+exactly as though it carried none of them, and every suite after it scores code nobody
+wrote.
+
+The remedy is not in the harness and cannot be: it belongs to **whatever invoked the
+harness**, which has to check that the tree came back rather than trust that the harness
+was given the chance to put it back. That is `restore-verified`'s argument one level up
+— a restore that ran is not a restore that worked, and this is a restore that never ran
+at all. See *Running harnesses in CI* below for the shape of the check.
+
 They collapse into one rule worth remembering on its own, because the seven are just
 instances of it:
 
@@ -721,6 +736,35 @@ exists to find, so it is checked.
     language: node
 ```
 
+**Running harnesses in CI: check the tree afterwards.** `assay runners` audits the
+harness, and the harness cannot audit the thing that kills it. A step that runs one
+under a timeout has to answer for the SIGKILL case itself, and `git` already knows the
+answer:
+
+```yaml
+- name: mutation harnesses
+  run: |
+    rc=0
+    for h in $(git ls-files '*mutations*.py'); do
+      timeout 1200 python3 "$h" || { echo "FAILED: $h"; rc=1; }
+      if ! git diff --quiet; then
+        echo "DIRTY: $h left the tree mutated"; git checkout -- .; rc=1
+      fi
+    done
+    exit $rc
+```
+
+Four things in that loop are the point rather than boilerplate. **`git ls-files`, not a
+list of harnesses**: a list is one more table that goes stale, and the harness nobody
+added to it is the one that has been asleep longest. **The dirt check runs after every
+harness, not once at the end**, because a tree checked once names the last harness
+rather than the one that broke it, and a mutated file left behind means every harness
+after it scored code nobody wrote. **The failure is recorded and the loop continues**
+rather than exiting on the first one — a red run that means *one broke and the rest were
+never asked* is the same collapse `dead-vs-real` exists to prevent, one level up. And
+**`rc` is what exits**, because a loop that reports failures and returns 0 is the
+sleeping suite this whole half of the tool is about.
+
 **Docker**, both runtimes, one image, for CI that has neither toolchain — and the one
 place `assay cross` needs no arranging, because both binaries are already there:
 
@@ -810,6 +854,12 @@ docker run --rm -v "$PWD:/work" assay cross src/api.py::shout src/ui.mjs::yell -
   `anchor_exempt` is the table for saying so, with the reason.
 - **The seven properties are about mutation harnesses.** If your project has none, that
   half has nothing to say about it and says so rather than reporting a pass.
+- **`sigterm` cannot cover SIGKILL, and a timeout is usually a SIGKILL.** The property
+  is satisfied by a harness that turns SIGTERM into an exception, which is the whole of
+  what a process can do about being asked to stop. Being *killed* is not that: no
+  handler runs and no `finally` runs, so a harness passing all seven still leaves the
+  tree mutated when the thing invoking it runs out of patience. Only the invoker can
+  check that, and `assay` does not see the invoker. See *Running harnesses in CI*.
 - **`targets_mentioned` under-reports.** A harness that merely mentions a filename counts
   as covering it. An audit that errs should err toward saying less.
 - **It is not a code reviewer.** It cannot tell you an abstraction is wrong, a name is
@@ -838,9 +888,9 @@ are what is already published and do not change. `pyproject.toml` bridges the tw
 Working from a checkout rather than an install, `python/` is what goes on the path:
 
 ```bash
-python3 python/tests/run_tests.py        # 294 tests, ~5 s
-npm test                                 # 280 tests, ~15 s
-python3 python/tests/mutations_assay.py  # 182 mutations, both halves
+python3 python/tests/run_tests.py        # 319 tests, ~5 s
+npm test                                 # 302 tests, ~20 s
+python3 python/tests/mutations_assay.py  # 193 mutations, both halves
 PYTHONPATH=python python3 -m assay scan python/assay   # scanned by its own scanner
 PYTHONPATH=python python3 -m assay --root . all --base origin/master --scan python/assay
 ```
