@@ -4,6 +4,7 @@
     does the tree already answer this?   assay scan | pair | search
     ...does the OTHER language answer it?  assay search REF --against BUNDLE
     why was my function not probed?      assay why FILE::NAME | assay why --stdin
+    ...and why did it not CROSS?         assay why FILE::NAME --cross
     ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
     ...for a whole tree, not one pair?   assay bundle PATHS | assay sweep PATHS
     I have read this one and accept it   assay accept --reason "..." [LINE]
@@ -38,11 +39,11 @@ from .anchors import audit_anchors
 from .checks import audit_diff, audit_runners, check_exemptions
 from .config import (CONFIG_NAMES, ConfigError, apply_baseline, load,
                      write_baseline)
-from .sameness import (BUNDLE_SCHEMA, PROBE_SCHEMA, admit, collect, compare,
-                       compare_cross, cross_key, cross_ladder, discriminating,
-                       discrimination_detail, group, ladder, ladder_key, probe,
-                       report_census, report_scan, resolve, resolve_source,
-                       resolve_why)
+from .sameness import (BUNDLE_SCHEMA, PROBE_SCHEMA, UNSTATEABLE, admit, collect,
+                       compare, compare_cross, cross_discriminating, cross_key,
+                       cross_ladder, discriminating, discrimination_detail, group,
+                       ladder, ladder_key, probe, report_census, report_scan, resolve,
+                       resolve_source, resolve_why)
 from .verdicts import FINDING, Report, render, render_json
 
 
@@ -412,6 +413,9 @@ def cmd_why(args, config, out):
     if func is None:
         return code
     report = Report()
+    if args.cross:
+        _why_cross(func, report)
+        return _finish(args, report, config, out)
     vector, refused = probe(func)
     if vector is None:
         report.look("%s — %s" % (func.ref, refused), func.ref,
@@ -425,6 +429,59 @@ def cmd_why(args, config, out):
               % (func.ref, ladder_key(func), answered, len(vector), distinct),
               func.ref)
     return _finish(args, report, config, out)
+
+
+def _why_cross(func, report):
+    """The same question about the SHARED ladder: why is this not in a bundle?
+
+    `sweep` prints `41 functions, 9 probed, 32 not probed` and that is the right shape
+    for a tree and the wrong shape for a question. Somebody who expected a PARTICULAR
+    function to cross the boundary cannot read `not discriminated by the ladder 8` and
+    learn whether theirs is one of the eight — and the cross ladder refuses for a
+    reason the native one has no equivalent of, which is the whole reason this flag
+    exists rather than a footnote on the native answer.
+
+    A NATIVE `why` CANNOT ANSWER THIS, and answering it as though it could is the
+    failure. The two ladders hold different values and refuse different functions: one
+    that the native ladder discriminates can be a constant on the shared one, because
+    the shared one is the intersection of what the two languages can express. Reporting
+    the native verdict for a cross question would be confident and wrong.
+    """
+    arity = len(func.params)
+    rungs = cross_ladder(arity)
+    vector, refused = probe(func, mode="cross")
+    if vector is None:
+        report.look("%s — %s, on the SHARED ladder" % (func.ref, refused), func.ref,
+                    "refused before the ladder, so it is in no bundle and can cross "
+                    "with nothing")
+        return
+    # THE INTERLINGUA'S OWN REFUSAL, WHICH THE NATIVE LADDER HAS NO EQUIVALENT OF. An
+    # outcome JSON cannot hold is not a value this can compare, and `compare_cross`
+    # calls such a pair a `look` rather than pronouncing on it. Naming the rung matters
+    # more here than anywhere else: it is a fact about ONE input, and a person can
+    # usually see immediately which of their return paths it is.
+    unstateable = [i for i, o in enumerate(vector) if o.startswith("X:")]
+    if unstateable:
+        first = unstateable[0]
+        report.look("%s — %s" % (func.ref, UNSTATEABLE), func.ref,
+                    "%d of %d rungs answered with one, the first at %s -> %s — the "
+                    "interlingua is JSON, so bytes, a set, a Date or a class instance "
+                    "cannot be said in it"
+                    % (len(unstateable), len(vector),
+                       json.dumps(rungs[first], ensure_ascii=False), vector[first]))
+        return
+    detail = discrimination_detail(vector, rungs, mode="cross")
+    if detail is not None:
+        report.look("%s — not discriminated by the SHARED ladder" % func.ref,
+                    func.ref,
+                    "%s; the shared ladder is the intersection of what the two "
+                    "languages can express, so it discriminates less than the native "
+                    "one" % detail)
+        return
+    answered, distinct = cross_discriminating(vector, rungs)
+    report.ok("%s — probed on %s: %d of %d rungs answered, %d distinct value(s)"
+              % (func.ref, cross_key(arity), answered, len(vector), distinct),
+              func.ref)
 
 
 # The suffix decides which half a reference belongs to. Inferred rather than declared,
@@ -1016,6 +1073,8 @@ def build_parser():
                    help="read the function from stdin, before it is a file")
     p.add_argument("--name", default=None,
                    help="which function in a --stdin snippet to ask about")
+    p.add_argument("--cross", action="store_true",
+                   help="ask about the SHARED ladder — why is this not in a bundle?")
 
     p = sub.add_parser("probe", parents=[_common()],
                        help="one function's cross-language vector, as JSON on stdout")

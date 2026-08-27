@@ -17,6 +17,60 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### `why --cross`: which gate kept this function out of the bundle
+
+`sweep` prints `41 functions, 9 probed, 32 not probed`. That is the right shape for a
+tree and the wrong shape for a question — somebody who expected a *particular* function
+to cross cannot read `not discriminated by the ladder 8` and learn whether theirs is one
+of the eight. `why` answered that for the native ladder and had nothing to say about the
+shared one.
+
+```
+$ assay why src/cache.py::entries --cross
+look     src/cache.py::entries — an outcome the interlingua cannot state
+         22 of 29 rungs answered with one, the first at [0] -> X:set — the interlingua
+         is JSON, so bytes, a set, a Date or a class instance cannot be said in it
+
+$ assay why src/cache.py::entries
+ok       src/cache.py::entries — probed on arity1/v3: 24 of 31 rungs answered,
+         24 distinct value(s)
+```
+
+**Both are true, and that is the argument for the flag.** The native ladder probes this
+function happily; the shared one cannot state a `set` at all. The two ladders hold
+different values and refuse different functions — one the native ladder discriminates
+can be a *constant* on the shared one, because the shared one is the intersection of
+what the two languages can express. Reporting one verdict for the other question would
+be confident and wrong, with nothing on screen to say the two ladders had been asked
+different things. There is a test for exactly that pair of outputs, in both halves.
+
+**The rung is named, not just counted.** `X:set` is a fact about one input, and a person
+with the function open can usually see which return path it is. A count alone sends them
+back to reading the whole thing, which is the work the answer was supposed to save.
+
+**A FILE-level refusal says nothing about which ladder was asked**, deliberately: the
+module was never loaded, so no function in it was looked at on either.
+
+`discrimination_detail` now takes the ladder it is explaining. It is ONE function for
+both, and it can be, because its last branch DEDUCES the projection rather than
+re-deciding it — deduction needs no table of vacuous shapes, and a table is exactly what
+would have had to be duplicated. The parity test that used to pin the dispatching line
+now asserts the stronger property: the projection guard is never named inside the
+explainer, in either half.
+
+Six mutations were added, and the two that are ABSENT are recorded in the table with
+their reason. Swapping the explainer's decider cannot be made silent in Python: the
+native projection table parses its rungs as source and the cross ladder carries values,
+so handing one to the other's guard raises inside the tool. A crash is loud, and this
+runner's rule is that a mutation must make a guard silently permissive or silently
+strict — three entries were reshaped for exactly that in the past, and a fourth that
+cannot be reshaped does not belong. JavaScript has no such barrier, both ladders being
+plain arrays there, so its counterpart IS silent and IS in the table.
+
+`assay anchors` again found three defects in its own table on the way through — two
+existing entries pinned the explainer's old first line, and `why --cross` made
+`probe(func, mode="cross")` ambiguous with `assay probe`.
+
 ### `search --against`: the other language, for ONE function
 
 `sweep` needs a whole tree on both sides. `cross` needs the pair named. Neither answers

@@ -1561,3 +1561,103 @@ test('a --stdin search asks BOTH corpora about the SAME snippet', async () => {
   assert.match(text, /the tree already answers <stdin>::loud/);
   assert.match(text, /the python tree already answers <stdin>::loud/);
 });
+
+// --------------------------------------------------------------------------- //
+// why --cross — why is this function in no bundle?
+//
+// `sweep` prints `50 functions, 0 probed, 50 not probed`, which is the right shape for
+// a tree and the wrong shape for a question. Somebody who expected a PARTICULAR
+// function to cross cannot read `not discriminated by the ladder 8` and learn whether
+// theirs is one of the eight.
+// --------------------------------------------------------------------------- //
+
+// Probed happily on the NATIVE ladder and unable to cross at all: a Map is 29 distinct
+// returned values to `assay why` and `X:Map` on every rung to the interlingua. It is
+// the fixture the whole flag exists for — a native answer to a cross question is
+// confident and wrong.
+const UNCROSSABLE = "export function held(x) { return new Map([['k', x]]); }\n";
+
+async function whyCross(body, name, ...extra) {
+  const root = tree({ 'm.js': body });
+  return cli('why', `${path.join(root, 'm.js')}::${name}`, ...extra);
+}
+
+test('a function that CROSSES is an ok naming the shared ladder', async () => {
+  const { code, text } = await whyCross(CROSS_TWINS, 'shout', '--cross');
+  assert.equal(code, 0, text);
+  assert.match(text, /probed on cross1\//);
+  assert.match(text, /rungs answered/);
+});
+
+test('an outcome the INTERLINGUA CANNOT STATE is named with its RUNG', async () => {
+  // It is a fact about ONE input, and a person can usually see immediately which of
+  // their return paths it is.
+  const { code, text } = await whyCross(UNCROSSABLE, 'held', '--cross');
+  assert.equal(code, 0, text);
+  assert.match(text, /an outcome the interlingua cannot state/);
+  assert.match(text, /X:Map/);
+  assert.match(text, /the first at/);
+});
+
+test('the NATIVE answer for that function is a clean ok', async () => {
+  // THE ARGUMENT FOR THE FLAG, as a test rather than as a comment. The native ladder
+  // probes this function happily; answering a cross question with that verdict would
+  // be confident and wrong, and there would be nothing on screen to say the two
+  // ladders had been asked different things.
+  const { code, text } = await whyCross(UNCROSSABLE, 'held');
+  assert.equal(code, 0, text);
+  assert.match(text, /probed on arity1\//);
+  assert.doesNotMatch(text, /interlingua/);
+});
+
+test('a constant is NOT discriminated by the SHARED ladder', async () => {
+  const { code, text } = await whyCross('export function k(n) { return 7; }\n', 'k',
+    '--cross');
+  assert.equal(code, 0, text);
+  assert.match(text, /not discriminated by the SHARED ladder/);
+  assert.match(text, /as far as this ladder can see it is a constant/);
+  assert.match(text, /intersection/);
+});
+
+test('a function refused BEFORE the ladder says so of the bundle', async () => {
+  // A FUNCTION-level refusal, not a file-level one. `Math.random()` refuses the whole
+  // FILE here, and that answer is genuinely ladder-independent — the module was never
+  // loaded, so neither ladder ever saw it — which is why that path says nothing about
+  // the shared ladder and should not.
+  const { code, text } = await whyCross(
+    'export function meth(x) { return this.scale * x; }\n', 'meth', '--cross',
+  );
+  assert.equal(code, 0, text);
+  assert.match(text, /SHARED ladder/);
+  assert.match(text, /in no bundle/);
+});
+
+test('a FILE-level refusal says nothing about which ladder was asked', async () => {
+  // Because it is the same answer for both. The module was never loaded, so no
+  // function in it was looked at on either ladder, and dressing that up as a cross
+  // verdict would claim the shared ladder had been consulted when nothing was.
+  const { code, text } = await whyCross(
+    'export function r(n) { return Math.random() + n; }\n', 'r', '--cross',
+  );
+  assert.equal(code, 0, text);
+  assert.match(text, /the FILE was refused/);
+  assert.doesNotMatch(text, /SHARED ladder/);
+});
+
+test('why --cross takes a SNIPPET too, because the question precedes the file', async () => {
+  const { code, text } = await cliStdin(UNCROSSABLE, 'why', '--stdin', '--cross');
+  assert.equal(code, 0, text);
+  assert.match(text, /<stdin>::held/);
+  assert.match(text, /an outcome the interlingua cannot state/);
+});
+
+test('a look from why --cross NEVER fails the run', async () => {
+  // `look` never affects the exit code. That is the whole reason it exists as a
+  // separate verdict.
+  for (const [body, name] of [[UNCROSSABLE, 'held'],
+    ['export function k(n) { return 7; }\n', 'k']]) {
+    // eslint-disable-next-line no-await-in-loop
+    const { code } = await whyCross(body, name, '--cross');
+    assert.equal(code, 0);
+  }
+});

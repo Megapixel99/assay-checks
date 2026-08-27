@@ -521,7 +521,7 @@ MUTATIONS = [
                 "never its behaviour" % len(vector))'''),
     ("sameness: `why` explains a function the ladder DID discriminate",
      "sameness.py",
-     '''    if discriminating(vector, inputs) is not None:
+     '''    if decide(vector, inputs) is not None:
         return None''',
      '''    if False:
         return None'''),
@@ -1070,6 +1070,52 @@ MUTATIONS = [
      "cli.js",
      '''        ? probeStdin(text, opts.name, cross)''',
      '''        ? probeStdin(readStdin(), opts.name, cross)'''),
+    # ---- `why --cross`: why is this function in NO BUNDLE? ------------------ #
+    #
+    # The native ladder probes a function returning a set happily — 24 distinct values
+    # — and the interlingua cannot state one of them. Answering a cross question with
+    # the native verdict is confident and wrong, and nothing on screen would say the
+    # two ladders had been asked different things.
+    ("cli: `why --cross` explains the NATIVE ladder while claiming the shared one",
+     "cli.py",
+     '''    vector, refused = probe(func, mode="cross")
+    if vector is None:
+        report.look''',
+     '''    vector, refused = probe(func, mode="native")
+    if vector is None:
+        report.look'''),
+    ("cli: `why --cross` stops naming the outcome the interlingua cannot state",
+     "cli.py",
+     '''    unstateable = [i for i, o in enumerate(vector) if o.startswith("X:")]
+    if unstateable:''',
+     '''    unstateable = [i for i, o in enumerate(vector) if o.startswith("X:")]
+    if False:'''),
+    # NO PYTHON ENTRY SWAPS THE EXPLAINER'S DECIDER, and the reason is a fact about the
+    # two ladders rather than an oversight. The native projection table parses its rungs
+    # as SOURCE (`ast.literal_eval`) and the cross ladder carries VALUES, so handing one
+    # to the other's guard raises `ValueError` inside the tool. A crash is LOUD, and
+    # this file's rule is that a mutation must make a guard silently permissive or
+    # silently strict — three entries were reshaped for exactly this, and a fourth that
+    # cannot be reshaped does not belong. The mistake is unmakeable in Python without
+    # something noticing, which is the strongest form of the guard and the reason there
+    # is nothing here to break. JavaScript has no such barrier — both ladders are plain
+    # arrays there — so its counterpart below IS silent, and IS in the table.
+    ("cli.js: `why --cross` explains the NATIVE ladder while claiming the shared one",
+     "cli.js",
+     '''  const result = await probeFile(file, undefined, source, cross);''',
+     '''  const result = await probeFile(file, undefined, source, false);'''),
+    ("cli.js: `why --cross` stops naming the outcome the interlingua cannot state",
+     "cli.js",
+     '''  if (unstateable.length) {''',
+     '''  if (false) {'''),
+    ("cli.js: `why --cross` explains discrimination with the NATIVE decider",
+     "cli.js",
+     '''  const detail = discriminationDetail(entry.vector, rungs, 'cross');''',
+     '''  const detail = discriminationDetail(entry.vector, rungs, 'native');'''),
+    ("sameness.js: the cross explainer re-decides with the NATIVE discriminator",
+     "sameness.js",
+     '''  const decide = mode === 'cross' ? crossDiscriminating : discriminating;''',
+     '''  const decide = discriminating;'''),
     ("cli.js: a bundle that could not be built exits 0",
      "cli.js",
      '''          ...envelope, records: [], census: null, error: 'bundle needs a path',
@@ -1294,7 +1340,7 @@ MUTATIONS += [
   }"""),
     ("js sameness: `why` explains a function the ladder DID discriminate",
      "sameness.js",
-     """  if (discriminating(vector, inputs) !== null) return null;""",
+     """  if (decide(vector, inputs) !== null) return null;""",
      """  if (false) return null;"""),
     ("js cli: `why` stops answering at the FILE level for a refused file",
      "cli.js",

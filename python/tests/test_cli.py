@@ -1278,6 +1278,81 @@ class SearchAcrossTheBoundary(unittest.TestCase):
         self.assertNotIn("functions,", text)      # the census never ran
 
 
+# Probed happily on the NATIVE ladder and unable to cross at all: a set is 24 distinct
+# returned values to `assay why` and `X:set` on every rung to the interlingua. It is
+# the fixture the whole flag exists for — a native answer to a cross question is
+# confident and wrong.
+UNCROSSABLE = "def held(x):\n    return {x, 1}\n"
+
+
+class WhyOnTheSharedLadder(unittest.TestCase):
+    """`why --cross`: why is this function in no bundle?
+
+    `sweep` prints `41 functions, 9 probed, 32 not probed`, which is the right shape
+    for a tree and the wrong shape for a question. Somebody who expected a PARTICULAR
+    function to cross cannot read `not discriminated by the ladder 8` and learn whether
+    theirs is one of the eight.
+    """
+
+    def why(self, body, name, *extra):
+        root = tree({"m.py": body})
+        return run("why", os.path.join(root, "m.py") + "::" + name, *extra)
+
+    def test_a_function_that_CROSSES_is_an_ok_naming_the_shared_ladder(self):
+        code, text = self.why(CROSS_TWINS, "shout", "--cross")
+        self.assertEqual(code, 0, text)
+        self.assertIn("probed on cross1/", text)
+        self.assertIn("rungs answered", text)
+
+    def test_an_outcome_the_INTERLINGUA_CANNOT_STATE_is_named_with_its_RUNG(self):
+        """It is a fact about ONE input, and a person can usually see immediately
+        which of their return paths it is."""
+        code, text = self.why(UNCROSSABLE, "held", "--cross")
+        self.assertEqual(code, 0, text)
+        self.assertIn("an outcome the interlingua cannot state", text)
+        self.assertIn("X:set", text)
+        self.assertIn("the first at", text)
+
+    def test_the_NATIVE_answer_for_that_function_is_a_clean_ok(self):
+        """THE ARGUMENT FOR THE FLAG, as a test rather than as a comment. The native
+        ladder probes this function happily; answering a cross question with that
+        verdict would be confident and wrong, and there would be nothing on screen to
+        say the two ladders had been asked different things."""
+        code, text = self.why(UNCROSSABLE, "held")
+        self.assertEqual(code, 0, text)
+        self.assertIn("probed on arity1/", text)
+        self.assertNotIn("interlingua", text)
+
+    def test_a_constant_is_NOT_discriminated_by_the_SHARED_ladder(self):
+        code, text = self.why("def k(n):\n    return 7\n", "k", "--cross")
+        self.assertEqual(code, 0, text)
+        self.assertIn("not discriminated by the SHARED ladder", text)
+        self.assertIn("as far as this ladder can see it is a constant", text)
+        self.assertIn("intersection", text)
+
+    def test_a_function_refused_BEFORE_the_ladder_says_so_of_the_bundle(self):
+        code, text = self.why("import random\n\n\ndef r(n):\n"
+                              "    return random.random() + n\n", "r", "--cross")
+        self.assertEqual(code, 0, text)
+        self.assertIn("SHARED ladder", text)
+        self.assertIn("in no bundle", text)
+
+    def test_it_takes_a_SNIPPET_too_because_the_question_precedes_the_file(self):
+        code, text = run_stdin("def held(x):\n    return {x, 1}\n",
+                               "why", "--stdin", "--cross")
+        self.assertEqual(code, 0, text)
+        self.assertIn("<stdin>::held", text)
+        self.assertIn("an outcome the interlingua cannot state", text)
+
+    def test_a_LOOK_from_why_cross_NEVER_fails_the_run(self):
+        """`look` never affects the exit code. That is the whole reason it exists as
+        a separate verdict."""
+        for body, name in ((UNCROSSABLE, "held"), ("def k(n):\n    return 7\n", "k")):
+            with self.subTest(name=name):
+                code, _text = self.why(body, name, "--cross")
+                self.assertEqual(code, 0)
+
+
 class ItRunsOnItself(unittest.TestCase):
 
     def test_the_package_holds_no_two_functions_that_answer_the_same_question(self):

@@ -6,6 +6,7 @@
  *     does the tree already answer this?   assay scan | pair | search
  *     ...does the OTHER language answer it?  assay search REF --against BUNDLE
  *     why was my function not probed?      assay why FILE::NAME
+ *     ...and why did it not CROSS?         assay why FILE::NAME --cross
  *     ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
  *     ...for a whole tree, not one pair?   assay bundle PATHS | assay sweep PATHS
  *     I have read this one and accept it   assay accept --reason "..." [LINE]
@@ -45,10 +46,10 @@ import {
   applyBaseline, CONFIG_NAMES, ConfigError, load, writeBaseline,
 } from './config.js';
 import {
-  admit, BUNDLE_SCHEMA, collect, compare, compareCross, crossKey, crossLadder,
-  discriminating, discriminationDetail, displayPath, fileRefusal, group, jsFiles,
-  ladder, ladderKey, probeFile, PROBE_SCHEMA, reportCensus, reportScan, Scan,
-  SNIPPET_PATH, stripNonCode,
+  admit, BUNDLE_SCHEMA, collect, compare, compareCross, crossDiscriminating, crossKey,
+  crossLadder, discriminating, discriminationDetail, displayPath, fileRefusal, group,
+  jsFiles, ladder, ladderKey, probeFile, PROBE_SCHEMA, reportCensus, reportScan, Scan,
+  SNIPPET_PATH, stripNonCode, UNSTATEABLE,
 } from './sameness.js';
 import { relativeSpecifiers } from './probe.js';
 import { FINDING, Report, render, renderJson } from './verdicts.js';
@@ -69,6 +70,7 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] [--json] <command>
          --against B          ...and/or does the OTHER language already answer it?
          --stdin [--name N]   ...about a function that is not a file yet
   why FILE::NAME              which gate refused this function, or that it was probed
+      --cross                 ...on the SHARED ladder: why is it not in a bundle?
       --stdin [--name N]      ...about a function that is not a file yet
   probe FILE::NAME            one function's cross-language vector, as JSON on stdout
   cross A B [--with CMD]      compare a JavaScript function to a Python one
@@ -90,7 +92,7 @@ export function parseArgs(argv) {
   const opts = {
     root: '.', config: null, quiet: false, base: 'origin/main',
     cmd: null, positional: [], into: [], scan: [], against: [], asJson: false,
-    stdin: false, name: null, reason: null, withCmd: null,
+    stdin: false, name: null, reason: null, withCmd: null, cross: false,
   };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -98,6 +100,7 @@ export function parseArgs(argv) {
     if (arg === '-q' || arg === '--quiet') opts.quiet = true;
     else if (arg === '--json') opts.asJson = true;
     else if (arg === '--stdin') opts.stdin = true;
+    else if (arg === '--cross') opts.cross = true;
     else if (arg === '--root') { i += 1; opts.root = argv[i]; }
     else if (arg === '--config') { i += 1; opts.config = argv[i]; }
     else if (arg === '--base') { i += 1; opts.base = argv[i]; }
@@ -259,7 +262,7 @@ async function probeRef(ref, cross = false) {
  * Reporting a per-function reason for a file nobody opened would be a reason invented
  * after the fact.
  */
-async function whyRef(ref, report) {
+async function whyRef(ref, report, cross = false) {
   const split = ref.lastIndexOf('::');
   if (split < 0) return { unresolved: `not a FILE::NAME reference: ${ref}` };
   const file = path.resolve(ref.slice(0, split));
@@ -278,7 +281,7 @@ async function whyRef(ref, report) {
       + 'file-level answer and every other function here has the same one');
     return { answered: true };
   }
-  const result = await probeFile(file, undefined, source);
+  const result = await probeFile(file, undefined, source, cross);
   if (result.error) return { unresolved: result.error };
   const entry = (result.functions || []).find((f) => f.name === name);
   if (!entry) {
@@ -291,11 +294,14 @@ async function whyRef(ref, report) {
     };
   }
   if (entry.skip) {
-    report.look(`${display} — ${entry.skip}`, display,
-      'refused before the ladder, so it is in no bucket and can pair with nothing');
+    report.look(cross ? `${display} — ${entry.skip}, on the SHARED ladder`
+      : `${display} — ${entry.skip}`, display,
+    cross ? 'refused before the ladder, so it is in no bundle and can cross with nothing'
+      : 'refused before the ladder, so it is in no bucket and can pair with nothing');
     return { answered: true };
   }
-  reportProbed(entry, display, report);
+  if (cross) reportCrossProbed(entry, display, report);
+  else reportProbed(entry, display, report);
   return { answered: true };
 }
 
@@ -311,6 +317,52 @@ function reportProbed(entry, display, report) {
   const inputs = ladder(entry.arity);
   const { returned, distinct } = discriminating(entry.vector, inputs);
   report.ok(`${display} — probed on ${ladderKey(entry.arity)}: ${returned} of `
+    + `${entry.vector.length} rungs answered, ${distinct} distinct value(s)`, display);
+}
+
+/**
+ * The same question about the SHARED ladder: why is this not in a bundle?
+ *
+ * `sweep` prints `50 functions, 0 probed, 50 not probed` and that is the right shape
+ * for a tree and the wrong shape for a question. Somebody who expected a PARTICULAR
+ * function to cross the boundary cannot read `not discriminated by the ladder 8` and
+ * learn whether theirs is one of the eight — and the cross ladder refuses for a reason
+ * the native one has no equivalent of, which is the whole reason this flag exists
+ * rather than a footnote on the native answer.
+ *
+ * A NATIVE `why` CANNOT ANSWER THIS, and answering it as though it could is the
+ * failure. The two ladders hold different values and refuse different functions: one
+ * the native ladder discriminates can be a constant on the shared one, because the
+ * shared one is the intersection of what the two languages can express. Reporting the
+ * native verdict for a cross question would be confident and wrong.
+ */
+function reportCrossProbed(entry, display, report) {
+  const rungs = crossLadder(entry.arity);
+  // THE INTERLINGUA'S OWN REFUSAL, WHICH THE NATIVE LADDER HAS NO EQUIVALENT OF. An
+  // outcome JSON cannot hold is not a value this can compare, and `compareCross` calls
+  // such a pair a `look` rather than pronouncing on it. Naming the rung matters more
+  // here than anywhere else: it is a fact about ONE input, and a person can usually see
+  // immediately which of their return paths it is.
+  const unstateable = [];
+  entry.vector.forEach((o, i) => { if (o.startsWith('X:')) unstateable.push(i); });
+  if (unstateable.length) {
+    const first = unstateable[0];
+    report.look(`${display} — ${UNSTATEABLE}`, display,
+      `${unstateable.length} of ${entry.vector.length} rungs answered with one, the `
+      + `first at ${JSON.stringify(rungs[first])} -> ${entry.vector[first]} — the `
+      + 'interlingua is JSON, so bytes, a Map, a Date or a class instance cannot be '
+      + 'said in it');
+    return;
+  }
+  const detail = discriminationDetail(entry.vector, rungs, 'cross');
+  if (detail !== null) {
+    report.look(`${display} — not discriminated by the SHARED ladder`, display,
+      `${detail}; the shared ladder is the intersection of what the two languages can `
+      + 'express, so it discriminates less than the native one');
+    return;
+  }
+  const { returned, distinct } = crossDiscriminating(entry.vector, rungs);
+  report.ok(`${display} — probed on ${crossKey(entry.arity)}: ${returned} of `
     + `${entry.vector.length} rungs answered, ${distinct} distinct value(s)`, display);
 }
 
@@ -927,14 +979,21 @@ export async function run(argv, write = (s) => process.stdout.write(s),
       // whether the FILE was refused before it asks anything about one function;
       // `probeStdin` was handed the text, so its refusal is already the answer.
       const found = opts.stdin
-        ? await probeStdin(readStdin(), opts.name)
-        : await whyRef(opts.positional[0], report);
+        ? await probeStdin(readStdin(), opts.name, opts.cross)
+        : await whyRef(opts.positional[0], report, opts.cross);
       if (found.unresolved) return fail(opts, write, found.unresolved);
       if (!found.answered) {
         if (found.unprobed) {
-          report.look(`${found.display} — ${found.unprobed}`, found.display,
-            'refused before the ladder, so it is in no bucket and can pair with '
-            + 'nothing');
+          report.look(opts.cross
+            ? `${found.display} — ${found.unprobed}, on the SHARED ladder`
+            : `${found.display} — ${found.unprobed}`, found.display,
+          opts.cross
+            ? 'refused before the ladder, so it is in no bundle and can cross with '
+              + 'nothing'
+            : 'refused before the ladder, so it is in no bucket and can pair with '
+              + 'nothing');
+        } else if (opts.cross) {
+          reportCrossProbed(found.entry, found.display, report);
         } else reportProbed(found.entry, found.display, report);
       }
       return finish(report, config, write, opts);

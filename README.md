@@ -152,6 +152,7 @@ assay scan src/                                            # discover
 assay pair src/format.py::humanize src/report.py::pretty   # the declared route, one pair
 assay search src/format.py::humanize --in src/ lib/        # search before you generate
 assay why src/format.py::humanize                          # ...and if it was not probed, why
+assay why src/format.py::humanize --cross                  # ...and why it is in no bundle
 assay accept --reason "read them; merging needs the router change"   # accept what you have read
 assay cross src/format.py::humanize src/ui.mjs::pretty --with assay-js   # across the boundary
 assay sweep src/ --against js/src --with assay-js          # ...for whole trees, naming no pair
@@ -378,6 +379,50 @@ constant can only fail to match the other constants, because every constant was 
 out of the bundle in the first place; printing the clean result there would say *we
 found none* where the truth is *we never looked*, on the one path where the reader is
 about to write the function.
+
+### ...and when it does not cross, `why --cross` says which gate
+
+`sweep` prints `41 functions, 9 probed, 32 not probed`. That is the right shape for a
+tree and the wrong shape for a question: somebody who expected a *particular* function
+to cross cannot read `not discriminated by the ladder 8` and learn whether theirs is one
+of the eight.
+
+```bash
+assay why src/cache.py::entries --cross
+```
+
+```
+look     src/cache.py::entries — an outcome the interlingua cannot state
+         22 of 29 rungs answered with one, the first at [0] -> X:set — the
+         interlingua is JSON, so bytes, a set, a Date or a class instance
+         cannot be said in it
+```
+
+**A native `why` cannot answer this, and answering as though it could is the failure.**
+The very same function:
+
+```
+ok       src/cache.py::entries — probed on arity1/v3: 24 of 31 rungs answered,
+         24 distinct value(s)
+```
+
+Both are true. The native ladder probes it happily; the shared one cannot state a `set`
+at all. The two ladders hold different values and refuse different functions — a
+function the native ladder discriminates can be a *constant* on the shared one, because
+the shared one is the intersection of what the two languages can express. Reporting one
+verdict for the other question would be confident and wrong, with nothing on screen to
+say the two ladders had been asked different things.
+
+**The rung is named, not just counted.** `X:set` is a fact about *one input*, and a
+person with the function open can usually see immediately which of their return paths it
+is. A count alone sends them back to reading the whole thing, which is the work the
+answer was supposed to save.
+
+**A FILE-level refusal deliberately says nothing about which ladder was asked**, because
+it is the same answer for both: the module was never loaded, so no function in it was
+looked at on either.
+
+`--stdin` works here too, for the same reason it works on `search`.
 
 ---
 
