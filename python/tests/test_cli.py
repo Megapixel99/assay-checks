@@ -1175,6 +1175,109 @@ class BundleAndSweep(unittest.TestCase):
         self.assertIn("interlingua", why)
 
 
+class SearchAcrossTheBoundary(unittest.TestCase):
+    """`search --against`: the OTHER language, for ONE function.
+
+    `sweep` needs a whole tree on both sides and `cross` needs the pair named. Neither
+    answers the question somebody actually has at the keyboard — *I am about to write
+    this one function; does the other language already have it?* — and that question is
+    the one worth answering before the file exists.
+    """
+
+    def other(self, files, language="javascript", suffix=".mjs"):
+        code, text = run("bundle", tree(files))
+        self.assertEqual(code, 0, text)
+        path = os.path.join(tree({}), "other.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(as_other_half(json.loads(text), language, suffix), fh)
+        return path
+
+    def test_it_finds_the_function_the_OTHER_language_already_has(self):
+        root = tree({"m.py": CROSS_TWINS})
+        code, text = run("search", os.path.join(root, "m.py") + "::shout",
+                         "--against", self.other({"m.py": CROSS_TWINS}))
+        self.assertEqual(code, 1, text)
+        self.assertIn("the javascript tree already answers", text)
+        self.assertIn("shout", text)
+
+    def test_it_answers_about_a_function_that_is_NOT_A_FILE_YET(self):
+        """SEARCH BEFORE YOU GENERATE cannot mean "first write the file", and the
+        cross-language form is where that matters most: the duplication you are about
+        to create is in a language your editor is not open in."""
+        draft = ('def loud(s):\n'
+                 '    if not isinstance(s, str):\n        raise TypeError("str")\n'
+                 '    return s.upper() + "!"\n')
+        code, text = run_stdin(draft, "search", "--stdin",
+                               "--against", self.other({"m.py": CROSS_TWINS}))
+        self.assertEqual(code, 1, text)
+        self.assertIn("<stdin>::loud", text)
+        self.assertIn("the javascript tree already answers", text)
+
+    def test_it_asks_BOTH_corpora_when_given_both(self):
+        """Two corpora, two verdicts, one run. The native ladder is the stronger of
+        the two, so the answers are not interchangeable and neither replaces the
+        other."""
+        root = tree({"m.py": CROSS_TWINS + TWINS})
+        code, text = run("search", os.path.join(root, "m.py") + "::a",
+                         "--in", root, "--against", self.other({"m.py": CROSS_TWINS}))
+        self.assertEqual(code, 1, text)
+        self.assertIn("the tree already answers", text)          # the native half ran
+        self.assertIn("[javascript]", text)                      # ...and the far one
+
+    def test_a_query_the_SHARED_ladder_cannot_tell_apart_is_a_LOOK(self):
+        """The quiet failure: a constant has a vector, the matching runs, and it
+        matches nothing — because every constant was excluded from the bundle. `same
+        none` there says "we found none" where the truth is "we never looked", on the
+        path where the reader is about to write the function."""
+        root = tree({"m.py": "def k(n):\n    return 7\n"})
+        code, text = run("search", os.path.join(root, "m.py") + "::k",
+                         "--against", self.other({"m.py": CROSS_TWINS}))
+        self.assertEqual(code, 0, text)
+        self.assertIn("SHARED ladder", text)
+        self.assertIn("a match was never possible", text)
+        self.assertNotIn("same   none across languages", text)
+
+    def test_it_prints_the_OTHER_halfs_census(self):
+        code, text = run("search", os.path.join(tree({"m.py": CROSS_TWINS}), "m.py")
+                         + "::shout",
+                         "--against", self.other({"m.py": "import random\n\n\n"
+                                                          "def r(n):\n"
+                                                          "    return random.random() + n\n"}))
+        self.assertEqual(code, 0, text)
+        self.assertIn("[javascript] 1 functions, 0 probed, 1 not probed", text)
+
+    def test_NEITHER_in_nor_against_is_an_ERROR_rather_than_an_empty_search(self):
+        """A search with no corpus would print `no findings` for a question nobody
+        asked of anything — the clean result, from a run that looked nowhere."""
+        code, text = run("search", "m.py::f")
+        self.assertEqual(code, 2)
+        self.assertIn("--in DIR or --against BUNDLE", text)
+
+    def test_it_REFUSES_a_bundle_of_its_own_language(self):
+        _code, text = run("bundle", tree({"m.py": CROSS_TWINS}))
+        path = os.path.join(tree({}), "same.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        root = tree({"m.py": CROSS_TWINS})
+        code, out = run("search", os.path.join(root, "m.py") + "::shout",
+                        "--against", path)
+        self.assertEqual(code, 2)
+        self.assertIn("`--in`", out)
+
+    def test_a_BROKEN_far_side_is_reported_before_anything_is_PROBED(self):
+        """Exit 2 for a bundle this half cannot read, rather than after a tree of
+        subprocesses have run and buried the reason under a census nobody wanted."""
+        path = os.path.join(tree({}), "broken.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("{not json")
+        root = tree({"m.py": CROSS_TWINS})
+        code, text = run("search", os.path.join(root, "m.py") + "::shout",
+                         "--in", root, "--against", path)
+        self.assertEqual(code, 2)
+        self.assertIn("assay bundle", text)
+        self.assertNotIn("functions,", text)      # the census never ran
+
+
 class ItRunsOnItself(unittest.TestCase):
 
     def test_the_package_holds_no_two_functions_that_answer_the_same_question(self):

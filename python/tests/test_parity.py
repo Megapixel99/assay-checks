@@ -51,8 +51,14 @@ def flat(text):
     Python across adjacent literals, JavaScript across `+`. Comparing the raw text
     would fail on a line break, which teaches whoever hits it to delete the check
     rather than to fix the drift it exists to catch.
+
+    ALL THREE JAVASCRIPT STRING DELIMITERS, and the backtick is the one that matters:
+    a template literal wrapped mid-sentence leaves a backtick between two words, so a
+    normalizer that dropped only `"` and `'` failed on a sentence the two halves state
+    identically. The prose in these messages spells `scan` and `--in` with backticks
+    too, and they come out of the needle and the haystack alike.
     """
-    return re.sub(r"""[\s"'+]+""", "", text)
+    return re.sub(r"""[\s"'`+]+""", "", text)
 
 
 def py(name):
@@ -530,9 +536,41 @@ class TheTwoHalvesAgree(unittest.TestCase):
         # must agree is the duplication this package exists to report.
         for command in (cmd_why, cmd_search):
             self.assertIn("_query(args, out)", inspect.getsource(command))
-        self.assertEqual(js("cli.js").count("await probeStdin(readStdin(), opts.name)"),
-                         2)
         self.assertEqual(js("cli.js").count("const bad = queryFlags(opts);"), 2)
+        # STDIN IS READ ONCE PER RUN IN BOTH HALVES, and `search` is where that stopped
+        # being free. It can now ask two corpora about one function — this language's
+        # tree and the other's bundle — which means two probes of the same snippet. A
+        # second `readStdin()` returns nothing, so the cross half would report an EMPTY
+        # snippet as though the caller had sent one: a `look` about code nobody wrote.
+        # Python gets this from `_query`, which reads once and hands back a Func both
+        # halves reuse; JavaScript has to say so, because its two probes are two calls.
+        source = js("cli.js")
+        self.assertEqual(source.count("readStdin()"), 2)      # `why`, and `search` once
+        self.assertIn("const text = opts.stdin ? readStdin() : null;", source)
+        self.assertIn("probeStdin(text, opts.name, cross)", source)
+
+    def test_both_halves_ask_ONE_corpus_or_the_OTHER_or_BOTH(self):
+        """`search` grew a second corpus, and `--in` stopped being required. A half
+        that still demanded `--in` would refuse the documented cross-language
+        invocation while the other answered it."""
+        from assay.cli import build_parser                     # noqa: PLC0415
+
+        args = build_parser().parse_args(["search", "m.py::f", "--against", "b.json"])
+        self.assertEqual(args.into, [])
+        self.assertEqual(args.against, ["b.json"])
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn(flat("search needs --in DIR or --against BUNDLE"),
+                          flat(source))
+
+    def test_both_halves_REFUSE_a_cross_SEARCH_the_shared_ladder_cannot_answer(self):
+        """The quiet one. A constant has a vector, the matching runs, and it matches
+        nothing — because `admit` kept every constant out of the bundle. Printing the
+        clean `none` there reports "we never looked" as "we found none", on the path
+        where the reader is about to write the function."""
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn(flat("on the SHARED ladder"), flat(source))
+            self.assertIn(flat("tree was not searched: a match was never possible"),
+                          flat(source))
 
     def test_both_halves_ship_the_same_SUBCOMMANDS(self):
         """A command in one half and not the other means the same documented
