@@ -462,6 +462,13 @@ async function auditEverything(root, opts, config, report, document = null) {
       const scan = await collect(opts.scan);
       group(scan);
       reportScan(scan, rep);
+      // The census as DATA travels on the SHARED report, because that is the one a
+      // renderer sees. A sub-report is only ever a way to attribute findings to the
+      // audit that produced them — so setting it on `rep` would drop it, and
+      // `assay all --scan --json` answered `"scan": null` here while the Python half
+      // answered with the census. One invocation, two documents, decided by which
+      // binary CI installed.
+      report.scan = scan.toDict();
     });
   }
   // THE CROSS HALF JOINS `performed` ONLY WHEN IT ACTUALLY RAN, exactly as `scan` does,

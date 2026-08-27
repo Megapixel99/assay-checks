@@ -306,6 +306,21 @@ class TheTwoHalvesAgree(unittest.TestCase):
         for source in (py("cli.py"), js("cli.js")):
             self.assertIn("NOT checked for staleness", source)
 
+    def test_both_halves_carry_the_CENSUS_AS_DATA_out_of_a_complete_run(self):
+        """`all --scan --json` answered `"scan": null` in JavaScript and the census in
+        Python — one documented invocation, two different documents, decided by which
+        binary CI installed. A consumer merging two reports has no way to see that.
+
+        The cause is the same in both halves and is why this is easy to get wrong: the
+        sub-report handed to each audit exists ONLY to attribute findings, so the
+        census has to be set on the SHARED report or it is dropped on the floor.
+        """
+        self.assertIn("report.scan = scan.to_dict()", py("cli.py"))
+        self.assertIn("report.scan = scan.toDict();", js("cli.js"))
+        # ...on the SHARED report in both, never on the per-audit one.
+        self.assertNotIn("rep.scan =", py("cli.py"))
+        self.assertNotIn("rep.scan =", js("cli.js"))
+
     def test_a_legal_FROM_and_a_COMPLETE_RUN_are_different_questions(self):
         """`FAMILIES` answers "is this a legal `from`?"; `COMPLETING` answers "may a run
         that skipped X call an UNTAGGED line stale?". Conflating them is a defect in

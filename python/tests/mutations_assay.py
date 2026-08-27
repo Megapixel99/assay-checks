@@ -812,6 +812,24 @@ MUTATIONS = [
     if document is not None:
         perform("sweep", sweep_half)
     return families, performed'''),
+    # THE CENSUS AS DATA, DROPPED ON THE FLOOR. The sub-report each audit is handed
+    # exists only to attribute findings, so a census set on it never reaches the
+    # renderer — and `all --scan --json` answers `"scan": null` while the other half
+    # answers with the census. One documented invocation, two documents.
+    ("cli.js: the complete run drops its census on the per-audit report",
+     "cli.js",
+     '''      report.scan = scan.toDict();
+    });''',
+     '''      rep.scan = scan.toDict();
+    });'''),
+    ("cli: the complete run drops its census on the per-audit report",
+     "cli.py",
+     '''        report.scan = scan.to_dict()
+
+    def sweep_half(rep):''',
+     '''        rep.scan = scan.to_dict()
+
+    def sweep_half(rep):'''),
     ("cli.js: `all` claims it swept when no far side was given",
      "cli.js",
      '''  if (document) {

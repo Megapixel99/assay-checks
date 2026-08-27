@@ -1408,6 +1408,15 @@ class AllFoldsInTheCrossHalf(unittest.TestCase):
         code, text = run("--json", *argv)
         return code, json.loads(text)
 
+    def test_all_scan_carries_the_CENSUS_AS_DATA(self):
+        """It answered `"scan": null` in the JavaScript half while this one answered
+        with the census — one invocation, two documents. The sub-report each audit is
+        handed exists only to attribute findings, so a census set on it is dropped."""
+        root = tree({"m.py": CROSS_TWINS})
+        _code, data = self.payload(*self.all_args(root, "--scan", root))
+        self.assertIsNotNone(data["scan"])
+        self.assertEqual(data["scan"]["probed"], 2)
+
     def test_a_BROKEN_far_side_exits_2_before_any_audit_reports(self):
         """Three audits reporting from a run that then exits 2 reads as though their
         findings were the failure."""

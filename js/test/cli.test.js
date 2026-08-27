@@ -1740,3 +1740,16 @@ test('all --against a bundle of its OWN language is refused', async () => {
   assert.equal(code, 2);
   assert.match(text, /--scan/);
 });
+
+test('all --scan carries the CENSUS AS DATA', async () => {
+  // It answered `"scan": null` here while the Python half answered with the census —
+  // one documented invocation, two different documents, decided by which binary CI
+  // installed. The sub-report each audit is handed exists only to attribute findings,
+  // so a census set on it is dropped on the floor.
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { text } = await cli('--json', '--root', root, 'all', '--base', 'HEAD',
+    '--scan', root);
+  const data = JSON.parse(text);
+  assert.notEqual(data.scan, null);
+  assert.equal(data.scan.probed, 2);
+});

@@ -64,6 +64,13 @@ findings from a run that then exits 2 reads as though those findings were the fa
 `--against` without `--sweep` is an error rather than a silent skip: a flag accepted,
 documented and inert is the shape of a defect this package already shipped once.
 
+**A parity defect found on the way and fixed here:** `assay all --scan --json` answered
+`"scan": null` in the JavaScript half and the census in the Python one — one documented
+invocation, two different documents, decided by which binary CI installed. The cause is
+the same shape in both halves: the sub-report each audit is handed exists ONLY to
+attribute findings, so a census set on it never reaches the renderer. No parity test
+covered `scan` on the `all` path; one does now, with a mutation per half.
+
 Four mutations were added, and one existing anchor was repaired — the completeness check
 now reads `COMPLETING`, and the mutation that pinned `FAMILIES` there had to follow it.
 
