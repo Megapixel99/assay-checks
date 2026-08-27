@@ -157,6 +157,7 @@ assay cross src/format.py::humanize src/ui.mjs::pretty --with assay-js   # acros
 assay sweep src/ --against js/src --with assay-js          # ...for whole trees, naming no pair
 assay bundle src/ > py.json                                # ...or hand the other half a bundle
 assay search --stdin --in src/ lib/ < draft.py             # ...before it is a file
+assay search --stdin --against js.json < draft.py          # ...and before it is a file, in the OTHER language
 assay why --stdin < draft.py                               # ...and whether it can be searched for at all
 
 # JavaScript: the same commands, and a reference is FILE::NAME in either language
@@ -340,6 +341,43 @@ calls a `look` — two answers to one question, and the weaker one on screen.
 
 A bundle of your own language is a `look`-shaped refusal pointing at `scan`, which
 compares one language's functions on its own fuller ladder.
+
+### ...and for ONE function, before you write it: `search --against`
+
+`sweep` needs a whole tree on both sides; `cross` needs the pair named. Neither answers
+the question you actually have at the keyboard — **I am about to write this one
+function; does the other language already have it?**
+
+```bash
+assay bundle js/src > js.json
+assay search src/format.py::humanize --against js.json    # a function that exists
+assay search --stdin --against js.json < draft.py         # ...and one that does not yet
+assay search --stdin --in src/ --against js.json < draft.py    # both corpora, one run
+```
+
+```
+finding  the javascript tree already answers <stdin>::loud: src/ui.mjs::yell
+         no input in the shared ladder told them apart — READ them before writing
+         a second one
+```
+
+**`--stdin` is the point of it.** *Search before you generate* cannot mean "first write
+the file", and the cross-language form is where that bites hardest: the duplication you
+are about to create is in a language your editor is not even open in. A `FILE::NAME`
+works too, for the function you already wrote and now suspect.
+
+**`--in` and `--against` are independent, and either alone is a complete question.**
+Give both and you get both verdicts in one run, kept apart — the native ladder is the
+stronger of the two, so the answers are not interchangeable and neither replaces the
+other. Give neither and it is exit 2 rather than a clean `no findings` from a run that
+looked nowhere.
+
+**A query the shared ladder cannot tell apart is a `look`, never a `none`** — the same
+rule the one-language `search` follows, from the same `admit` that fills the bundle. A
+constant can only fail to match the other constants, because every constant was kept
+out of the bundle in the first place; printing the clean result there would say *we
+found none* where the truth is *we never looked*, on the one path where the reader is
+about to write the function.
 
 ---
 

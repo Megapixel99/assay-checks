@@ -4,6 +4,7 @@
  *
  *     could those checks have failed?      assay runners | anchors | diff | all
  *     does the tree already answer this?   assay scan | pair | search
+ *     ...does the OTHER language answer it?  assay search REF --against BUNDLE
  *     why was my function not probed?      assay why FILE::NAME
  *     ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
  *     ...for a whole tree, not one pair?   assay bundle PATHS | assay sweep PATHS
@@ -44,7 +45,7 @@ import {
   applyBaseline, CONFIG_NAMES, ConfigError, load, writeBaseline,
 } from './config.js';
 import {
-  BUNDLE_SCHEMA, collect, compare, compareCross, crossKey, crossLadder,
+  admit, BUNDLE_SCHEMA, collect, compare, compareCross, crossKey, crossLadder,
   discriminating, discriminationDetail, displayPath, fileRefusal, group, jsFiles,
   ladder, ladderKey, probeFile, PROBE_SCHEMA, reportCensus, reportScan, Scan,
   SNIPPET_PATH, stripNonCode,
@@ -65,6 +66,7 @@ const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] [--json] <command>
   scan PATH...                discover functions that answer the same question
   pair FILE::NAME FILE::NAME  compare two named functions
   search FILE::NAME --in DIR  does the tree already answer this?
+         --against B          ...and/or does the OTHER language already answer it?
          --stdin [--name N]   ...about a function that is not a file yet
   why FILE::NAME              which gate refused this function, or that it was probed
       --stdin [--name N]      ...about a function that is not a file yet
@@ -229,13 +231,13 @@ function fail(opts, write, message) {
  * `display` is the reference renamed the way a scan names it, so `search` can exclude
  * the query itself by IDENTITY rather than by matching a name.
  */
-async function probeRef(ref) {
+async function probeRef(ref, cross = false) {
   const split = ref.lastIndexOf('::');
   if (split < 0) return { unresolved: `not a FILE::NAME reference: ${ref}` };
   const file = path.resolve(ref.slice(0, split));
   const name = ref.slice(split + 2);
   const display = `${displayPath(file)}::${name}`;
-  const result = await probeFile(file);
+  const result = await probeFile(file, undefined, null, cross);
   if (result.error) return { unresolved: result.error };
   const entry = (result.functions || []).find((f) => f.name === name);
   if (!entry) return { unresolved: `${file} exports no function named ${name}` };
@@ -726,7 +728,7 @@ const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
  * `no-tree-writes` audits harnesses for. A snippet that already imports half the tree
  * is a file, so point this at the file.
  */
-async function probeStdin(text, wanted) {
+async function probeStdin(text, wanted, cross = false) {
   // Named only when the caller named it: the module has not been loaded at this point,
   // so a snippet refused by the file gate has no roster and therefore no name. A
   // placeholder name would be a name this tool made up.
@@ -761,7 +763,7 @@ async function probeStdin(text, wanted) {
   let result;
   try {
     writeFileSync(file, source);
-    result = await probeFile(file, undefined, source);
+    result = await probeFile(file, undefined, source, cross);
   } finally {
     try { unlinkSync(file); } catch { /* the probe may have been killed mid-write */ }
   }
@@ -797,6 +799,95 @@ async function probeStdin(text, wanted) {
  * is the process it runs in cannot be tested except by spawning one, and a test that
  * spawns is a test that cannot see the Report the run built.
  */
+
+/** The one-language half of `search`: this tree, on this language's own ladder. */
+async function searchNative(found, targets, report) {
+  if (found.unprobed) {
+    report.look(`${found.display} — ${found.unprobed}`, found.display);
+    report.note('       the tree was not searched, because this function could '
+      + 'not be probed');
+    return;
+  }
+  const { entry, display: ref } = found;
+  // THERE ARE TWO WAYS NOT TO SEARCH and only one of them used to be reported. A query
+  // refused before the ladder is obvious: no vector, nothing to match, and the branch
+  // above says so. A query the ladder cannot DISCRIMINATE is the quiet one — it has a
+  // vector, the matching runs, and it matches nothing, because `collect` files every
+  // function the ladder cannot tell apart under skipped and a constant can therefore
+  // only fail to find the other constants. This printed `same none`, which is the
+  // clean result, for a search never capable of a hit.
+  if (undiscriminated(report, entry, ref)) {
+    report.note('       the tree was not searched: the census excludes every '
+      + 'function this ladder cannot tell apart, so a match was never possible');
+    return;
+  }
+  const scan = await collect(targets);
+  const key = ladderKey(entry.arity);
+  const target = entry.vector.join(' ');
+  // Excluded by REFERENCE, not by name. Filtering every ref ending in the query's name
+  // hides the answer the command exists to find: a second implementation that happens
+  // to be called the same thing is still a second implementation.
+  const hits = [...scan.probed.entries()]
+    .filter(([r, v]) => scan.keys.get(r) === key && v.join(' ') === target && r !== ref)
+    .map(([r]) => r).sort();
+  if (hits.length) {
+    report.finding(`the tree already answers ${ref}: ${hits.join(', ')}`, ref,
+      'read them before writing a second one');
+  } else {
+    report.note(`\nsame   none — nothing in the tree matched ${ref}'s outcome vector`);
+    report.note('       which is not proof that nothing answers it; see Limits');
+  }
+  reportScan(scan, report);
+  report.scan = scan.toDict();
+}
+
+/**
+ * The other-language half: one function against a bundle the far binary wrote.
+ *
+ * THE SAME THREE REFUSALS, STATED IN THE SAME WORDS, because this is `sweep`'s question
+ * asked about one function instead of a tree — and `admit` is what both of them ask. A
+ * query the shared ladder cannot tell apart from a constant can only fail to match the
+ * other constants, and printing the clean `none` there would say "we found none" where
+ * the truth is "we never looked". That difference costs the most on exactly this path:
+ * the person reading it is about to write the function.
+ */
+function searchCross(found, document, report) {
+  const language = document.language || 'unknown';
+  if (found.unprobed) {
+    report.look(`${found.display} — ${found.unprobed}`, found.display);
+    report.note(`       the ${language} tree was not searched, because this function `
+      + 'could not be probed on the shared ladder');
+    return;
+  }
+  const { entry, display: ref } = found;
+  const admitted = admit(entry.vector, entry.arity, true);
+  if (admitted.key === undefined) {
+    report.look(`${ref} — ${admitted.why}, on the SHARED ladder`, ref,
+      'the shared ladder is the intersection of what the two languages can express, '
+      + 'so it discriminates less than either native one');
+    report.note(`       the ${language} tree was not searched: a match was never `
+      + 'possible');
+    return;
+  }
+  const target = entry.vector.join(' ');
+  const hits = (document.records || [])
+    .filter((r) => r.ladder === admitted.key && (r.vector || []).join(' ') === target)
+    .map((r) => r.ref).sort();
+  if (hits.length) {
+    report.finding(`the ${language} tree already answers ${ref}: ${hits.join(', ')}`,
+      ref,
+      'no input in the shared ladder told them apart — READ them before writing a '
+      + 'second one');
+  } else {
+    report.note(`\nsame   none across languages — nothing in the ${language} bundle `
+      + `matched ${ref}'s outcome vector`);
+  }
+  if (document.census) reportCensus(document.census, report, `[${language}]`);
+  report.other = {
+    language, records: (document.records || []).length, census: document.census ?? null,
+  };
+}
+
 export async function run(argv, write = (s) => process.stdout.write(s),
   readStdin = () => readFileSync(0, 'utf8')) {
   const opts = parseArgs(argv);
@@ -1097,51 +1188,43 @@ export async function run(argv, write = (s) => process.stdout.write(s),
     }
 
     case 'search': {
-      if (!opts.into.length) return fail(opts, write, 'search needs --in DIR');
+      if (!opts.into.length && !opts.against.length) {
+        return fail(opts, write, 'search needs --in DIR or --against BUNDLE');
+      }
       const bad = queryFlags(opts);
       if (bad) return fail(opts, write, bad);
-      const found = opts.stdin
-        ? await probeStdin(readStdin(), opts.name)
-        : await probeRef(opts.positional[0]);
-      if (found.unresolved) return fail(opts, write, found.unresolved);
-      if (found.unprobed) {
-        report.look(`${found.display} — ${found.unprobed}`, found.display);
-        report.note('       the tree was not searched, because this function could '
-          + 'not be probed');
-        return finish(report, config, write, opts);
+      // THE FAR SIDE IS RESOLVED BEFORE ANYTHING IS PROBED. A bundle this half cannot
+      // read is exit 2, and finding that out AFTER a tree of subprocesses have run
+      // wastes the run and buries the reason under a census nobody was going to use.
+      let document = null;
+      if (opts.against.length) {
+        const far = otherSide(opts.against, opts.withCmd);
+        if (far.unresolved) return fail(opts, write, far.unresolved);
+        document = far.document;
+        if (document.language === 'javascript') {
+          return fail(opts, write,
+            '--against is a javascript bundle and this is the javascript half — '
+            + "`--in` searches one language's tree on its own ladder, which is "
+            + 'stronger');
+        }
       }
-      const { entry, display: ref } = found;
-      // THERE ARE TWO WAYS NOT TO SEARCH and only one of them used to be reported. A
-      // query refused before the ladder is obvious: no vector, nothing to match, and
-      // the branch above says so. A query the ladder cannot DISCRIMINATE is the quiet
-      // one — it has a vector, the matching runs, and it matches nothing, because
-      // `collect` files every function the ladder cannot tell apart under skipped and
-      // a constant can therefore only fail to find the other constants. This printed
-      // `same none`, which is the clean result, for a search never capable of a hit.
-      if (undiscriminated(report, entry, ref)) {
-        report.note('       the tree was not searched: the census excludes every '
-          + 'function this ladder cannot tell apart, so a match was never possible');
-        return finish(report, config, write, opts);
+      // READ ONCE. Both halves ask about the same function, and stdin cannot be read
+      // twice — a second read returns nothing, which would make the cross half report
+      // an empty snippet as though the caller had sent one.
+      const text = opts.stdin ? readStdin() : null;
+      const ask = (cross) => (opts.stdin
+        ? probeStdin(text, opts.name, cross)
+        : probeRef(opts.positional[0], cross));
+      if (opts.into.length) {
+        const found = await ask(false);
+        if (found.unresolved) return fail(opts, write, found.unresolved);
+        await searchNative(found, opts.into, report);
       }
-      const scan = await collect(opts.into);
-      const key = ladderKey(entry.arity);
-      const target = entry.vector.join(' ');
-      // Excluded by REFERENCE, not by name. Filtering every ref ending in the query's
-      // name hides the answer the command exists to find: a second implementation
-      // that happens to be called the same thing is still a second implementation.
-      const hits = [...scan.probed.entries()]
-        .filter(([r, v]) => scan.keys.get(r) === key && v.join(' ') === target
-          && r !== ref)
-        .map(([r]) => r).sort();
-      if (hits.length) {
-        report.finding(`the tree already answers ${ref}: ${hits.join(', ')}`, ref,
-          'read them before writing a second one');
-      } else {
-        report.note(`\nsame   none — nothing in the tree matched ${ref}'s outcome vector`);
-        report.note('       which is not proof that nothing answers it; see Limits');
+      if (document) {
+        const found = await ask(true);
+        if (found.unresolved) return fail(opts, write, found.unresolved);
+        searchCross(found, document, report);
       }
-      reportScan(scan, report);
-      report.scan = scan.toDict();
       return finish(report, config, write, opts);
     }
 
