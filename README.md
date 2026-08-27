@@ -314,9 +314,11 @@ several, exactly as `search` does. It also splits the one reason the census cann
 a **constant**, a **projection**, and a function the ladder **never reached**, and those
 need a wider ladder, a different function, and inputs of another shape respectively.
 
-On the JavaScript half the answer is often at the **file** level, and it says so: a file
-that reaches for the clock is refused whole, so none of its functions were ever looked
-at and every one of them has the same answer.
+On the JavaScript half the answer may be at the **file** level, and it says so: a file
+that reaches for the clock *on the way in* is refused whole, so none of its functions
+were ever looked at and every one of them has the same answer. A clock inside a **body**
+is a different answer — it refuses that function and leaves the rest of the file
+probeable.
 
 **Files and functions are counted separately, and the second line is an equation.** A
 file nobody opened holds an unknown number of functions (not opening it is exactly why
@@ -349,7 +351,9 @@ object instead of the prose report:
   "notes": ["…the census, verbatim…"],
   "root": "/abs/path",
   "scan": {"files": 247, "functions": 1412, "probed": 137, "not_probed": 1275,
-           "skipped": {"no arguments": 274}, "unloadable": {"reads the clock": 19}},
+           "skipped": {"no arguments": 274}, "unloadable": {"reads the clock": 19},
+           "skipped_refs": {"src/fmt.js::pad": "no arguments (a ladder cannot …)"},
+           "unloadable_paths": {"src/hbs-helpers.js": "reads the clock"}},
   "schema": 1,
   "tool": "assay",
   "version": "0.4.0"
@@ -370,6 +374,15 @@ verdict travels by its own name and you decide what it means.
 yours to check rather than something you parse back out of `notes`, and files stay a
 separate population from functions. A command that ran no scan emits `null` rather than
 `0`, because zero probed functions and no sameness half at all are different claims.
+
+**And it names what it never looked at.** `unloadable` and `skipped` count;
+`unloadable_paths` and `skipped_refs` say *which*, and carry the whole reason rather
+than the tallied key. `could not load 12` is a number you cannot act on — the only
+recourse is `assay why FILE::NAME`, which has to be told a file and a function name in
+it, the two things the tally withheld. The full reason matters most in the biggest
+bucket: a tally key stops at the first `(`, which is exactly where a load error's
+message begins, so `could not load (JWT_SECRET must be set)` survives here and nowhere
+else. `sum(unloadable.values()) == len(unloadable_paths)`, so the two never drift.
 
 **The baseline's caveat travels as data.** `performed` says what this run audited and
 `unchecked` names every entry it could not have seen fire, rather than an empty `stale`
@@ -610,14 +623,31 @@ stdout, because a module is free to print at import time and an answer sharing a
 with arbitrary output is an answer that output can destroy: **one function per line, as
 each finishes**, so the kill that bounds a non-terminating function costs that function
 rather than the file. Two compensations: it happens in a child process,
-and the file's source is gated *before* it is loaded at all: a file that reaches for
-the filesystem, the network, the clock, randomness or the process is skipped whole. A
-per-function gate then runs over `fn.toString()`, which is real source rather than a
-guess, including the **declared parameter list**, because `fn.length` stops counting at
-the first default and would pick the ladder for a function of the wrong shape. **The
-residue is genuine:** a module with an import-time side effect that
-mentions none of the gated names will still be evaluated. If that is unacceptable for
-your tree, point the tool at the files you trust rather than at the whole repository.
+and the file's source is gated *before* it is loaded at all.
+
+**The gate is two questions, because it guards two events.** *May this module be
+imported?* is asked of **module-scope code only** — top-level statements, initializers,
+IIFEs, class fields — because that is what running an import actually executes. A
+`new Date()` sitting in a function body is no evidence about importing the module, and
+refusing the file for it took every pure helper beside it down with it: on a barrel of
+ten Handlebars helpers, two clock-using ones cost the other eight their eligibility.
+
+*May this function be called?* is the second question, and `fn.toString()` cannot answer
+it alone — **a free name resolves in a module scope the function's own text cannot
+see**. So the per-function gate runs over its real source (including the **declared
+parameter list**, because `fn.length` stops counting at the first default) and then over
+everything it **reaches**: local bindings, followed transitively, and relative imports
+followed into modules that themselves pass the load gate. A bare package specifier, a
+core module, an unknown global and a name declared twice are each refused **by name**.
+Probing *calls* the function, so this is the last thing between the ladder and a real
+side effect on a real path.
+
+The refusal is a chain you can walk back to the code —
+`reaches config, which reaches env, which touches process`.
+
+**The residue is genuine:** a module with an import-time side effect that mentions none
+of the gated names will still be evaluated. If that is unacceptable for your tree, point
+the tool at the files you trust rather than at the whole repository.
 
 ## Two implementations, one contract
 

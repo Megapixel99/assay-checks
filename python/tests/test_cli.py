@@ -247,6 +247,41 @@ class JsonOutput(unittest.TestCase):
         self.assertIn("files", census)
         self.assertGreater(census["files"], 0)
 
+    def entry(self, mapping, base):
+        """The one entry whose key ends in `base`.
+
+        A path is spelled relative to CWD where that is shorter, and a tmpdir fixture
+        is not under it, so these look the entry up rather than assuming a spelling.
+        """
+        hit = [v for k, v in mapping.items() if k.endswith(base)]
+        self.assertEqual(len(hit), 1, "%s: %r" % (base, list(mapping)))
+        return hit[0]
+
+    def test_the_census_NAMES_the_files_it_never_opened(self):
+        """A tally answers "how many" and cannot answer "which". `could not parse 12`
+        names nothing a person can open, and `assay why FILE::NAME` — the only
+        recourse — has to be told a file and a function name in it, which is exactly
+        what the tally withheld."""
+        root = tree({"broken.py": "def (:\n", "fine.py": "def twice(n):\n    return n * 2\n"})
+        code, data = self.payload("--json", "scan", root)
+        self.assertEqual(code, 0)
+        census = data["scan"]
+        self.assertEqual(len(census["unloadable_paths"]), 1)
+        self.assertIn("could not parse", self.entry(census["unloadable_paths"], "broken.py"))
+        # THE MAP AND THE TALLY DESCRIBE ONE POPULATION. Letting them drift would put
+        # two different answers to "how much did this run never look at" in one
+        # document.
+        self.assertEqual(sum(census["unloadable"].values()),
+                         len(census["unloadable_paths"]))
+
+    def test_the_census_NAMES_the_functions_it_did_not_probe(self):
+        root = tree({"wide.py": "def four(a, b, c, d):\n    return a + b + c + d\n"})
+        _, data = self.payload("--json", "scan", root)
+        census = data["scan"]
+        self.assertEqual(len(census["skipped_refs"]), 1)
+        self.assertIn("arity 4", self.entry(census["skipped_refs"], "wide.py::four"))
+        self.assertEqual(sum(census["skipped"].values()), census["not_probed"])
+
     def test_a_command_that_ran_no_scan_says_null_rather_than_zero(self):
         """Zero probed functions and no sameness half at all are different claims."""
         _code, data = self.payload("--root", tree({"a.py": "x = 1\n"}), "--json",

@@ -926,6 +926,56 @@ test('the census is DATA rather than the printed equation', async () => {
   assert.ok(census.files > 0);
 });
 
+// `displayPath` names a file relative to CWD, and a tmpdir fixture is not under it,
+// so these look the entry up by its basename rather than assuming a spelling.
+function entry(map, base) {
+  const hit = Object.entries(map).filter(([k]) => k.endsWith(base));
+  assert.equal(hit.length, 1, `${base} appears ${hit.length} times in ${Object.keys(map)}`);
+  return hit[0][1];
+}
+
+test('the census NAMES the files it never opened, not just how many', async () => {
+  // A tally answers "how many" and cannot answer "which". `could not load 12` names
+  // nothing a person can open, and `assay why FILE::NAME` — the only recourse — has to
+  // be told a file and a function name in it, which is what the tally withheld.
+  const root = tree({
+    // AT MODULE SCOPE, so the file genuinely never opens. The same call inside a body
+    // is a refusal of the FUNCTION now, and would leave this census empty.
+    'clock.js': 'export const at = Date.now();\n',
+    'pure.js': 'export const twice = (n) => n * 2;\n',
+  });
+  const { code, data } = await payload('--json', 'scan', root);
+  assert.equal(code, 0);
+  const census = data.scan;
+  assert.equal(Object.keys(census.unloadable_paths).length, 1);
+  assert.equal(entry(census.unloadable_paths, 'clock.js'), 'reads the clock');
+  // THE MAP AND THE TALLY DESCRIBE ONE POPULATION. Letting them drift would put two
+  // different answers to "how much did this run never look at" in one document.
+  const tallied = Object.values(census.unloadable).reduce((a, b) => a + b, 0);
+  assert.equal(tallied, Object.keys(census.unloadable_paths).length);
+});
+
+test('the detail map keeps the load error the tally truncates away', async () => {
+  // `tally` keys on `why.split('(')[0]` so one bucket counts every spelling of a
+  // failure — and a load error's message begins at exactly that `(`. The diagnosis the
+  // child already computed is the thing most worth reading in the largest bucket.
+  const root = tree({ 'boom.js': 'throw new Error("JWT_SECRET must be set");\n' });
+  const { data } = await payload('--json', 'scan', root);
+  const census = data.scan;
+  assert.deepEqual(Object.keys(census.unloadable), ['could not load']);
+  assert.match(entry(census.unloadable_paths, 'boom.js'), /JWT_SECRET must be set/);
+});
+
+test('the census NAMES the functions it did not probe', async () => {
+  const root = tree({ 'wide.js': 'export const four = (a, b, c, d) => a + b + c + d;\n' });
+  const { data } = await payload('--json', 'scan', root);
+  const census = data.scan;
+  assert.equal(Object.keys(census.skipped_refs).length, 1);
+  assert.match(entry(census.skipped_refs, 'wide.js::four'), /arity 4/);
+  const tallied = Object.values(census.skipped).reduce((a, b) => a + b, 0);
+  assert.equal(tallied, census.not_probed);
+});
+
 test('a command that ran no scan says null rather than zero', async () => {
   // Zero probed functions and no sameness half at all are different claims.
   const { data } = await payload('--root', tree({ 'a.js': 'export const x = 1;\n' }),

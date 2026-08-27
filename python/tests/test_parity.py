@@ -183,6 +183,103 @@ class TheTwoHalvesAgree(unittest.TestCase):
             self.assertIn("unloadable", source)
             self.assertIn(member, source)
 
+    def test_both_halves_NAME_what_they_never_looked_at(self):
+        """A tally answers "how many" and cannot answer "which", so both halves carry
+        the maps beside the counts — under the same two key names, because one
+        `assay.json` serves a polyglot repository and a consumer reading the census
+        must not have to ask which binary produced it.
+
+        The maps are the untruncated reason. `tally` keys on the text before the first
+        `(`, which is exactly where a load error's message begins, so the bucket that
+        is largest in a real run is the one whose contents the tally discards.
+        """
+        for source in (js("sameness.js"), py("sameness.py")):
+            self.assertIn("unloadable_paths", source)
+            self.assertIn("skipped_refs", source)
+
+    def test_both_halves_RESOLVE_a_free_name_rather_than_refusing_it_on_sight(self):
+        """A function's own text cannot say what its free names mean — they resolve in
+        the module scope around it — so both halves go and look, and neither treats a
+        free name as impure merely for being free.
+
+        THE HALVES REACHED THIS FROM OPPOSITE ENDS, which is why it is pinned rather
+        than assumed. Python has always inlined what a function needs into a preamble,
+        because it never imports the containing module. JavaScript loads the module and
+        so had the function object without the scope, and gated only `fn.toString()` —
+        which is how a body mentioning nothing gated could call a sibling that writes to
+        the filesystem. They now answer the same question; a half that stopped would be
+        the same tree reported two ways depending on which binary CI invoked.
+        """
+        js_src, py_src = js("sameness.js"), py("sameness.py")
+        # THE DEFINITION AND THE CALL SITE, not the bare identifier. Asserting the name
+        # alone passed with the export renamed, because the recursive calls and the
+        # prose still spell it — a check that its own subject cannot break is the
+        # vacuous assertion this suite exists to keep out.
+        self.assertIn("export function reachRefusal(", js_src)
+        self.assertIn("mod.local", js_src)           # a name bound in this module
+        self.assertIn("reachRefusal(source, mod", js("probe.js"))
+        self.assertIn("def preamble_for", py_src)
+        self.assertIn("mod.funcs", py_src)           # the same, by its own spelling
+        self.assertIn("preamble_for(func", py_src)
+
+    def test_both_halves_FOLLOW_a_helper_and_name_it_when_it_is_impure(self):
+        """Neither half stops at the first hop. A refusal names the helper that caused
+        it, because a reason that says only "impure" is a number reported without
+        saying what produced it."""
+        self.assertIn("reaches ", js("sameness.js"))
+        self.assertIn("helper %s: %s", py("sameness.py"))
+
+    def test_both_halves_call_an_UNRESOLVABLE_free_name_the_same_thing(self):
+        """The one string a person reads in both censuses, so it is asserted in both
+        halves AND against a real run of the one that can run here. A format string
+        nothing reaches would satisfy the text check alone."""
+        self.assertIn("free name ", js("sameness.js"))
+        self.assertIn("free name %s", py("sameness.py"))
+
+        import tempfile                                     # noqa: PLC0415
+
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+            fh.write("def f(n):\n    return SOMETHING(n)\n")
+            path = fh.name
+        try:
+            _, why = sameness.preamble_for(sameness.parse(path).funcs["f"])
+            self.assertEqual(why, "free name SOMETHING")
+        finally:
+            os.unlink(path)
+
+    def test_NEITHER_half_opens_a_module_it_would_not_have_LOADED(self):
+        """Resolving a name must not become a way in. Python never imports the
+        containing module at all and admits only an allowlist of side-effect-free
+        stdlib roots; JavaScript follows a RELATIVE specifier only, and only into a
+        module that passes the same load gate `collect` applies. Both refuse anything
+        else by name rather than opening it to find out."""
+        py_src = py("sameness.py")
+        self.assertIn("ALLOWED_IMPORTS", py_src)
+        self.assertIn("needs %s", py_src)
+        js_src = js("probe.js")
+        self.assertIn("startsWith('.')", js_src)     # relative specifiers only
+        self.assertIn("loadRefusal(text)", js_src)   # and only if it would have loaded
+
+    def test_the_two_halves_BOUND_the_helper_walk_DIFFERENTLY_on_purpose(self):
+        """THE ONE PLACE THIS RULE IS PER-LANGUAGE, asserted so that changing either
+        half is a decision rather than a drift.
+
+        Python inlines each helper's SOURCE into a preamble it then executes, so an
+        unbounded walk is an unbounded amount of code to run and it stops at
+        `HELPER_DEPTH`, saying so. JavaScript reads text and never inlines anything, so
+        its walk costs nothing to continue and terminates on a `seen` set instead —
+        which also makes recursion and mutual recursion ordinary rather than special.
+
+        A depth limit in one half and a fixpoint in the other is not a contradiction:
+        both refuse rather than guess when they stop. But a tree probed by one binary
+        and not the other WOULD be, so if either mechanism goes, this test should fail
+        and the question be asked again.
+        """
+        py_src = py("sameness.py")
+        self.assertIn("HELPER_DEPTH", py_src)
+        self.assertIn("helper chain deeper than", py_src)
+        self.assertIn("seen", js("sameness.js"))
+
     def test_both_halves_COUNT_the_baseline_lines_they_could_not_check(self):
         """The rule, not the wording: a line is only stale to a run that could have
         seen it fire, and a run that could not see it says so rather than printing a

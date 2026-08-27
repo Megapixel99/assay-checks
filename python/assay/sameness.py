@@ -875,14 +875,34 @@ class Scan:
         a file nobody opened holds an unknown number of functions, so adding the two
         totals together prints a number nobody measured. Both halves are here with
         their own totals, which is what makes that checkable rather than stated.
+
+        THE TALLIES ANSWER "HOW MANY" AND CANNOT ANSWER "WHICH", so the maps travel
+        beside them. `could not load 12` names nothing a person can open, and the only
+        recourse the tool offers is `assay why FILE::NAME` — which has to be told a
+        file and a function name in it, the two things the tally just withheld. A
+        census that reports how much it never looked at, and then refuses to say
+        where, stops one step short of the claim it exists to make.
+
+        THE MAPS CARRY THE WHOLE REASON, and for the load errors that is the entire
+        point. `_tally` keys on `why.split("(")[0].split(":")[0]` so that one bucket
+        counts every spelling of a failure — and a load error's message begins at
+        exactly that `(`. `could not parse (line 3)` is a diagnosis this half ALREADY
+        COMPUTED and the tally then truncates away; the largest bucket in a real run
+        is the one whose contents were most worth reading.
+
+        Neither map is sorted here. `json.dump` is asked to sort and `renderJson`
+        sorts the payload all the way down, so ordering them again would be a second
+        place for the two halves to disagree about one document.
         """
         return {
             "files": self.files,
             "unloadable": dict(self.file_census()),
+            "unloadable_paths": dict(self.unloadable),
             "functions": self.functions,
             "probed": len(self.probed),
             "not_probed": len(self.skipped),
             "skipped": dict(self.census()),
+            "skipped_refs": dict(self.skipped),
         }
 
     def file_census(self):

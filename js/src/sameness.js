@@ -376,6 +376,551 @@ export function functionRefusal(source, arity) {
   return firstGate(IMPURE_FUNCTION, source);
 }
 
+/* -------------------------------------------------------------------------- *
+ * REACHABILITY — what a function can REACH, not what its file happens to say.
+ *
+ * `fileRefusal` reads the whole file, so one `new Date()` in one body refuses every
+ * function beside it. On a barrel of pure helpers that is the difference between a
+ * useful run and a zero.
+ *
+ * The fix is NOT "gate the file on module scope and leave the function gate alone",
+ * and the reason is written a few hundred lines below: `functionRefusal` reads a
+ * function's own source and CANNOT SEE THE MODULE SCOPE ITS FREE NAMES RESOLVE IN. A
+ * clean-looking `slugA(s) { return stamp(s); }` whose `stamp` calls `writeFileSync`
+ * passes both gates once the file gate stops reading the whole file — and probing
+ * CALLS it.
+ *
+ * So the gate is split by the question each half answers:
+ *
+ *   loadRefusal   may this module be IMPORTED?  — patterns over module-scope code
+ *   reachRefusal  may this function be CALLED?  — patterns over its transitive closure
+ *
+ * The premise error worth naming, because it is easy to make twice: the gate guards
+ * TWO events, not one. Import-time reachability is the right test for loading and the
+ * wrong test for calling.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Bracket depth at every index of already-lexed source.
+ *
+ * An opening bracket reports the depth it opens FROM and a closing one the depth it
+ * returns TO, so a construct's own delimiters read as belonging to the level that
+ * CONTAINS it. Every question here is "is this at module scope?", and that is the
+ * reading which answers it.
+ */
+function depthMap(text) {
+  const out = new Int32Array(text.length);
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '{' || ch === '(' || ch === '[') { out[i] = depth; depth += 1; } else if (ch === '}' || ch === ')' || ch === ']') { depth -= 1; out[i] = depth; } else out[i] = depth;
+  }
+  return out;
+}
+
+const OPENERS = '{([';
+const CLOSERS = '})]';
+
+/** The index of the bracket closing the one at `open`, or -1 if it never closes. */
+function matchBracket(text, open) {
+  const want = CLOSERS[OPENERS.indexOf(text[open])];
+  if (!want) return -1;
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    if (OPENERS.includes(text[i])) depth += 1;
+    else if (CLOSERS.includes(text[i])) {
+      depth -= 1;
+      if (depth === 0) return text[i] === want ? i : -1;
+    }
+  }
+  return -1;
+}
+
+/** Index of the next `ch` at or after `from`, skipping whitespace only. */
+function nextNonSpace(text, from) {
+  let i = from;
+  while (i < text.length && /\s/.test(text[i])) i += 1;
+  return i;
+}
+
+const DECL_KEYWORDS = ['function', 'class', 'const', 'let', 'var'];
+
+/**
+ * The word immediately before `at`, or '' — used to tell a DECLARATION from a mention.
+ *
+ * `export function f` and `export default function f` are declarations; `return
+ * function () {}` and `= function () {}` are expressions that happen to contain the
+ * same keyword, and treating them as top-level bindings would name something that has
+ * no name to bind.
+ */
+function wordBefore(text, at) {
+  let i = at - 1;
+  while (i >= 0 && /\s/.test(text[i])) i -= 1;
+  if (i < 0) return '';
+  if (!/[\w$]/.test(text[i])) return text[i];
+  let k = i;
+  while (k >= 0 && /[\w$]/.test(text[k])) k -= 1;
+  return text.slice(k + 1, i + 1);
+}
+
+/**
+ * Whether a keyword at `at` begins a statement.
+ *
+ * A NEWLINE IS A STATEMENT BOUNDARY, which is the half that a list of punctuation
+ * misses. Semicolons are optional in JavaScript and a great deal of real code omits
+ * them, and a file opening with a `'use strict'` directive puts a QUOTE in front of its
+ * first declaration. Requiring `;` or `{` there found no top-level bindings at all in
+ * two ordinary CommonJS packages — and a module with no bindings resolves no free
+ * names, so every function in it was refused for reaching something the reader could
+ * see three lines above it.
+ *
+ * Depth is checked by the caller, so a `function` inside a call's parentheses never
+ * reaches here however it is laid out.
+ */
+function startsStatement(text, at) {
+  let i = at - 1;
+  let crossedLine = false;
+  while (i >= 0 && /\s/.test(text[i])) {
+    if (text[i] === '\n') crossedLine = true;
+    i -= 1;
+  }
+  if (i < 0 || crossedLine) return true;
+  if (text[i] === ';' || text[i] === '{' || text[i] === '}') return true;
+  const word = wordBefore(text, at);
+  return word === 'export' || word === 'default';
+}
+
+/**
+ * Every top-level declaration in a lexed module: its name, its full span, and the span
+ * of the part that only runs WHEN CALLED.
+ *
+ * `deferred` is the whole point and is deliberately narrow. A function DECLARATION's
+ * body runs when called; so does the body of a function or arrow bound to a top-level
+ * name. EVERYTHING ELSE KEEPS ITS TEXT, because everything else might run at import:
+ * an IIFE, a callback handed to something invoked on the way in, a class field
+ * initializer, a static block. Guessing wrong in that direction loads a file the gate
+ * exists to refuse, so the narrow rule is the safe one — it costs coverage and says so.
+ *
+ * A class body is NOT deferred here for exactly that reason: `class A { x = readIt(); }`
+ * runs `readIt` the moment the class is defined, which is import time.
+ */
+function topLevelDecls(text) {
+  const depth = depthMap(text);
+  const out = [];
+  const word = /[A-Za-z_$][\w$]*/g;
+  let m = word.exec(text);
+  while (m !== null) {
+    const kw = m[0];
+    const at = m.index;
+    if (DECL_KEYWORDS.includes(kw) && depth[at] === 0) {
+      if (startsStatement(text, at)) {
+        const decl = readDecl(text, at, kw);
+        if (decl) {
+          out.push(decl);
+          word.lastIndex = decl.end;
+          m = word.exec(text);
+          continue;
+        }
+      }
+    }
+    m = word.exec(text);
+  }
+  return out;
+}
+
+/** One declaration starting at the keyword `at`, or null when it cannot be read. */
+function readDecl(text, at, kw) {
+  if (kw === 'function' || kw === 'class') {
+    let i = nextNonSpace(text, at + kw.length);
+    if (text[i] === '*') i = nextNonSpace(text, i + 1);          // generator
+    const name = /^[A-Za-z_$][\w$]*/.exec(text.slice(i));
+    if (!name) return null;
+    let brace = text.indexOf('{', i + name[0].length);
+    if (kw === 'function') {
+      const paren = text.indexOf('(', i + name[0].length);
+      if (paren === -1) return null;
+      const closeParen = matchBracket(text, paren);
+      if (closeParen === -1) return null;
+      brace = text.indexOf('{', closeParen);
+    }
+    if (brace === -1) return null;
+    const close = matchBracket(text, brace);
+    if (close === -1) return null;
+    return {
+      name: name[0],
+      start: at,
+      end: close + 1,
+      // A CLASS BODY RUNS AT IMPORT — field initializers and static blocks — so only a
+      // function's body is deferred.
+      deferred: kw === 'function' ? [brace + 1, close] : null,
+    };
+  }
+  // const | let | var
+  const i = nextNonSpace(text, at + kw.length);
+  const name = /^[A-Za-z_$][\w$]*/.exec(text.slice(i));
+  // A DESTRUCTURING declaration binds names this does not attempt to read, so it is
+  // refused rather than guessed at — see `moduleBindings`, which turns a null here into
+  // a file it will not narrow.
+  if (!name) return null;
+  const end = statementEnd(text, i + name[0].length);
+  const eq = text.indexOf('=', i + name[0].length);
+  if (eq === -1 || eq > end) return { name: name[0], start: at, end, deferred: null };
+  return {
+    name: name[0], start: at, end, deferred: fnBodySpan(text, eq + 1, end),
+  };
+}
+
+/**
+ * The span of a function/arrow initializer's BODY, or null when the initializer is not
+ * a function — in which case it is an expression that runs at import and keeps its text.
+ */
+function fnBodySpan(text, from, end) {
+  let i = nextNonSpace(text, from);
+  if (text.startsWith('async', i)) i = nextNonSpace(text, i + 5);
+  if (text.startsWith('function', i)) {
+    const paren = text.indexOf('(', i);
+    if (paren === -1 || paren > end) return null;
+    const closeParen = matchBracket(text, paren);
+    if (closeParen === -1) return null;
+    const brace = text.indexOf('{', closeParen);
+    if (brace === -1 || brace > end) return null;
+    const close = matchBracket(text, brace);
+    return close === -1 ? null : [brace + 1, close];
+  }
+  // An arrow. Its parameter list is either a parenthesised group or a single name, and
+  // the body is everything after `=>` — braced or not. AN EXPRESSION BODY IS STILL
+  // DEFERRED: `const f = (x) => impure(x)` runs `impure` when f is called, not on the
+  // way in, which is the entire distinction this function exists to draw.
+  let arrow = -1;
+  if (text[i] === '(') {
+    const closeParen = matchBracket(text, i);
+    if (closeParen === -1) return null;
+    const a = nextNonSpace(text, closeParen + 1);
+    if (!text.startsWith('=>', a)) return null;
+    arrow = a;
+  } else {
+    const single = /^[A-Za-z_$][\w$]*/.exec(text.slice(i));
+    if (!single) return null;
+    const a = nextNonSpace(text, i + single[0].length);
+    if (!text.startsWith('=>', a)) return null;
+    arrow = a;
+  }
+  const b = nextNonSpace(text, arrow + 2);
+  if (text[b] === '{') {
+    const close = matchBracket(text, b);
+    return close === -1 ? null : [b + 1, close];
+  }
+  return [b, end];
+}
+
+/** The end of a statement starting mid-way at `from`: a depth-0 `;`, else a newline. */
+function statementEnd(text, from) {
+  let depth = 0;
+  for (let i = from; i < text.length; i += 1) {
+    const ch = text[i];
+    if (OPENERS.includes(ch)) depth += 1;
+    else if (CLOSERS.includes(ch)) depth -= 1;
+    else if (depth === 0 && ch === ';') return i;
+    else if (depth === 0 && ch === '\n') {
+      // A continuation line is still the same statement. Only a line that ENDS a
+      // balanced expression can end one, which ASI already decided for the engine.
+      const next = nextNonSpace(text, i);
+      if (next >= text.length) return i;
+      if (/[A-Za-z_$;}]/.test(text[next])) return i;
+    }
+  }
+  return text.length;
+}
+
+/**
+ * Globals a probed function may reach without the answer stopping being a function of
+ * its arguments.
+ *
+ * DETERMINISM IS THE ONLY TEST. `Math` is here and `Math.random` is refused by
+ * `IMPURE_SOURCE` a few lines up; `Date` is not here at all, for the same reason the
+ * clock is gated. Anything absent is refused BY NAME rather than assumed pure, which is
+ * the direction that costs coverage instead of spending a `look` — and the census then
+ * says `free name Buffer` rather than probing something the ladder cannot control.
+ *
+ * The Python half already reports refusals in exactly these words (`free name Report`),
+ * so this is the two halves converging on one vocabulary rather than a new one.
+ */
+const PURE_GLOBALS = new Set([
+  'Object', 'Array', 'String', 'Number', 'Boolean', 'BigInt', 'Symbol', 'Math', 'JSON',
+  'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Error', 'TypeError', 'RangeError',
+  'SyntaxError', 'ReferenceError', 'EvalError', 'URIError', 'AggregateError',
+  'Function', 'Promise', 'Proxy', 'Reflect', 'ArrayBuffer', 'DataView', 'Int8Array',
+  'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array',
+  'Uint32Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array',
+  'Intl', 'escape', 'unescape', 'isNaN', 'isFinite', 'parseInt', 'parseFloat',
+  'encodeURI', 'encodeURIComponent', 'decodeURI', 'decodeURIComponent',
+  'structuredClone', 'NaN', 'Infinity', 'undefined', 'console',
+  // Deterministic and side-effect-free, and each was measured refusing real code:
+  // `qs` lost a helper to `free name URLSearchParams` alone.
+  //
+  // `Buffer` IS DELIBERATELY ABSENT despite looking like it belongs here.
+  // `Buffer.from` is deterministic but `Buffer.allocUnsafe` hands back whatever was in
+  // that memory, so the name does not answer the question the ladder asks — and the
+  // allowlist is per NAME, not per method.
+  'URL', 'URLSearchParams', 'TextEncoder', 'TextDecoder',
+]);
+
+/** Constructs whose parentheses are a CONDITION or a header, never a parameter list. */
+const CONTROL_HEADS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with']);
+
+/** Words that are syntax rather than references. */
+const NOT_A_REFERENCE = new Set([
+  'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
+  'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'false', 'finally',
+  'for', 'function', 'if', 'import', 'in', 'instanceof', 'let', 'new', 'null', 'of',
+  'return', 'static', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof',
+  'var', 'void', 'while', 'with', 'yield', 'async', 'get', 'set', 'as', 'from',
+]);
+
+/**
+ * Every identifier a source REFERENCES and does not itself declare.
+ *
+ * Property positions are dropped — `x.writeFileSync` names a property of `x`, not a
+ * binding — and so are object-literal KEYS, which are `{` or `,` then a name then `:`.
+ * A ternary's `b` in `a ? b : c` is also a name followed by `:`, which is why the
+ * preceding character is checked rather than the following one alone: dropping a real
+ * reference is the direction that loses the gate, and this file only ever errs the
+ * other way.
+ */
+function referencedNames(text) {
+  const out = new Set();
+  const word = /[A-Za-z_$][\w$]*/g;
+  let m = word.exec(text);
+  while (m !== null) {
+    const at = m.index;
+    const prev = wordBefore(text, at);
+    const isProperty = prev === '.' || text.slice(Math.max(0, at - 2), at) === '?.';
+    // `${` OPENS AN INTERPOLATION, and `$` is a legal identifier character, so the
+    // dollar reads as a name of its own. `stripNonCode` keeps a template's substitutions
+    // BECAUSE THEY ARE CODE — which is what makes this the one place they have to be
+    // told apart from one.
+    const isTemplateHole = m[0] === '$' && text[at + 1] === '{';
+    // A REGEX LITERAL'S FLAGS SURVIVE THE LEXER — `stripNonCode` blanks the body and
+    // keeps what follows the closing slash — so `/\+/g` ends in a bare `g` that reads
+    // as a name. It is told from a division by looking BACK for the blanked body: an
+    // opening `/` with nothing but blanks between the two is a literal, and `x / g` has
+    // no second slash to find. Guessing from the letters alone would drop a real
+    // reference named `g`, which is the direction this file never errs in.
+    let isRegexFlags = false;
+    if (text[at - 1] === '/' && /^[dgimsuvy]+$/.test(m[0])) {
+      let j = at - 2;
+      while (j >= 0 && text[j] === ' ') j -= 1;
+      isRegexFlags = j >= 0 && text[j] === '/';
+    }
+    let isKey = false;
+    if (!isProperty) {
+      const after = nextNonSpace(text, at + m[0].length);
+      if (text[after] === ':' && (prev === '{' || prev === ',')) isKey = true;
+    }
+    if (!isProperty && !isKey && !isTemplateHole && !isRegexFlags
+        && !NOT_A_REFERENCE.has(m[0])) out.add(m[0]);
+    m = word.exec(text);
+  }
+  return out;
+}
+
+/**
+ * Every name a source DECLARES: parameters, locals, inner functions, catch bindings.
+ *
+ * EVERY PARAMETER LIST, not just the outer one. Reading only the first `(` was measured
+ * against real code and lost three functions to names that were plainly bound:
+ * `parameters.forEach((value, key) => ...)` reported `free name key`, and
+ * `new Promise((resolve) => ...)` reported `free name resolve`. A callback's parameter
+ * is as declared as the outer function's, and treating it as free refuses the ordinary
+ * shape of every iteration helper in a codebase.
+ */
+function declaredNames(text) {
+  const out = new Set();
+  const addList = (open, close) => {
+    // Destructuring included: every identifier in the list is bound by it, and a
+    // default value's own references are picked up as free names anyway.
+    for (const n of text.slice(open + 1, close).match(/[A-Za-z_$][\w$]*/g) || []) out.add(n);
+  };
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '(') continue;
+    const close = matchBracket(text, i);
+    if (close === -1) continue;
+    const after = nextNonSpace(text, close + 1);
+    // A PARENTHESISED GROUP IS A PARAMETER LIST when an arrow or a body follows it.
+    // `function f(a)`, a method `f(a)`, and `(a) =>` all read that way — and the word
+    // before is the function's own NAME as often as it is `function`, which is why the
+    // test is what FOLLOWS. `if (x) {` follows the same shape and binds nothing, so the
+    // control keywords are named: they are the only constructs that borrow it.
+    const arrow = text.startsWith('=>', after);
+    const named = wordBefore(text, i);
+    const body = text[after] === '{' && !CONTROL_HEADS.has(named);
+    if (arrow || body) addList(i, close);
+    // THE NAME IN FRONT OF A PARAMETER LIST IS A DEFINITION, not a reference to one.
+    // A class body is the case that matters: `constructor(message) { ... }` is neither
+    // a property access nor an object key, so it read as a free name and refused every
+    // error class in a real package — five constructors, all of them ordinary.
+    if (body && /^[A-Za-z_$][\w$]*$/.test(named)) out.add(named);
+  }
+  // `x => ...` binds `x` with no parentheses at all. Found from the arrow backwards,
+  // because scanning forward from every index re-reads the whole tail each time.
+  for (const m of text.matchAll(/([A-Za-z_$][\w$]*)\s*=>/g)) {
+    if (!/[\w$.)]/.test(text[m.index - 1] || '')) out.add(m[1]);
+  }
+  const binder = /\b(?:const|let|var|function|class|catch)\b\s*\*?\s*([({[]?)\s*([A-Za-z_$][\w$]*)/g;
+  let m = binder.exec(text);
+  while (m !== null) {
+    out.add(m[2]);
+    // `const { a, b } = ...` and `const [x, y] = ...` bind every name in the pattern.
+    if (m[1]) {
+      const at = text.indexOf(m[1], m.index);
+      const close = matchBracket(text, at);
+      if (close !== -1) {
+        for (const n of text.slice(at + 1, close).match(/[A-Za-z_$][\w$]*/g) || []) out.add(n);
+      }
+    }
+    m = binder.exec(text);
+  }
+  return out;
+}
+
+/**
+ * A module's top-level shape: what each name is bound to, and which names came from
+ * somewhere else. `null` when the source cannot be read, which every caller turns back
+ * into today's whole-file answer.
+ */
+export function moduleBindings(source, id = '') {
+  const text = stripNonCode(source, true);
+  if (text === null) return null;
+  const decls = topLevelDecls(text);
+  const local = new Map();
+  for (const d of decls) {
+    // A NAME DECLARED TWICE IS NOT READ TWICE. Whichever span the call graph walks, it
+    // may not be the one that runs, so the binding is poisoned rather than guessed.
+    if (local.has(d.name)) local.set(d.name, null);
+    else local.set(d.name, source.slice(d.start, d.end));
+  }
+  // NAME -> THE SPECIFIER IT CAME FROM, not merely "this came from elsewhere". A
+  // caller that can reach the filesystem resolves the specifier and carries the walk
+  // into that module; one that cannot refuses the name. Both are correct answers to
+  // different questions, and only the first needs to know where to look.
+  const imported = new Map();
+  // THE SPECIFIER LIVES INSIDE A STRING, so this scan reads the lex that KEEPS string
+  // contents — the same distinction `firstGate` draws between its CODE and SPECIFIER
+  // scopes. Reading `text` here returned a specifier of blanks, every import resolved
+  // to nothing, and the gate quietly fell back to refusing every imported name.
+  const spec = stripNonCode(source, false) || text;
+  for (const m of spec.matchAll(/\bimport\b([^;]*?)from\s*['"]([^'"]*)['"]/g)) {
+    for (const n of m[1].match(/[A-Za-z_$][\w$]*/g) || []) imported.set(n, m[2]);
+  }
+  for (const m of spec.matchAll(/\b(?:const|let|var)\s*([^=;]*)=\s*(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]*)['"]/g)) {
+    for (const n of m[1].match(/[A-Za-z_$][\w$]*/g) || []) imported.set(n, m[2]);
+  }
+  return { id, local, imported, decls, text };
+}
+
+/**
+ * Module-scope source: the file with every DEFERRED body blanked, same length.
+ *
+ * Blanking in place rather than splicing keeps every index meaning what it meant, and
+ * the gates that read string CONTENTS — a `require` specifier is inside quotes — get
+ * the original bytes everywhere they were not blanked.
+ */
+function moduleScopeSource(source, mod) {
+  const chars = [...source];
+  for (const d of mod.decls) {
+    if (!d.deferred) continue;
+    for (let i = d.deferred[0]; i < d.deferred[1] && i < chars.length; i += 1) {
+      if (chars[i] !== '\n') chars[i] = ' ';
+    }
+  }
+  return chars.join('');
+}
+
+/**
+ * Why this module may not be IMPORTED, or null.
+ *
+ * The question is what runs on the way in, so a body that only runs when CALLED is not
+ * evidence about it. When the module cannot be read this is `fileRefusal` — the whole
+ * file, exactly as before — because a file the parser lost the thread on is the last
+ * one to narrow a gate around.
+ */
+export function loadRefusal(source) {
+  const mod = moduleBindings(source);
+  if (mod === null) return fileRefusal(source);
+  return firstGate(IMPURE_SOURCE, moduleScopeSource(source, mod));
+}
+
+/**
+ * Why CALLING this function may reach outside its arguments, or null.
+ *
+ * `functionRefusal` has already read the function's own body. This answers the question
+ * that one cannot: what its free names resolve to. Taint only grows, so the walk
+ * terminates on recursion and on cycles without a special case for either.
+ */
+/**
+ * One link of a refusal chain, in a sentence a person can follow back to the code.
+ *
+ * EVERY HOP IS KEPT. The local branch used to return a nested reason unchanged when it
+ * already began with `reaches`, which dropped the middle of the chain: `a` calling `b`
+ * calling an impure `c` reported "reaches c", and a reader who opened `a` looking for
+ * `c` did not find it there. The cross-module branch always prepended, so the same
+ * walk was described two different ways depending on which side of a file it crossed.
+ *
+ * The grammar cases are the two reasons that are not verb phrases. "reaches giteaFor,
+ * which free name Buffer" is what concatenation produces, and a census line nobody can
+ * read is a reason reported without saying what produced it.
+ */
+function chain(name, why) {
+  if (why.startsWith('free name ')) return `reaches ${name}, which has a ${why}`;
+  if (why === 'source could not be read') return `reaches ${name}, whose source could not be read`;
+  return `reaches ${name}, which ${why}`;
+}
+
+export function reachRefusal(fnSource, mod, resolve = null, seen = new Set()) {
+  const text = stripNonCode(fnSource, true);
+  if (text === null) return 'source could not be read';
+  const declared = declaredNames(text);
+  for (const name of [...referencedNames(text)].sort()) {
+    const key = `${mod.id || ''}::${name}`;
+    if (declared.has(name) || PURE_GLOBALS.has(name) || seen.has(key)) continue;
+    if (mod.imported.has(name)) {
+      // AN IMPORT IS FOLLOWED WHEN IT CAN BE, and refused when it cannot. Refusing
+      // every imported name was measured on real code and is not a conservative choice
+      // so much as an empty one: 73 of 90 refusals in one package were names like
+      // `CLIENT_INFO_SEPARATOR` — constants, imported, and perfectly deterministic.
+      // A `resolve` that comes back null is a specifier this caller could not or would
+      // not open — a bare package, a core module, an unreadable path — and that is
+      // still a refusal.
+      const from = resolve && resolve(mod.imported.get(name), mod.id);
+      if (!from) return `free name ${name} comes from another module`;
+      if (from.refusal) return `reaches ${name}, in a module that ${from.refusal}`;
+      const bound = from.mod.local.get(name);
+      if (bound === undefined) return `free name ${name} comes from another module`;
+      if (bound === null) return `free name ${name} is declared more than once`;
+      seen.add(key);
+      const across = firstGate(IMPURE_SOURCE, bound)
+        || reachRefusal(bound, from.mod, resolve, seen);
+      if (across) return chain(name, across);
+      continue;
+    }
+    if (!mod.local.has(name)) return `free name ${name}`;
+    const bound = mod.local.get(name);
+    if (bound === null) return `free name ${name} is declared more than once`;
+    seen.add(key);
+    // IMPURE_SOURCE, NOT IMPURE_FUNCTION, and the difference is a wrong answer rather
+    // than a stricter one. `IMPURE_FUNCTION` adds three rules — generator, `this`, rest
+    // parameters — that answer "may THIS function be probed", which is not a question
+    // about anything it merely REACHES. A class whose constructor assigns `this.code`
+    // is an ordinary class, and gating a reached binding with the probe's own
+    // eligibility rules refused five error constructors here for being unprobeable
+    // rather than for reaching outside their arguments.
+    const direct = firstGate(IMPURE_SOURCE, bound)
+      || reachRefusal(bound, mod, resolve, seen);
+    if (direct) return chain(name, direct);
+  }
+  return null;
+}
+
 /**
  * How a file is named in a report: relative when that is shorter and stays inside the
  * tree, absolute otherwise. A relative path that climbs out through a dozen `..`
@@ -1131,15 +1676,35 @@ export class Scan {
    * file nobody opened holds an unknown number of functions, so adding the two totals
    * together prints a number nobody measured. Both halves are here with their own
    * totals, which is what makes that checkable rather than merely stated.
+   *
+   * THE TALLIES ANSWER "HOW MANY" AND CANNOT ANSWER "WHICH", so the maps travel beside
+   * them. `could not load 12` names nothing a person can open, and the only recourse
+   * the tool offers is `assay why FILE::NAME` — which has to be told a file and a
+   * function name in it, the two things the tally just withheld. A census that reports
+   * how much it never looked at, and then refuses to say where, stops one step short
+   * of the claim it exists to make.
+   *
+   * THE MAPS CARRY THE WHOLE REASON, and for the load errors that is the entire point.
+   * `tally` keys on `why.split('(')[0].split(':')[0]` so that one bucket counts every
+   * spelling of a failure — and a load error's message begins at exactly that `(`.
+   * `could not load (JWT_SECRET must be set)` is a diagnosis the child ALREADY
+   * COMPUTED and the tally then truncates away; the largest bucket in a real run is
+   * the one whose contents were most worth reading.
+   *
+   * Neither map is sorted here. `renderJson` sorts the payload all the way down and
+   * Python's `json.dump` is asked to sort, so ordering them again would be a second
+   * place for the two halves to disagree about one document.
    */
   toDict() {
     return {
       files: this.files,
       unloadable: Object.fromEntries(this.fileCensus()),
+      unloadable_paths: Object.fromEntries(this.unloadable),
       functions: this.functions,
       probed: this.probed.size,
       not_probed: this.skipped.size,
       skipped: Object.fromEntries(this.census()),
+      skipped_refs: Object.fromEntries(this.skipped),
     };
   }
 }
@@ -1154,7 +1719,10 @@ export async function collect(targets, scan = new Scan()) {
     }
     scan.files += 1;
     const rel = displayPath(file);
-    const why = fileRefusal(source);
+    // THE LOAD GATE, WHICH IS NOT THE CALL GATE. What runs on the way in decides
+    // whether this module may be imported; whether any given function may be CALLED is
+    // `reachRefusal`, applied per function in the child that holds it.
+    const why = loadRefusal(source);
     if (why) {
       // A refused FILE is counted once with its reason rather than silently dropped:
       // a census that omits what it never looked at reads exactly like a clean sweep.
