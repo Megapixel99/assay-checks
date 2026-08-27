@@ -54,7 +54,7 @@ import {
 import { relativeSpecifiers } from './probe.js';
 import { FINDING, Report, render, renderJson } from './verdicts.js';
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 
 const USAGE = `usage: assay [--root DIR] [--config FILE] [-q] [--json] <command>
 
