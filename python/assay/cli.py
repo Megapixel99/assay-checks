@@ -2,6 +2,7 @@
 
     could those checks have failed?      assay runners | anchors | diff | all
     does the tree already answer this?   assay scan | pair | search
+    ...does the OTHER language answer it?  assay search REF --against BUNDLE
     why was my function not probed?      assay why FILE::NAME | assay why --stdin
     ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
     ...for a whole tree, not one pair?   assay bundle PATHS | assay sweep PATHS
@@ -37,7 +38,7 @@ from .anchors import audit_anchors
 from .checks import audit_diff, audit_runners, check_exemptions
 from .config import (CONFIG_NAMES, ConfigError, apply_baseline, load,
                      write_baseline)
-from .sameness import (BUNDLE_SCHEMA, PROBE_SCHEMA, collect, compare,
+from .sameness import (BUNDLE_SCHEMA, PROBE_SCHEMA, admit, collect, compare,
                        compare_cross, cross_key, cross_ladder, discriminating,
                        discrimination_detail, group, ladder, ladder_key, probe,
                        report_census, report_scan, resolve, resolve_source,
@@ -606,6 +607,77 @@ def cmd_cross(args, config, out):
     return _finish(args, report, config, out)
 
 
+def _search_native(args, query, report):
+    """The one-language half of `search`: this tree, on this language's own ladder."""
+    vector, why = probe(query)
+    if vector is None:
+        report.look("%s — %s" % (query.ref, why), query.ref)
+        report.note("       the tree was not searched, because this function could "
+                    "not be probed")
+        return
+    if _undiscriminated(report, query, vector):
+        report.note("       the tree was not searched: the census excludes every "
+                    "function this ladder cannot tell apart, so a match was never "
+                    "possible")
+        return
+    scan = collect(args.into)
+    key = ladder_key(query)
+    hits = sorted(ref for ref, vec in scan.probed.items()
+                  if scan.keys[ref] == key and vec == vector and ref != query.ref)
+    if hits:
+        report.finding("the tree already answers %s: %s"
+                       % (query.ref, ", ".join(hits)), query.ref,
+                       "read them before writing a second one")
+    else:
+        report.note("\nsame   none — nothing in the tree matched %s's outcome vector"
+                    % query.ref)
+        report.note("       which is not proof that nothing answers it; see Limits")
+    report_scan(scan, report)
+    report.scan = scan.to_dict()
+
+
+def _search_cross(query, document, report):
+    """The other-language half: one function against a bundle the far binary wrote.
+
+    THE SAME THREE REFUSALS, STATED IN THE SAME WORDS, because this is `sweep`'s
+    question asked about one function instead of a tree — and `admit` is what both of
+    them ask. A query the shared ladder cannot tell apart from a constant can only
+    fail to match the other constants, and printing the clean `none` there would say
+    "we found none" where the truth is "we never looked". That difference costs the
+    most on exactly this path: the person reading it is about to write the function.
+    """
+    language = document.get("language") or "unknown"
+    vector, why = probe(query, mode="cross")
+    if vector is None:
+        report.look("%s — %s" % (query.ref, why), query.ref)
+        report.note("       the %s tree was not searched, because this function "
+                    "could not be probed on the shared ladder" % language)
+        return
+    key, refused = admit(vector, len(query.params), "cross")
+    if key is None:
+        report.look("%s — %s, on the SHARED ladder" % (query.ref, refused), query.ref,
+                    "the shared ladder is the intersection of what the two languages "
+                    "can express, so it discriminates less than either native one")
+        report.note("       the %s tree was not searched: a match was never possible"
+                    % language)
+        return
+    hits = sorted(record["ref"] for record in document.get("records") or []
+                  if record.get("ladder") == key and record.get("vector") == vector)
+    if hits:
+        report.finding("the %s tree already answers %s: %s"
+                       % (language, query.ref, ", ".join(hits)), query.ref,
+                       "no input in the shared ladder told them apart — READ them "
+                       "before writing a second one")
+    else:
+        report.note("\nsame   none across languages — nothing in the %s bundle matched "
+                    "%s's outcome vector" % (language, query.ref))
+    if document.get("census"):
+        report_census(document["census"], report, label="[%s]" % language)
+    report.other = {"language": language,
+                    "records": len(document.get("records") or []),
+                    "census": document.get("census")}
+
+
 def cmd_search(args, config, out):
     """Does the tree already answer this? — and never `none` when nobody looked.
 
@@ -622,35 +694,29 @@ def cmd_search(args, config, out):
     different claims, and this is the path where the difference costs the most: the
     person reading it is about to write the function.
     """
+    if not args.into and not args.against:
+        return _fail(args, out, "search needs --in DIR or --against BUNDLE")
     query, code = _query(args, out)
     if query is None:
         return code
+    # THE FAR SIDE IS RESOLVED BEFORE ANYTHING IS PROBED. A bundle this half cannot
+    # read is exit 2, and finding that out AFTER a tree of subprocesses have run wastes
+    # the run and buries the reason under a census the caller was never going to use.
+    document = None
+    if args.against:
+        document, why = _other_side(args.against, args.with_cmd)
+        if document is None:
+            return _fail(args, out, why)
+        if document.get("language") == "python":
+            return _fail(args, out,
+                         "--against is a python bundle and this is the python half — "
+                         "`--in` searches one language's tree on its own ladder, "
+                         "which is stronger")
     report = Report()
-    vector, why = probe(query)
-    if vector is None:
-        report.look("%s — %s" % (query.ref, why), query.ref)
-        report.note("       the tree was not searched, because this function could "
-                    "not be probed")
-        return _finish(args, report, config, out)
-    if _undiscriminated(report, query, vector):
-        report.note("       the tree was not searched: the census excludes every "
-                    "function this ladder cannot tell apart, so a match was never "
-                    "possible")
-        return _finish(args, report, config, out)
-    scan = collect(args.into)
-    key = ladder_key(query)
-    hits = sorted(ref for ref, vec in scan.probed.items()
-                  if scan.keys[ref] == key and vec == vector and ref != query.ref)
-    if hits:
-        report.finding("the tree already answers %s: %s"
-                       % (query.ref, ", ".join(hits)), query.ref,
-                       "read them before writing a second one")
-    else:
-        report.note("\nsame   none — nothing in the tree matched %s's outcome vector"
-                    % query.ref)
-        report.note("       which is not proof that nothing answers it; see Limits")
-    report_scan(scan, report)
-    report.scan = scan.to_dict()
+    if args.into:
+        _search_native(args, query, report)
+    if document is not None:
+        _search_cross(query, document, report)
     return _finish(args, report, config, out)
 
 
@@ -978,7 +1044,16 @@ def build_parser():
     p = sub.add_parser("search", parents=[_common()],
                        help="does the tree already answer this?")
     p.add_argument("ref", metavar="FILE::NAME", nargs="?")
-    p.add_argument("--in", dest="into", nargs="+", required=True)
+    # NEITHER IS REQUIRED AND ONE OF THEM IS. `--in` alone is the original command;
+    # `--against` alone asks only the other language; both ask both. Making `--in`
+    # required would have meant naming a tree you did not want searched in order to
+    # ask about the one you did.
+    p.add_argument("--in", dest="into", nargs="+", default=[])
+    p.add_argument("--against", nargs="+", default=[],
+                   metavar="BUNDLE.json|PATH",
+                   help="the other half's bundle, or its paths with --with CMD")
+    p.add_argument("--with", dest="with_cmd", default=None, metavar="CMD",
+                   help="run CMD `bundle PATHS` for the half this one cannot probe")
     p.add_argument("--stdin", action="store_true",
                    help="read the function from stdin, before it is a file")
     p.add_argument("--name", default=None,

@@ -17,6 +17,44 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### `search --against`: the other language, for ONE function
+
+`sweep` needs a whole tree on both sides. `cross` needs the pair named. Neither answers
+the question somebody actually has at the keyboard — *I am about to write this one
+function; does the other language already have it?*
+
+```bash
+assay bundle js/src > js.json
+assay search src/format.py::humanize --against js.json         # one that exists
+assay search --stdin --against js.json < draft.py              # ...and one that does not yet
+assay search --stdin --in src/ --against js.json < draft.py    # both corpora, one run
+```
+
+**`--stdin` is the point of it.** *Search before you generate* cannot mean "first write
+the file", and the cross-language form is where that bites hardest: the duplication you
+are about to create is in a language your editor is not open in.
+
+**`--in` stopped being required, and `--against` joins it.** Either alone is a complete
+question; both together give both verdicts in one run, kept apart, because the native
+ladder is the stronger of the two and the answers are not interchangeable. Neither given
+is exit 2 rather than a clean `no findings` from a run that looked nowhere.
+
+**A query the shared ladder cannot tell apart is a `look`, never a `none`** — from the
+same `admit` that decides what goes into a bundle. A constant can only fail to match the
+other constants, because every constant was kept out of the bundle in the first place.
+
+**Stdin is read once.** `search` can now probe one snippet on two ladders, and a second
+`readStdin()` returns nothing — which would have reported an EMPTY snippet as though the
+caller had sent one: a verdict about code nobody wrote, printed under the name of code
+somebody did. There is a mutation and a parity test for that specifically.
+
+Nine mutations were added. Three existing anchors had to be repaired, and `assay
+anchors` is what found them: `search` grew its own copy of the same-language refusal, so
+`sweep`'s anchor stopped being unique in two files, and the `undiscriminated` guard moved
+into a new helper. The parity file's `flat()` normalizer now strips backticks as well as
+`"` and `'` — a template literal wrapped mid-sentence leaves one between two words, and
+without it a sentence both halves state identically compared unequal.
+
 ### `bundle` and `sweep`: the cross-language pair nobody named
 
 `assay cross` answered about two functions somebody already suspected. Nobody suspects

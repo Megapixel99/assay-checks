@@ -22,18 +22,22 @@ inputs:
       Paths for `scan`, `bundle` and `sweep`, the FILE::NAME references for `pair`,
       `search`, `why`, `probe` and `cross`, or — with `all` — the paths to fold the
       sameness half in over, which is what makes that run COMPLETE enough to call a
-      baseline line stale.
+      baseline line stale. With `search` the FIRST path is the FILE::NAME and the rest
+      become `--in`, because `search` needs a corpus and a bare positional directory is
+      not one — give `against` instead, or as well.
     required: false
     default: ''
   against:
     description: >-
-      For `sweep`: the OTHER half's `assay bundle` document, or its paths when `with`
-      is given. Required by `sweep` and ignored by everything else.
+      For `sweep` and `search`: the OTHER half's `assay bundle` document, or its paths
+      when `with` is given. `sweep` requires it; `search` takes it beside or instead of
+      `paths`, and needs one of the two. Ignored by everything else.
     required: false
     default: ''
   with:
     description: >-
-      For `sweep` and `cross`: the command that runs the OTHER half, e.g. `assay-js`.
+      For `sweep`, `search` and `cross`: the command that runs the OTHER half, e.g.
+      `assay-js`.
       Both packages install a binary called `assay`, so this is named rather than
       guessed — a half that guessed would run itself and compare a tree with itself.
     required: false
@@ -118,6 +122,15 @@ runs:
         if [ -n "${{ inputs.paths }}" ]; then
           if [ "${{ inputs.command }}" = "all" ]; then
             args+=(--scan ${{ inputs.paths }})
+          elif [ "${{ inputs.command }}" = "search" ]; then
+            # `search` TAKES A REFERENCE AND A CORPUS, and the corpus is a flag. Passing
+            # every path as a positional made `--in` unreachable from this action: the
+            # command needs one and the action could not give it, so the only invocation
+            # that parsed was one this input could not express. First path is the
+            # FILE::NAME, the rest are `--in`; `against` covers the other corpus.
+            read -r -a parts <<< "${{ inputs.paths }}"
+            args+=("${parts[0]}")
+            [ "${#parts[@]}" -gt 1 ] && args+=(--in "${parts[@]:1}")
           else
             args+=(${{ inputs.paths }})
           fi
