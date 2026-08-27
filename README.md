@@ -152,11 +152,13 @@ assay scan src/                                            # discover
 assay pair src/format.py::humanize src/report.py::pretty   # the declared route, one pair
 assay search src/format.py::humanize --in src/ lib/        # search before you generate
 assay why src/format.py::humanize                          # ...and if it was not probed, why
+assay why src/format.py::humanize --cross                  # ...and why it is in no bundle
 assay accept --reason "read them; merging needs the router change"   # accept what you have read
 assay cross src/format.py::humanize src/ui.mjs::pretty --with assay-js   # across the boundary
 assay sweep src/ --against js/src --with assay-js          # ...for whole trees, naming no pair
 assay bundle src/ > py.json                                # ...or hand the other half a bundle
 assay search --stdin --in src/ lib/ < draft.py             # ...before it is a file
+assay search --stdin --against js.json < draft.py          # ...and before it is a file, in the OTHER language
 assay why --stdin < draft.py                               # ...and whether it can be searched for at all
 
 # JavaScript: the same commands, and a reference is FILE::NAME in either language
@@ -340,6 +342,87 @@ calls a `look` — two answers to one question, and the weaker one on screen.
 
 A bundle of your own language is a `look`-shaped refusal pointing at `scan`, which
 compares one language's functions on its own fuller ladder.
+
+### ...and for ONE function, before you write it: `search --against`
+
+`sweep` needs a whole tree on both sides; `cross` needs the pair named. Neither answers
+the question you actually have at the keyboard — **I am about to write this one
+function; does the other language already have it?**
+
+```bash
+assay bundle js/src > js.json
+assay search src/format.py::humanize --against js.json    # a function that exists
+assay search --stdin --against js.json < draft.py         # ...and one that does not yet
+assay search --stdin --in src/ --against js.json < draft.py    # both corpora, one run
+```
+
+```
+finding  the javascript tree already answers <stdin>::loud: src/ui.mjs::yell
+         no input in the shared ladder told them apart — READ them before writing
+         a second one
+```
+
+**`--stdin` is the point of it.** *Search before you generate* cannot mean "first write
+the file", and the cross-language form is where that bites hardest: the duplication you
+are about to create is in a language your editor is not even open in. A `FILE::NAME`
+works too, for the function you already wrote and now suspect.
+
+**`--in` and `--against` are independent, and either alone is a complete question.**
+Give both and you get both verdicts in one run, kept apart — the native ladder is the
+stronger of the two, so the answers are not interchangeable and neither replaces the
+other. Give neither and it is exit 2 rather than a clean `no findings` from a run that
+looked nowhere.
+
+**A query the shared ladder cannot tell apart is a `look`, never a `none`** — the same
+rule the one-language `search` follows, from the same `admit` that fills the bundle. A
+constant can only fail to match the other constants, because every constant was kept
+out of the bundle in the first place; printing the clean result there would say *we
+found none* where the truth is *we never looked*, on the one path where the reader is
+about to write the function.
+
+### ...and when it does not cross, `why --cross` says which gate
+
+`sweep` prints `41 functions, 9 probed, 32 not probed`. That is the right shape for a
+tree and the wrong shape for a question: somebody who expected a *particular* function
+to cross cannot read `not discriminated by the ladder 8` and learn whether theirs is one
+of the eight.
+
+```bash
+assay why src/cache.py::entries --cross
+```
+
+```
+look     src/cache.py::entries — an outcome the interlingua cannot state
+         22 of 29 rungs answered with one, the first at [0] -> X:set — the
+         interlingua is JSON, so bytes, a set, a Date or a class instance
+         cannot be said in it
+```
+
+**A native `why` cannot answer this, and answering as though it could is the failure.**
+The very same function:
+
+```
+ok       src/cache.py::entries — probed on arity1/v3: 24 of 31 rungs answered,
+         24 distinct value(s)
+```
+
+Both are true. The native ladder probes it happily; the shared one cannot state a `set`
+at all. The two ladders hold different values and refuse different functions — a
+function the native ladder discriminates can be a *constant* on the shared one, because
+the shared one is the intersection of what the two languages can express. Reporting one
+verdict for the other question would be confident and wrong, with nothing on screen to
+say the two ladders had been asked different things.
+
+**The rung is named, not just counted.** `X:set` is a fact about *one input*, and a
+person with the function open can usually see immediately which of their return paths it
+is. A count alone sends them back to reading the whole thing, which is the work the
+answer was supposed to save.
+
+**A FILE-level refusal deliberately says nothing about which ladder was asked**, because
+it is the same answer for both: the module was never loaded, so no function in it was
+looked at on either.
+
+`--stdin` works here too, for the same reason it works on `search`.
 
 ---
 

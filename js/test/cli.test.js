@@ -63,7 +63,20 @@ async function cli(...argv) {
 
 async function cliStdin(input, ...argv) {
   let text = '';
-  const code = await run(argv, (s) => { text += s; }, () => input);
+  // SINGLE-SHOT, BECAUSE THE REAL ONE IS. `readStdin` defaults to `readFileSync(0)`,
+  // and a second call on an exhausted stream returns ''. A stub that handed the same
+  // text back every time could not tell a command that reads stdin ONCE from one that
+  // reads it per probe — and `search` now probes the same snippet on two ladders, so
+  // the difference is the whole guard. A mutation that put `readStdin()` back inside
+  // the second probe came back NOT DETECTED against the old stub: the fixture was
+  // wrong, not the code.
+  let drained = false;
+  const readStdin = () => {
+    if (drained) return '';
+    drained = true;
+    return input;
+  };
+  const code = await run(argv, (s) => { text += s; }, readStdin);
   return { code, text };
 }
 
@@ -1425,4 +1438,226 @@ test('sweep checks BOTH schemas of a bundle it ran itself', async () => {
     '--against', 'other/src', '--with', `${process.execPath} ${far}`);
   assert.equal(code, 2, text);
   assert.match(text, /records of schema/);
+});
+
+// --------------------------------------------------------------------------- //
+// search --against — the OTHER language, for ONE function
+//
+// `sweep` needs a whole tree on both sides and `cross` needs the pair named. Neither
+// answers the question somebody actually has at the keyboard — *I am about to write
+// this one function; does the other language already have it?* — and that question is
+// the one worth answering before the file exists.
+// --------------------------------------------------------------------------- //
+
+test('search --against finds what the OTHER language already has', async () => {
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { code, text } = await cli('search', `${path.join(root, 'm.js')}::shout`,
+    '--against', against);
+  assert.equal(code, 1, text);
+  assert.match(text, /the python tree already answers/);
+  assert.match(text, /shout/);
+});
+
+test('search --against answers about a function that is NOT A FILE YET', async () => {
+  // SEARCH BEFORE YOU GENERATE cannot mean "first write the file", and the
+  // cross-language form is where that matters most: the duplication you are about to
+  // create is in a language your editor is not open in.
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+  const draft = "export function loud(s) {\n"
+    + "  if (typeof s !== 'string') throw new TypeError('str');\n"
+    + "  return s.toUpperCase() + '!';\n}\n";
+  const { code, text } = await cliStdin(draft, 'search', '--stdin',
+    '--against', against);
+  assert.equal(code, 1, text);
+  assert.match(text, /<stdin>::loud/);
+  assert.match(text, /the python tree already answers/);
+});
+
+test('search asks BOTH corpora when given both', async () => {
+  // Two corpora, two verdicts, one run. The native ladder is the stronger of the two,
+  // so the answers are not interchangeable and neither replaces the other.
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+  const root = tree({ 'm.js': `${CROSS_TWINS}\n${TWINS}` });
+  const { code, text } = await cli('search', `${path.join(root, 'm.js')}::a`,
+    '--in', root, '--against', against);
+  assert.equal(code, 1, text);
+  assert.match(text, /the tree already answers/);   // the native half ran
+  assert.match(text, /\[python\]/);                 // ...and the far one
+});
+
+test('a query the SHARED ladder cannot tell apart is a LOOK, not a none', async () => {
+  // The quiet failure: a constant has a vector, the matching runs, and it matches
+  // nothing — because every constant was excluded from the bundle. `same none` there
+  // says "we found none" where the truth is "we never looked", on the path where the
+  // reader is about to write the function.
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+  const root = tree({ 'm.js': 'export function k(n) { return 7; }\n' });
+  const { code, text } = await cli('search', `${path.join(root, 'm.js')}::k`,
+    '--against', against);
+  assert.equal(code, 0, text);
+  assert.match(text, /SHARED ladder/);
+  assert.match(text, /a match was never possible/);
+  assert.doesNotMatch(text, /same {3}none across languages/);
+});
+
+test('search --against prints the OTHER half\'s census', async () => {
+  const against = await otherBundle({
+    'm.js': 'export function r(n) { return Math.random() + n; }\n',
+  });
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { code, text } = await cli('search', `${path.join(root, 'm.js')}::shout`,
+    '--against', against);
+  assert.equal(code, 0, text);
+  assert.match(text, /\[python\] 1 functions, 0 probed, 1 not probed/);
+});
+
+test('NEITHER --in nor --against is an ERROR rather than an empty search', async () => {
+  // A search with no corpus would print `no findings` for a question nobody asked of
+  // anything — the clean result, from a run that looked nowhere.
+  const { code, text } = await cli('search', 'm.js::f');
+  assert.equal(code, 2);
+  assert.match(text, /--in DIR or --against BUNDLE/);
+});
+
+test('search --against REFUSES a bundle of its own language', async () => {
+  const { document } = await bundleOf(tree({ 'm.js': CROSS_TWINS }));
+  const file = path.join(tree({}), 'same.json');
+  writeFileSync(file, JSON.stringify(document), 'utf8');
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { code, text } = await cli('search', `${path.join(root, 'm.js')}::shout`,
+    '--against', file);
+  assert.equal(code, 2);
+  assert.match(text, /`--in`/);
+});
+
+test('a BROKEN far side is reported before anything is PROBED', async () => {
+  // Exit 2 for a bundle this half cannot read, rather than after a tree of subprocesses
+  // have run and buried the reason under a census nobody wanted.
+  const file = path.join(tree({}), 'broken.json');
+  writeFileSync(file, '{not json', 'utf8');
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const { code, text } = await cli('search', `${path.join(root, 'm.js')}::shout`,
+    '--in', root, '--against', file);
+  assert.equal(code, 2);
+  assert.match(text, /assay bundle/);
+  assert.doesNotMatch(text, /functions,/);   // the census never ran
+});
+
+test('a --stdin search asks BOTH corpora about the SAME snippet', async () => {
+  // Stdin cannot be read twice. `search` probes one snippet on two ladders, and a
+  // second `readStdin()` returns nothing — so the cross half would report an EMPTY
+  // snippet as though the caller had sent one: a verdict about code nobody wrote,
+  // printed under the name of code somebody did.
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+  const root = tree({ 'm.js': CROSS_TWINS });
+  const draft = "export function loud(s) {\n"
+    + "  if (typeof s !== 'string') throw new TypeError('str');\n"
+    + "  return s.toUpperCase() + '!';\n}\n";
+  const { code, text } = await cliStdin(draft, 'search', '--stdin',
+    '--in', root, '--against', against);
+  assert.equal(code, 1, text);
+  // BOTH halves answered about the snippet, and neither about an empty one.
+  assert.match(text, /the tree already answers <stdin>::loud/);
+  assert.match(text, /the python tree already answers <stdin>::loud/);
+});
+
+// --------------------------------------------------------------------------- //
+// why --cross — why is this function in no bundle?
+//
+// `sweep` prints `50 functions, 0 probed, 50 not probed`, which is the right shape for
+// a tree and the wrong shape for a question. Somebody who expected a PARTICULAR
+// function to cross cannot read `not discriminated by the ladder 8` and learn whether
+// theirs is one of the eight.
+// --------------------------------------------------------------------------- //
+
+// Probed happily on the NATIVE ladder and unable to cross at all: a Map is 29 distinct
+// returned values to `assay why` and `X:Map` on every rung to the interlingua. It is
+// the fixture the whole flag exists for — a native answer to a cross question is
+// confident and wrong.
+const UNCROSSABLE = "export function held(x) { return new Map([['k', x]]); }\n";
+
+async function whyCross(body, name, ...extra) {
+  const root = tree({ 'm.js': body });
+  return cli('why', `${path.join(root, 'm.js')}::${name}`, ...extra);
+}
+
+test('a function that CROSSES is an ok naming the shared ladder', async () => {
+  const { code, text } = await whyCross(CROSS_TWINS, 'shout', '--cross');
+  assert.equal(code, 0, text);
+  assert.match(text, /probed on cross1\//);
+  assert.match(text, /rungs answered/);
+});
+
+test('an outcome the INTERLINGUA CANNOT STATE is named with its RUNG', async () => {
+  // It is a fact about ONE input, and a person can usually see immediately which of
+  // their return paths it is.
+  const { code, text } = await whyCross(UNCROSSABLE, 'held', '--cross');
+  assert.equal(code, 0, text);
+  assert.match(text, /an outcome the interlingua cannot state/);
+  assert.match(text, /X:Map/);
+  assert.match(text, /the first at/);
+});
+
+test('the NATIVE answer for that function is a clean ok', async () => {
+  // THE ARGUMENT FOR THE FLAG, as a test rather than as a comment. The native ladder
+  // probes this function happily; answering a cross question with that verdict would
+  // be confident and wrong, and there would be nothing on screen to say the two
+  // ladders had been asked different things.
+  const { code, text } = await whyCross(UNCROSSABLE, 'held');
+  assert.equal(code, 0, text);
+  assert.match(text, /probed on arity1\//);
+  assert.doesNotMatch(text, /interlingua/);
+});
+
+test('a constant is NOT discriminated by the SHARED ladder', async () => {
+  const { code, text } = await whyCross('export function k(n) { return 7; }\n', 'k',
+    '--cross');
+  assert.equal(code, 0, text);
+  assert.match(text, /not discriminated by the SHARED ladder/);
+  assert.match(text, /as far as this ladder can see it is a constant/);
+  assert.match(text, /intersection/);
+});
+
+test('a function refused BEFORE the ladder says so of the bundle', async () => {
+  // A FUNCTION-level refusal, not a file-level one. `Math.random()` refuses the whole
+  // FILE here, and that answer is genuinely ladder-independent — the module was never
+  // loaded, so neither ladder ever saw it — which is why that path says nothing about
+  // the shared ladder and should not.
+  const { code, text } = await whyCross(
+    'export function meth(x) { return this.scale * x; }\n', 'meth', '--cross',
+  );
+  assert.equal(code, 0, text);
+  assert.match(text, /SHARED ladder/);
+  assert.match(text, /in no bundle/);
+});
+
+test('a FILE-level refusal says nothing about which ladder was asked', async () => {
+  // Because it is the same answer for both. The module was never loaded, so no
+  // function in it was looked at on either ladder, and dressing that up as a cross
+  // verdict would claim the shared ladder had been consulted when nothing was.
+  const { code, text } = await whyCross(
+    'export function r(n) { return Math.random() + n; }\n', 'r', '--cross',
+  );
+  assert.equal(code, 0, text);
+  assert.match(text, /the FILE was refused/);
+  assert.doesNotMatch(text, /SHARED ladder/);
+});
+
+test('why --cross takes a SNIPPET too, because the question precedes the file', async () => {
+  const { code, text } = await cliStdin(UNCROSSABLE, 'why', '--stdin', '--cross');
+  assert.equal(code, 0, text);
+  assert.match(text, /<stdin>::held/);
+  assert.match(text, /an outcome the interlingua cannot state/);
+});
+
+test('a look from why --cross NEVER fails the run', async () => {
+  // `look` never affects the exit code. That is the whole reason it exists as a
+  // separate verdict.
+  for (const [body, name] of [[UNCROSSABLE, 'held'],
+    ['export function k(n) { return 7; }\n', 'k']]) {
+    // eslint-disable-next-line no-await-in-loop
+    const { code } = await whyCross(body, name, '--cross');
+    assert.equal(code, 0);
+  }
 });

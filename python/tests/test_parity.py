@@ -51,8 +51,14 @@ def flat(text):
     Python across adjacent literals, JavaScript across `+`. Comparing the raw text
     would fail on a line break, which teaches whoever hits it to delete the check
     rather than to fix the drift it exists to catch.
+
+    ALL THREE JAVASCRIPT STRING DELIMITERS, and the backtick is the one that matters:
+    a template literal wrapped mid-sentence leaves a backtick between two words, so a
+    normalizer that dropped only `"` and `'` failed on a sentence the two halves state
+    identically. The prose in these messages spells `scan` and `--in` with backticks
+    too, and they come out of the needle and the haystack alike.
     """
-    return re.sub(r"""[\s"'+]+""", "", text)
+    return re.sub(r"""[\s"'`+]+""", "", text)
 
 
 def py(name):
@@ -475,14 +481,33 @@ class TheTwoHalvesAgree(unittest.TestCase):
             self.assertIn(phrase, js("sameness.js"))
 
     def test_both_halves_DEDUCE_the_projection_rather_than_deciding_it_twice(self):
-        """`discrimination_detail` defers to `discriminating` and then explains the
+        """`discrimination_detail` defers to the discriminator and then explains the
         no. A second call to the projection guard would be a second decider for one
         question, and two deciders that can disagree is the shape of defect this
-        package exists to report — so neither half may call it."""
-        self.assertIn("if discriminating(vector, inputs) is not None:",
-                      py("sameness.py"))
-        self.assertIn("if (discriminating(vector, inputs) !== null) return null;",
-                      js("sameness.js"))
+        package exists to report — so NEITHER HALF MAY CALL IT.
+
+        The deduction is what lets ONE explainer serve BOTH ladders: it needs no table
+        of vacuous shapes, and a table is precisely what would have had to be
+        duplicated for the cross ladder. So the check is that the projection guard is
+        never named inside the explainer, in either half — stronger than pinning the
+        line that dispatches, and it survives the dispatch being written two ways.
+        """
+        for source, explainer, ends, guard, cross in (
+                (py("sameness.py"), "def discrimination_detail(", "\ndef ",
+                 "is_projection(", "cross_discriminating"),
+                (js("sameness.js"), "export function discriminationDetail(",
+                 "\nexport ", "isProjection(", "crossDiscriminating")):
+            start = source.index(explainer)
+            body = source[start:source.index(ends, start + 1)]
+            # The projection guard is never NAMED in the explainer, in either half.
+            # That is stronger than pinning the line that dispatches, and it survives
+            # the dispatch being spelled two different ways.
+            self.assertNotIn(guard, body)
+            # One decider, chosen once, and it is the cross one that made the choice
+            # necessary — the same choice `admit` makes, so a function cannot be
+            # admitted to a bundle by one rule and explained by another.
+            self.assertIn("decide(vector, inputs)", body)
+            self.assertIn(cross, body)
 
     def test_a_LOOK_prints_its_detail_in_both_halves(self):
         """A `look` says the tool cannot decide; the detail is where it says what it
@@ -530,9 +555,62 @@ class TheTwoHalvesAgree(unittest.TestCase):
         # must agree is the duplication this package exists to report.
         for command in (cmd_why, cmd_search):
             self.assertIn("_query(args, out)", inspect.getsource(command))
-        self.assertEqual(js("cli.js").count("await probeStdin(readStdin(), opts.name)"),
-                         2)
         self.assertEqual(js("cli.js").count("const bad = queryFlags(opts);"), 2)
+        # STDIN IS READ ONCE PER RUN IN BOTH HALVES, and `search` is where that stopped
+        # being free. It can now ask two corpora about one function — this language's
+        # tree and the other's bundle — which means two probes of the same snippet. A
+        # second `readStdin()` returns nothing, so the cross half would report an EMPTY
+        # snippet as though the caller had sent one: a `look` about code nobody wrote.
+        # Python gets this from `_query`, which reads once and hands back a Func both
+        # halves reuse; JavaScript has to say so, because its two probes are two calls.
+        source = js("cli.js")
+        self.assertEqual(source.count("readStdin()"), 2)      # `why`, and `search` once
+        self.assertIn("const text = opts.stdin ? readStdin() : null;", source)
+        self.assertIn("probeStdin(text, opts.name, cross)", source)
+
+    def test_both_halves_ask_ONE_corpus_or_the_OTHER_or_BOTH(self):
+        """`search` grew a second corpus, and `--in` stopped being required. A half
+        that still demanded `--in` would refuse the documented cross-language
+        invocation while the other answered it."""
+        from assay.cli import build_parser                     # noqa: PLC0415
+
+        args = build_parser().parse_args(["search", "m.py::f", "--against", "b.json"])
+        self.assertEqual(args.into, [])
+        self.assertEqual(args.against, ["b.json"])
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn(flat("search needs --in DIR or --against BUNDLE"),
+                          flat(source))
+
+    def test_both_halves_REFUSE_a_cross_SEARCH_the_shared_ladder_cannot_answer(self):
+        """The quiet one. A constant has a vector, the matching runs, and it matches
+        nothing — because `admit` kept every constant out of the bundle. Printing the
+        clean `none` there reports "we never looked" as "we found none", on the path
+        where the reader is about to write the function."""
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn(flat("on the SHARED ladder"), flat(source))
+            self.assertIn(flat("tree was not searched: a match was never possible"),
+                          flat(source))
+
+    def test_both_halves_ask_WHY_of_the_SHARED_ladder_too(self):
+        """`sweep` counts what it never probed and `why --cross` is the only thing
+        that can say whether YOUR function is one of them. A half without the flag
+        answers the documented invocation with an argparse error while the other
+        answers the question."""
+        from assay.cli import build_parser                     # noqa: PLC0415
+
+        self.assertTrue(build_parser().parse_args(["why", "m.py::f", "--cross"]).cross)
+        self.assertIn("--cross", js("cli.js"))
+        self.assertIn("opts.cross = true", js("cli.js"))
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn(flat("not discriminated by the SHARED ladder"), flat(source))
+            self.assertIn(flat("in no bundle and can cross with nothing"), flat(source))
+
+    def test_both_halves_name_the_RUNG_that_could_not_be_STATED(self):
+        """It is a fact about ONE input, and a person can usually see immediately
+        which of their return paths it is. A count alone sends them back to reading
+        the whole function, which is the work the answer was supposed to save."""
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn(flat("rungs answered with one, the first at"), flat(source))
 
     def test_both_halves_ship_the_same_SUBCOMMANDS(self):
         """A command in one half and not the other means the same documented

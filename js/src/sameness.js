@@ -1569,8 +1569,17 @@ export function discriminating(vector, inputs = null) {
  * two tables that must agree is the exact duplication this package exists to report.
  * The shape is named; the index is left to the reader, who has the function open.
  */
-export function discriminationDetail(vector, inputs) {
-  if (discriminating(vector, inputs) !== null) return null;
+export function discriminationDetail(vector, inputs, mode = 'native') {
+  // `mode === 'cross'` asks the same question of the SHARED ladder, and it is the same
+  // three answers because the two vocabularies agree on the two things this reads: a
+  // throw is `E:` on both sides, and a returned value is anything else. What changes is
+  // the DECIDER — `crossDiscriminating` and the interlingua's own projections — and it
+  // changes in one place, because the whole point of the last branch below is that it
+  // deduces rather than re-decides. A second copy for the cross ladder would be a
+  // second decider, and two deciders that can disagree is the shape of defect this
+  // package exists to report.
+  const decide = mode === 'cross' ? crossDiscriminating : discriminating;
+  if (decide(vector, inputs) !== null) return null;
   const answered = vector.filter((o) => o.slice(0, 2) !== 'E:');
   if (!answered.length) {
     return `it threw on all ${vector.length} rungs — the ladder reached its type `

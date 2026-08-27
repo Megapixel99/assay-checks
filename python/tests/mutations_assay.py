@@ -521,7 +521,7 @@ MUTATIONS = [
                 "never its behaviour" % len(vector))'''),
     ("sameness: `why` explains a function the ladder DID discriminate",
      "sameness.py",
-     '''    if discriminating(vector, inputs) is not None:
+     '''    if decide(vector, inputs) is not None:
         return None''',
      '''    if False:
         return None'''),
@@ -929,8 +929,14 @@ MUTATIONS = [
                                                                     document["error"])'''),
     ("cli: `sweep` answers the weaker question for two trees of ONE language",
      "cli.py",
-     '''    if document.get("language") == "python":''',
-     '''    if False:'''),
+     '''    if document.get("language") == "python":
+        return _fail(args, out,
+                     "--against is a python bundle and this is the python half — "
+                     "`scan` compares''',
+     '''    if False:
+        return _fail(args, out,
+                     "--against is a python bundle and this is the python half — "
+                     "`scan` compares'''),
     # The far side is where a silence costs the most: `same none` printed while the
     # other binary's refusals go unmentioned is "we never looked" reported as "we found
     # none", across a boundary the reader has no way to check.
@@ -980,8 +986,12 @@ MUTATIONS = [
   }'''),
     ("cli.js: `sweep` answers the weaker question for two trees of ONE language",
      "cli.js",
-     '''      if (document.language === 'javascript') {''',
-     '''      if (false) {'''),
+     '''      if (document.language === 'javascript') {
+        return fail(opts, write,
+          '--against is a javascript bundle and this is the javascript half — `scan`''',
+     '''      if (false) {
+        return fail(opts, write,
+          '--against is a javascript bundle and this is the javascript half — `scan`'''),
     ("cli.js: the OTHER half's census is not printed, so its refusals vanish",
      "cli.js",
      '''      if (document.census) reportCensus(document.census, report, `[${theirs}]`);''',
@@ -1002,6 +1012,110 @@ MUTATIONS = [
      '''  if (false) {
     return {
       unresolved: `--with '${withCmd}' wrote records of schema ${document.assay_probe} `'''),
+    # ---- `search --against`: the OTHER language, for ONE function ----------- #
+    #
+    # The quiet failure on this path is the expensive one: the person reading it is
+    # about to write the function. A constant HAS a vector, the matching runs, and it
+    # matches nothing — because `admit` kept every constant out of the bundle. Printing
+    # the clean `none` there reports "we never looked" as "we found none".
+    ("cli: a cross `search` the shared ladder cannot answer prints a clean `none`",
+     "cli.py",
+     '''    key, refused = admit(vector, len(query.params), "cross")
+    if key is None:''',
+     '''    key, refused = admit(vector, len(query.params), "cross")
+    if False:'''),
+    ("cli: a cross `search` reads the far bundle on the NATIVE ladder",
+     "cli.py",
+     '''    vector, why = probe(query, mode="cross")''',
+     '''    vector, why = probe(query, mode="native")'''),
+    ("cli: `search` with no corpus at all reports a clean run that looked nowhere",
+     "cli.py",
+     '''    if not args.into and not args.against:
+        return _fail(args, out, "search needs --in DIR or --against BUNDLE")''',
+     '''    if False:
+        return _fail(args, out, "search needs --in DIR or --against BUNDLE")'''),
+    ("cli: a cross `search` stops printing the far half's census",
+     "cli.py",
+     '''    if document.get("census"):
+        report_census(document["census"], report, label="[%s]" % language)''',
+     '''    if False:
+        report_census(document["census"], report, label="[%s]" % language)'''),
+    ("cli.js: a cross `search` the shared ladder cannot answer prints a clean `none`",
+     "cli.js",
+     '''  const admitted = admit(entry.vector, entry.arity, true);
+  if (admitted.key === undefined) {''',
+     '''  const admitted = admit(entry.vector, entry.arity, true);
+  if (false) {'''),
+    ("cli.js: a cross `search` reads the far bundle on the NATIVE ladder",
+     "cli.js",
+     '''        : probeRef(opts.positional[0], cross));''',
+     '''        : probeRef(opts.positional[0], false));'''),
+    ("cli.js: `search` with no corpus at all reports a run that looked nowhere",
+     "cli.js",
+     '''      if (!opts.into.length && !opts.against.length) {
+        return fail(opts, write, 'search needs --in DIR or --against BUNDLE');
+      }''',
+     '''      if (false) {
+        return fail(opts, write, 'search needs --in DIR or --against BUNDLE');
+      }'''),
+    ("cli.js: a cross `search` stops printing the far half's census",
+     "cli.js",
+     '''  if (document.census) reportCensus(document.census, report, `[${language}]`);''',
+     '''  if (false) reportCensus(document.census, report, `[${language}]`);'''),
+    # STDIN CANNOT BE READ TWICE. `search` now probes the same snippet on two ladders,
+    # and a second `readStdin()` returns nothing — so the cross half would report an
+    # EMPTY snippet as though the caller had sent one: a verdict about code nobody
+    # wrote, printed under the name of code somebody did.
+    ("cli.js: `search` reads stdin again for its second probe",
+     "cli.js",
+     '''        ? probeStdin(text, opts.name, cross)''',
+     '''        ? probeStdin(readStdin(), opts.name, cross)'''),
+    # ---- `why --cross`: why is this function in NO BUNDLE? ------------------ #
+    #
+    # The native ladder probes a function returning a set happily — 24 distinct values
+    # — and the interlingua cannot state one of them. Answering a cross question with
+    # the native verdict is confident and wrong, and nothing on screen would say the
+    # two ladders had been asked different things.
+    ("cli: `why --cross` explains the NATIVE ladder while claiming the shared one",
+     "cli.py",
+     '''    vector, refused = probe(func, mode="cross")
+    if vector is None:
+        report.look''',
+     '''    vector, refused = probe(func, mode="native")
+    if vector is None:
+        report.look'''),
+    ("cli: `why --cross` stops naming the outcome the interlingua cannot state",
+     "cli.py",
+     '''    unstateable = [i for i, o in enumerate(vector) if o.startswith("X:")]
+    if unstateable:''',
+     '''    unstateable = [i for i, o in enumerate(vector) if o.startswith("X:")]
+    if False:'''),
+    # NO PYTHON ENTRY SWAPS THE EXPLAINER'S DECIDER, and the reason is a fact about the
+    # two ladders rather than an oversight. The native projection table parses its rungs
+    # as SOURCE (`ast.literal_eval`) and the cross ladder carries VALUES, so handing one
+    # to the other's guard raises `ValueError` inside the tool. A crash is LOUD, and
+    # this file's rule is that a mutation must make a guard silently permissive or
+    # silently strict — three entries were reshaped for exactly this, and a fourth that
+    # cannot be reshaped does not belong. The mistake is unmakeable in Python without
+    # something noticing, which is the strongest form of the guard and the reason there
+    # is nothing here to break. JavaScript has no such barrier — both ladders are plain
+    # arrays there — so its counterpart below IS silent, and IS in the table.
+    ("cli.js: `why --cross` explains the NATIVE ladder while claiming the shared one",
+     "cli.js",
+     '''  const result = await probeFile(file, undefined, source, cross);''',
+     '''  const result = await probeFile(file, undefined, source, false);'''),
+    ("cli.js: `why --cross` stops naming the outcome the interlingua cannot state",
+     "cli.js",
+     '''  if (unstateable.length) {''',
+     '''  if (false) {'''),
+    ("cli.js: `why --cross` explains discrimination with the NATIVE decider",
+     "cli.js",
+     '''  const detail = discriminationDetail(entry.vector, rungs, 'cross');''',
+     '''  const detail = discriminationDetail(entry.vector, rungs, 'native');'''),
+    ("sameness.js: the cross explainer re-decides with the NATIVE discriminator",
+     "sameness.js",
+     '''  const decide = mode === 'cross' ? crossDiscriminating : discriminating;''',
+     '''  const decide = discriminating;'''),
     ("cli.js: a bundle that could not be built exits 0",
      "cli.js",
      '''          ...envelope, records: [], census: null, error: 'bundle needs a path',
@@ -1056,8 +1170,10 @@ MUTATIONS += [
     ("js cli: `search` calls a query the ladder cannot discriminate a clean `none` "
      "(a shipped defect)",
      "cli.js",
-     """      if (undiscriminated(report, entry, ref)) {""",
-     """      if (false) {"""),
+     """  if (undiscriminated(report, entry, ref)) {
+    report.note('       the tree was not searched: the census excludes every '""",
+     """  if (false) {
+    report.note('       the tree was not searched: the census excludes every '"""),
     ("js cli: the ladder's own refusal prints as an `ok`, so nothing says the tool "
      "could not decide",
      "cli.js",
@@ -1224,7 +1340,7 @@ MUTATIONS += [
   }"""),
     ("js sameness: `why` explains a function the ladder DID discriminate",
      "sameness.js",
-     """  if (discriminating(vector, inputs) !== null) return null;""",
+     """  if (decide(vector, inputs) !== null) return null;""",
      """  if (false) return null;"""),
     ("js cli: `why` stops answering at the FILE level for a refused file",
      "cli.js",

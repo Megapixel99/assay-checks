@@ -1027,8 +1027,17 @@ def resolve_why(ref):
     return func, None
 
 
-def discrimination_detail(vector, inputs):
+def discrimination_detail(vector, inputs, mode="native"):
     """Why this ladder did not tell this function apart, or None if it did.
+
+    `mode="cross"` asks the same question of the SHARED ladder, and it is the same
+    three answers because the two vocabularies agree on the two things this reads: a
+    raise is `E:` on both sides, and a returned value is anything else. What changes is
+    the DECIDER — `cross_discriminating` and the interlingua's own projections — and
+    it changes in one place, because the whole point of the last branch below is that
+    it deduces rather than re-decides. A second copy for the cross ladder would be a
+    second decider, and two deciders that can disagree is the shape of defect this
+    package exists to report.
 
     `discriminating()` answers yes or no, because yes or no is all a scan needs: the
     census counts one reason and moves on. Somebody who expected a PARTICULAR function
@@ -1040,7 +1049,8 @@ def discrimination_detail(vector, inputs):
     two tables that must agree is the exact duplication this package exists to report.
     The shape is named; the index is left to the reader, who has the function open.
     """
-    if discriminating(vector, inputs) is not None:
+    decide = cross_discriminating if mode == "cross" else discriminating
+    if decide(vector, inputs) is not None:
         return None
     answered = [o for o in vector if o[:2] != "E:"]
     if not answered:
@@ -1051,11 +1061,12 @@ def discrimination_detail(vector, inputs):
         return ("%d distinct returned value across the %d rungs that answered, and %d "
                 "is the minimum — as far as this ladder can see it is a constant"
                 % (seen, len(answered), MIN_DISTINCT))
-    # THE LAST BRANCH IS DEDUCED, not re-decided. `discriminating` already said no and
-    # the two counting branches above did not explain it, so the projection guard is
-    # what refused this vector. Asking `is_projection` again would be a SECOND decider
-    # for one question, and two deciders that can disagree is the shape of defect this
-    # package exists to report.
+    # THE LAST BRANCH IS DEDUCED, not re-decided. The decider already said no and the
+    # two counting branches above did not explain it, so the projection guard is what
+    # refused this vector. Asking `is_projection` again would be a SECOND decider for
+    # one question, and two deciders that can disagree is the shape of defect this
+    # package exists to report. It is also what lets ONE function serve both ladders:
+    # deducing needs no table, and a table is what would have had to be duplicated.
     return ("a projection: everywhere it answered it did nothing with its "
             "arguments — handed one back, or copied one through")
 
