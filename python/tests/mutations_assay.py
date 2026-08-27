@@ -889,6 +889,125 @@ MUTATIONS = [
      '''    except ConfigError:
         from .config import Config
         config = Config()'''),
+    # ---- the tree-wide cross question: `bundle` and `sweep` ------------------ #
+    #
+    # `sweep` buckets by vector equality, which is a legitimate comparison ONLY
+    # because `admit` refused everything `compare_cross` refuses. Break either guard
+    # and the tree-wide command prints a FINDING for a pair the pairwise command
+    # calls a `look` — two answers to one question, and the weaker one on screen.
+    ("sameness: an outcome the interlingua cannot state is bucketed anyway",
+     "sameness.py",
+     '''        if any(o.startswith("X:") for o in vector):
+            return None, UNSTATEABLE''',
+     '''        if False:
+            return None, UNSTATEABLE'''),
+    ("sameness: a vector no cross rung told apart from a constant is bucketed anyway",
+     "sameness.py",
+     '''        if cross_discriminating(vector, cross_ladder(arity)) is None:
+            return None, "not discriminated by the ladder"''',
+     '''        if False:
+            return None, "not discriminated by the ladder"'''),
+    # A bundle built on the NATIVE ladder still carries CROSS ladder keys, so every
+    # record matches the other half's key while meaning something else entirely — the
+    # mismatched-ladder comparison the key exists to refuse, arriving inside the
+    # artefact that carries the key.
+    ("sameness: a cross collect walks the NATIVE ladder and labels it cross",
+     "sameness.py",
+     '''            vector, why = probe(func, python, mode=mode)''',
+     '''            vector, why = probe(func, python, mode="native")'''),
+    ("cli: a bundle from another schema is compared anyway",
+     "cli.py",
+     '''    if document["assay_bundle"] != BUNDLE_SCHEMA:''',
+     '''    if False:'''),
+    ("cli: a bundle that could not be BUILT reads as a tree with nothing in it",
+     "cli.py",
+     '''    if document.get("error"):
+        return None, "%s is a bundle that could not be built: %s" % (path,
+                                                                    document["error"])''',
+     '''    if False:
+        return None, "%s is a bundle that could not be built: %s" % (path,
+                                                                    document["error"])'''),
+    ("cli: `sweep` answers the weaker question for two trees of ONE language",
+     "cli.py",
+     '''    if document.get("language") == "python":''',
+     '''    if False:'''),
+    # The far side is where a silence costs the most: `same none` printed while the
+    # other binary's refusals go unmentioned is "we never looked" reported as "we found
+    # none", across a boundary the reader has no way to check.
+    ("cli: the OTHER half's census is not printed, so its refusals vanish",
+     "cli.py",
+     '''    if document.get("census"):
+        report_census(document["census"], report, label="[%s]" % theirs)''',
+     '''    if False:
+        report_census(document["census"], report, label="[%s]" % theirs)'''),
+    ("cli: a bundle that could not be built exits 0",
+     "cli.py",
+     '''                    "error": "bundle needs a path"}
+        code = 2''',
+     '''                    "error": "bundle needs a path"}
+        code = 0'''),
+    ("sameness.js: an outcome the interlingua cannot state is bucketed anyway",
+     "sameness.js",
+     '''    if (vector.some((o) => o.startsWith('X:'))) return { why: UNSTATEABLE };''',
+     '''    if (false) return { why: UNSTATEABLE };'''),
+    ("sameness.js: a vector no cross rung told apart from a constant is bucketed anyway",
+     "sameness.js",
+     '''    if (crossDiscriminating(vector, crossLadder(arity)) === null) {
+      return { why: 'not discriminated by the ladder' };
+    }''',
+     '''    if (false) {
+      return { why: 'not discriminated by the ladder' };
+    }'''),
+    ("sameness.js: a cross collect walks the NATIVE ladder and labels it cross",
+     "sameness.js",
+     '''    const result = await probeFile(file, PROBE_TIMEOUT_MS, source, cross);''',
+     '''    const result = await probeFile(file, PROBE_TIMEOUT_MS, source, false);'''),
+    ("cli.js: a bundle from another schema is compared anyway",
+     "cli.js",
+     '''  if (document.assay_bundle !== BUNDLE_SCHEMA) {
+    return {
+      unresolved: `${file} was written by bundle schema ${document.assay_bundle} and `''',
+     '''  if (false) {
+    return {
+      unresolved: `${file} was written by bundle schema ${document.assay_bundle} and `'''),
+    ("cli.js: a bundle that could not be BUILT reads as a tree with nothing in it",
+     "cli.js",
+     '''  if (document.error) {
+    return { unresolved: `${file} is a bundle that could not be built: ${document.error}` };
+  }''',
+     '''  if (false) {
+    return { unresolved: `${file} is a bundle that could not be built: ${document.error}` };
+  }'''),
+    ("cli.js: `sweep` answers the weaker question for two trees of ONE language",
+     "cli.js",
+     '''      if (document.language === 'javascript') {''',
+     '''      if (false) {'''),
+    ("cli.js: the OTHER half's census is not printed, so its refusals vanish",
+     "cli.js",
+     '''      if (document.census) reportCensus(document.census, report, `[${theirs}]`);''',
+     '''      if (false) reportCensus(document.census, report, `[${theirs}]`);'''),
+    ("cli: a bundle built by --with is trusted on the RECORD schema",
+     "cli.py",
+     '''    if document.get("assay_probe") != PROBE_SCHEMA:
+        return None, ("--with %r wrote records of schema %r and this is schema %d"
+                      % (with_cmd, document.get("assay_probe"), PROBE_SCHEMA))''',
+     '''    if False:
+        return None, ("--with %r wrote records of schema %r and this is schema %d"
+                      % (with_cmd, document.get("assay_probe"), PROBE_SCHEMA))'''),
+    ("cli.js: a bundle built by --with is trusted on the RECORD schema",
+     "cli.js",
+     '''  if (document.assay_probe !== PROBE_SCHEMA) {
+    return {
+      unresolved: `--with '${withCmd}' wrote records of schema ${document.assay_probe} `''',
+     '''  if (false) {
+    return {
+      unresolved: `--with '${withCmd}' wrote records of schema ${document.assay_probe} `'''),
+    ("cli.js: a bundle that could not be built exits 0",
+     "cli.js",
+     '''          ...envelope, records: [], census: null, error: 'bundle needs a path',
+        }, 2);''',
+     '''          ...envelope, records: [], census: null, error: 'bundle needs a path',
+        }, 0);'''),
 ]
 
 

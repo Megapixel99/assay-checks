@@ -66,6 +66,12 @@ export class Report {
     // Set by whoever applied the baseline, because that is the only place that knows
     // whether the run was COMPLETE enough to call a line stale.
     this.baseline = null;
+    // THE OTHER HALF'S CENSUS, when a command compared this tree against one the other
+    // binary probed. It is kept apart from `scan` because it is a different population
+    // measured by a different process: merging the two would print one number for two
+    // trees and let a far side that probed nothing disappear into a near side that
+    // probed plenty.
+    this.other = null;
   }
 
   add(verdict, message, where = null, detail = null) {
@@ -145,6 +151,7 @@ export function renderJson(report, write, meta = {}, error = null) {
     notes: [...built.sections],
     baseline: built.baseline,
     scan: built.scan,
+    other: built.other,
     exit_code: error ? 2 : built.exitCode(),
   };
   write(`${JSON.stringify(sorted(payload), null, 2)}\n`);

@@ -44,6 +44,17 @@ def js(name):
         return fh.read()
 
 
+def flat(text):
+    """Whitespace, quotes and concatenation removed, so ONE SENTENCE IS ONE STRING.
+
+    Two halves state the same rule to the reader and wrap it at different columns —
+    Python across adjacent literals, JavaScript across `+`. Comparing the raw text
+    would fail on a line break, which teaches whoever hits it to delete the check
+    rather than to fix the drift it exists to catch.
+    """
+    return re.sub(r"""[\s"'+]+""", "", text)
+
+
 def py(name):
     with open(os.path.join(PY_ROOT, "assay", name), encoding="utf-8") as fh:
         return fh.read()
@@ -666,6 +677,40 @@ class TheTwoHalvesAgree(unittest.TestCase):
         found = int(re.search(r"export const PROBE_SCHEMA = (\d+);",
                               js("sameness.js")).group(1))
         self.assertEqual(found, sameness.PROBE_SCHEMA)
+
+    def test_both_halves_use_the_same_BUNDLE_SCHEMA(self):
+        """One half writes the bundle and the other reads it, so it is a published
+        interface exactly as the record is. It is versioned APART from the record
+        because the two move independently: adding a key to the envelope does not
+        change what any one record means by `vector`."""
+        found = int(re.search(r"export const BUNDLE_SCHEMA = (\d+);",
+                              js("sameness.js")).group(1))
+        self.assertEqual(found, sameness.BUNDLE_SCHEMA)
+
+    def test_both_halves_DECIDE_what_may_be_BUCKETED_in_ONE_place(self):
+        """`sweep` buckets by vector equality, which is only a legitimate comparison
+        because everything `compare_cross` refuses was refused before the bucket. Two
+        places deciding that is how the tree-wide command comes to print a FINDING for
+        a pair the pairwise command calls a `look` — two answers to one question, and
+        the weaker one on screen."""
+        for source, call in ((py("sameness.py"), "admit(vector, len(func.params), mode)"),
+                             (js("sameness.js"), "admit(entry.vector, entry.arity, cross)")):
+            self.assertIn(call, source)
+
+    def test_both_halves_name_an_UNSTATEABLE_OUTCOME_the_same_thing(self):
+        """It lands in a census both halves print and a consumer tallies, so two
+        spellings of one refusal are two buckets where there is one reason."""
+        found = re.search(r"export const UNSTATEABLE = '([^']+)';",
+                          js("sameness.js")).group(1)
+        self.assertEqual(found, sameness.UNSTATEABLE)
+
+    def test_both_halves_REFUSE_a_bundle_of_their_OWN_language(self):
+        """`scan` compares one language's functions on its own ladder, which is
+        stronger. A half that answered the weaker question without saying so would
+        report a cross-language finding for two files in one language."""
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn(flat("`scan` compares one language's functions on its own "
+                               "ladder, which is stronger"), flat(source))
 
     def test_both_halves_decide_a_reference_LANGUAGE_by_the_same_SUFFIXES(self):
         """A suffix one half calls JavaScript and the other calls nothing is a

@@ -824,7 +824,7 @@ test('a look from search NEVER fails the run', async () => {
 // consumer reads a parse error as no findings.
 
 const JSON_KEYS = ['baseline', 'command', 'error', 'exit_code', 'items', 'language',
-  'notes', 'root', 'scan', 'schema', 'tool', 'version'].sort();
+  'notes', 'other', 'root', 'scan', 'schema', 'tool', 'version'].sort();
 
 async function payload(...argv) {
   const { code, text } = await cli(...argv);
@@ -1171,4 +1171,258 @@ test('--name without --stdin is an ERROR rather than ignored', async () => {
   const { code, text } = await cli('search', '--name', 'a', 'm.js::f', '--in', '.');
   assert.equal(code, 2);
   assert.match(text, /--name/);
+});
+
+// --------------------------------------------------------------------------- //
+// bundle / sweep — the tree-wide half of the cross-language question
+//
+// `cross` answers about a pair somebody already suspected. Nobody suspects the pair
+// that matters — a rule written once in the API and again in the front end, by two
+// people, a year apart — so the command that finds it must not need either name.
+// --------------------------------------------------------------------------- //
+
+// Two functions with a TYPE GUARD, which is what makes them comparable ACROSS the
+// languages rather than merely inside one. `s.toUpperCase()` and `s.upper()` answer
+// the same question; `'a' * 2` and `"a" * 2` do not, because one is NaN and the other
+// repeats — so a fixture without the guard proves the ladder found a coercion
+// difference, not that the sweep works.
+const CROSS_TWINS = `
+export function shout(s) {
+  if (typeof s !== 'string') throw new TypeError('str');
+  return s.toUpperCase() + '!';
+}
+
+export function twice(x) {
+  if (typeof x !== 'number') throw new TypeError('number');
+  return x * 2;
+}
+`;
+
+async function bundleOf(...paths) {
+  const { code, text } = await cli('bundle', ...paths);
+  return { code, document: JSON.parse(text) };
+}
+
+/**
+ * The same bundle, relabelled as though the OTHER binary had written it.
+ *
+ * THE RECORD IS THE CONTRACT and this fixture is what says so. `sweep` compares
+ * vectors and ladder keys; nothing about the comparison depends on which process
+ * produced them, which is exactly why one half can answer for a tree it cannot parse.
+ * Relabelling a bundle this half wrote exercises the bucketing without a second
+ * runtime — and a suite that skips when a runtime is missing reports a pass for a
+ * check that never ran.
+ */
+function asOtherHalf(document, language = 'python', suffix = '.py') {
+  const out = JSON.parse(JSON.stringify(document));
+  out.language = language;
+  for (const record of out.records) {
+    record.language = language;
+    record.ref = record.ref.replace(/\.m?js::/, `${suffix}::`);
+  }
+  return out;
+}
+
+async function otherBundle(files, language, suffix) {
+  const { document } = await bundleOf(tree(files));
+  const file = path.join(tree({}), 'other.json');
+  writeFileSync(file, JSON.stringify(asOtherHalf(document, language, suffix)), 'utf8');
+  return file;
+}
+
+test('a bundle carries both schemas, the records and the census', async () => {
+  const { code, document } = await bundleOf(tree({ 'm.js': CROSS_TWINS }));
+  assert.equal(code, 0);
+  assert.equal(document.assay_bundle, 1);
+  assert.equal(document.assay_probe, 1);
+  assert.equal(document.language, 'javascript');
+  assert.deepEqual(
+    document.records.map((r) => r.ref.split('::')[1]).sort(), ['shout', 'twice'],
+  );
+  assert.equal(document.census.probed, 2);
+});
+
+test('a bundle RECORD is the shape `assay probe` writes', async () => {
+  // A record lifted out of a bundle is one `cross` already reads. Two shapes for one
+  // artefact is two answers to what `vector` means.
+  const { document } = await bundleOf(tree({ 'm.js': CROSS_TWINS }));
+  for (const record of document.records) {
+    assert.deepEqual(Object.keys(record).sort(),
+      ['arity', 'assay_probe', 'error', 'ladder', 'language', 'ref', 'vector']);
+    assert.match(record.ladder, /^cross/);
+  }
+});
+
+test('a bundle RECORD holds what `assay probe` WROTE', async () => {
+  // The shape is not the contract; the VECTOR is.
+  //
+  // A bundle built on the NATIVE ladder still carries cross ladder keys, and every one
+  // of them matches the other half's key while meaning something else entirely — the
+  // mismatched-ladder comparison the key exists to refuse, arriving inside the artefact
+  // that carries the key. Nothing about the record's shape would say so, and
+  // relabelling one bundle as the other half cannot say so either, because both sides
+  // of that fixture drift together.
+  const { document } = await bundleOf(tree({ 'm.js': CROSS_TWINS }));
+  assert.ok(document.records.length);
+  for (const record of document.records) {
+    // eslint-disable-next-line no-await-in-loop
+    const { code, text } = await cli('probe', record.ref);
+    assert.equal(code, 0, text);
+    const probed = JSON.parse(text);
+    assert.equal(probed.ladder, record.ladder);
+    assert.deepEqual(probed.vector, record.vector);
+  }
+});
+
+test('a bundle with NO PATH emits the same shape and exits 2', async () => {
+  // ONE SHAPE, ALWAYS. This command's output IS JSON, so a broken invocation that
+  // printed prose would hand a consumer a parse error at exactly the moment the tool
+  // could not run — and a sloppy consumer reads that as no findings.
+  const { code, document } = await bundleOf();
+  assert.equal(code, 2);
+  assert.equal(document.assay_bundle, 1);
+  assert.match(document.error, /needs a path/);
+});
+
+test('a refused function is in the CENSUS and not in the RECORDS', async () => {
+  // A short `records` list with no census says "nothing here answers that" for a tree
+  // that was never probed, which is the one claim this refuses to make.
+  const { document } = await bundleOf(tree({
+    'm.js': 'export function r(n) { return Math.random() + n; }\n',
+  }));
+  assert.deepEqual(document.records, []);
+  assert.equal(document.census.not_probed, 1);
+  assert.equal(Object.values(document.census.skipped_refs).length, 1);
+});
+
+test('sweep finds the pair NOBODY NAMED', async () => {
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+  const { code, text } = await cli('sweep', tree({ 'm.js': CROSS_TWINS }),
+    '--against', against);
+  assert.equal(code, 1, text);
+  assert.match(text, /same answer across languages/);
+  assert.match(text, /\[javascript\]/);
+  assert.match(text, /\[python\]/);
+  assert.match(text, /shout/);
+});
+
+test('a sweep that matches nothing exits 0 and SAYS SO', async () => {
+  const against = await otherBundle({ 'm.js': CROSS_TWINS });
+  const root = tree({
+    'm.js': 'export function only(n) {\n'
+      + "  if (typeof n !== 'number') throw new TypeError('number');\n"
+      + '  return n * 3 + 1;\n}\n',
+  });
+  const { code, text } = await cli('sweep', root, '--against', against);
+  assert.equal(code, 0, text);
+  assert.match(text, /same {3}none/);
+});
+
+test('sweep prints the OTHER half\'s census TOO', async () => {
+  // The far side is where a silence costs the most: a report that says `same none`
+  // while staying quiet about the functions the OTHER binary never probed is reporting
+  // "we never looked" as "we found none", across a boundary the reader cannot check.
+  const against = await otherBundle({
+    'm.js': 'export function r(n) { return Math.random() + n; }\n',
+  });
+  const { code, text } = await cli('sweep', tree({ 'm.js': CROSS_TWINS }),
+    '--against', against);
+  assert.equal(code, 0, text);
+  assert.match(text, /\[python\] 1 functions, 0 probed, 1 not probed/);
+});
+
+test('sweep REFUSES a bundle of its own language', async () => {
+  // `scan` compares one language's functions on its own ladder, which is stronger.
+  // Answering the weaker question without saying so is the failure.
+  const { document } = await bundleOf(tree({ 'm.js': CROSS_TWINS }));
+  const file = path.join(tree({}), 'same.json');
+  writeFileSync(file, JSON.stringify(document), 'utf8');
+  const { code, text } = await cli('sweep', tree({ 'm.js': CROSS_TWINS }),
+    '--against', file);
+  assert.equal(code, 2);
+  assert.match(text, /`scan`/);
+});
+
+test('sweep REFUSES a bundle from another schema', async () => {
+  // Comparing a new answer against the wrong earlier answer is precisely the defect a
+  // difference checker exists to catch.
+  const { document } = await bundleOf(tree({ 'm.js': CROSS_TWINS }));
+  const stale = asOtherHalf(document);
+  stale.assay_bundle = 2;
+  const file = path.join(tree({}), 'old.json');
+  writeFileSync(file, JSON.stringify(stale), 'utf8');
+  const { code, text } = await cli('sweep', tree({ 'm.js': CROSS_TWINS }),
+    '--against', file);
+  assert.equal(code, 2);
+  assert.match(text, /bundle schema/);
+});
+
+test('sweep REFUSES a bundle that could not be BUILT', async () => {
+  // An `error` bundle has an empty `records` list, and comparing against it would
+  // print `same none` for a tree the other half never managed to probe.
+  const file = path.join(tree({}), 'broken.json');
+  writeFileSync(file, JSON.stringify({
+    assay_bundle: 1, assay_probe: 1, language: 'python', records: [], census: null,
+    error: 'bundle needs a path',
+  }), 'utf8');
+  const { code, text } = await cli('sweep', tree({ 'm.js': CROSS_TWINS }),
+    '--against', file);
+  assert.equal(code, 2);
+  assert.match(text, /could not be built/);
+});
+
+test('sweep names the OTHER BINARY rather than guessing at it', async () => {
+  // Both packages install a command called `assay`, so a half that guessed would run
+  // itself and compare a tree with itself.
+  const { code, text } = await cli('sweep', tree({ 'm.js': CROSS_TWINS }),
+    '--against', 'other/src');
+  assert.equal(code, 2);
+  assert.match(text, /--with/);
+});
+
+test('sweep reports a broken --with COMMAND rather than an empty bundle', async () => {
+  const { code, text } = await cli('sweep', tree({ 'm.js': CROSS_TWINS }),
+    '--against', 'other/src', '--with', `${process.execPath} -e ''`);
+  assert.equal(code, 2);
+  assert.match(text, /--with/);
+});
+
+test('sweep NEVER buckets what the pairwise command would REFUSE', async () => {
+  // A constant is not discriminated by the ladder, so `cross` calls two of them a
+  // `look`. A bucketing scan that admitted them would print a FINDING for the same
+  // pair — two answers to one question, and the weaker one on screen.
+  const constant = 'export function k(n) { return 7; }\n';
+  const { document } = await bundleOf(tree({ 'm.js': constant }));
+  assert.deepEqual(document.records, []);
+  assert.deepEqual(Object.values(document.census.skipped_refs),
+    ['not discriminated by the ladder']);
+  const against = await otherBundle({ 'm.js': constant });
+  const { code, text } = await cli('sweep', tree({ 'm.js': constant }),
+    '--against', against);
+  assert.equal(code, 0, text);
+});
+
+test('an outcome the INTERLINGUA CANNOT STATE is never bucketed', async () => {
+  // `compareCross` calls an `X:` rung a `look` because a value it cannot read is one
+  // it must not pronounce on. Equality on the raw vector would call two of them
+  // `same` — the verdict that FAILS.
+  const { admit } = await import('../src/sameness.js');
+  const { key, why } = admit(['V:1', 'X:Set', 'V:2'], 1, true);
+  assert.equal(key, undefined);
+  assert.match(why, /interlingua/);
+});
+
+test('sweep checks BOTH schemas of a bundle it ran itself', async () => {
+  // The envelope and the record are versioned apart, so a far binary whose BUNDLE
+  // schema matches can still mean something else by `vector`.
+  const stale = JSON.stringify({
+    assay_bundle: 1, assay_probe: 2, language: 'python', records: [], census: null,
+    error: null,
+  });
+  const far = path.join(tree({ 'far.js': `console.log(${JSON.stringify(stale)});\n` }),
+    'far.js');
+  const { code, text } = await cli('sweep', tree({ 'm.js': CROSS_TWINS }),
+    '--against', 'other/src', '--with', `${process.execPath} ${far}`);
+  assert.equal(code, 2, text);
+  assert.match(text, /records of schema/);
 });

@@ -4,6 +4,7 @@
     does the tree already answer this?   assay scan | pair | search
     why was my function not probed?      assay why FILE::NAME | assay why --stdin
     ...and does the OTHER half answer it?  assay probe FILE::NAME | assay cross A B
+    ...for a whole tree, not one pair?   assay bundle PATHS | assay sweep PATHS
     I have read this one and accept it   assay accept --reason "..." [LINE]
 
 Both halves ask about work that ALREADY PASSES ITS TESTS, which is why neither is a
@@ -36,10 +37,11 @@ from .anchors import audit_anchors
 from .checks import audit_diff, audit_runners, check_exemptions
 from .config import (CONFIG_NAMES, ConfigError, apply_baseline, load,
                      write_baseline)
-from .sameness import (PROBE_SCHEMA, collect, compare, compare_cross,
-                       cross_key, cross_ladder, discriminating,
+from .sameness import (BUNDLE_SCHEMA, PROBE_SCHEMA, collect, compare,
+                       compare_cross, cross_key, cross_ladder, discriminating,
                        discrimination_detail, group, ladder, ladder_key, probe,
-                       report_scan, resolve, resolve_source, resolve_why)
+                       report_census, report_scan, resolve, resolve_source,
+                       resolve_why)
 from .verdicts import FINDING, Report, render, render_json
 
 
@@ -652,7 +654,205 @@ def cmd_search(args, config, out):
     return _finish(args, report, config, out)
 
 
+def _bundle_document(paths):
+    """Every function under `paths` as CROSS records, plus the census. One dict.
+
+    THE RECORDS ARE THE SAME SHAPE `assay probe` WRITES, and that is the point of the
+    envelope rather than a nicety: a bundle entry lifted out on its own is a record
+    `assay cross` already reads, so the two commands cannot come to mean different
+    things by `vector` without one of them failing its own schema check.
+
+    A REFUSED FUNCTION IS IN THE CENSUS AND NOT IN `records`. Both facts are carried,
+    because a bundle whose `records` list is short and whose census is missing says
+    "nothing here answers that" for a tree it never managed to probe — which is the
+    one claim this tool exists to refuse to make.
+    """
+    scan = collect(paths, mode="cross")
+    records = []
+    for ref in sorted(scan.probed):
+        records.append({"assay_probe": PROBE_SCHEMA, "ref": ref, "language": "python",
+                        "arity": scan.arity[ref], "ladder": scan.keys[ref],
+                        "vector": scan.probed[ref], "error": None})
+    return {"assay_bundle": BUNDLE_SCHEMA, "assay_probe": PROBE_SCHEMA,
+            "language": "python", "records": records, "census": scan.to_dict(),
+            "error": None}
+
+
+def cmd_bundle(args, config, out):
+    """A whole tree's cross vectors, as one JSON document on stdout.
+
+    `assay cross` answers about two functions somebody already suspected. Nobody
+    suspects the pair that matters: a validator written once in the API and again in
+    the front end, by two people, a year apart, is exactly the duplication no one goes
+    looking for. Finding it means probing both trees, and the halves do not invoke each
+    other — so one writes a bundle and the other reads it:
+
+        assay bundle js/src > js.json          # the JavaScript binary
+        assay sweep python/ --against js.json  # the Python one
+
+    IT WRITES JSON ON STDOUT, so redirecting it is the point, and it emits ONE SHAPE on
+    every path — a broken invocation is the same document with `error` set and exit 2.
+    A consumer never has to ask which of two shapes it received.
+    """
+    if not args.paths:
+        document = {"assay_bundle": BUNDLE_SCHEMA, "assay_probe": PROBE_SCHEMA,
+                    "language": "python", "records": [], "census": None,
+                    "error": "bundle needs a path"}
+        code = 2
+    else:
+        document, code = _bundle_document(args.paths), 0
+    json.dump(document, out, indent=2, sort_keys=True, ensure_ascii=False)
+    out.write("\n")
+    return code
+
+
+def _read_bundle(path):
+    """An `assay bundle` document from a file, or (None, why).
+
+    THE SCHEMA IS CHECKED, for the reason a record's is: a bundle from a version that
+    meant something else by `vector` would be compared anyway, and comparing a new
+    answer against the wrong earlier answer is precisely the defect a difference
+    checker exists to catch.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            document = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return None, "cannot read %s as an `assay bundle` document (%s)" % (path, exc)
+    if not isinstance(document, dict) or "assay_bundle" not in document:
+        return None, "%s is not an `assay bundle` document" % path
+    if document["assay_bundle"] != BUNDLE_SCHEMA:
+        return None, ("%s was written by bundle schema %r and this is schema %d — the "
+                      "two do not mean the same thing by `records`"
+                      % (path, document["assay_bundle"], BUNDLE_SCHEMA))
+    if document.get("assay_probe") != PROBE_SCHEMA:
+        return None, ("%s carries records of schema %r and this is schema %d — the two "
+                      "do not mean the same thing by `vector`"
+                      % (path, document.get("assay_probe"), PROBE_SCHEMA))
+    if document.get("error"):
+        return None, "%s is a bundle that could not be built: %s" % (path,
+                                                                    document["error"])
+    return document, None
+
+
+def _other_side(against, with_cmd):
+    """The other half's bundle: (document, None) or (None, why).
+
+    TWO WAYS IN, and they are the two `cross` already has minus the one that cannot
+    apply. A `.json` path is a bundle somebody produced. Anything else is a list of
+    paths in the OTHER language, which needs the other binary — and `--with CMD` is
+    how you say where it is, rather than guessing at a command name that is `assay`
+    for both packages.
+    """
+    if len(against) == 1 and against[0].endswith(".json") and os.path.exists(against[0]):
+        return _read_bundle(against[0])
+    if not with_cmd:
+        return None, ("--against %s does not name a bundle this half can read.\n"
+                      "       Run `assay bundle %s > other.json` with the OTHER "
+                      "half's binary and pass\n       other.json here, or give --with "
+                      "CMD so this can run it for you."
+                      % (" ".join(against), " ".join(against)))
+    command = shlex.split(with_cmd) + ["bundle"] + list(against)
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True,
+                              timeout=BUNDLE_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, "--with %r could not run (%s)" % (with_cmd, exc)
+    try:
+        document = json.loads(proc.stdout)
+    except ValueError:
+        tail = (proc.stderr.strip().splitlines()
+                or proc.stdout.strip().splitlines() or ["silent"])[-1][:90]
+        return None, ("--with %r did not print an `assay bundle` document (%s)"
+                      % (with_cmd, tail))
+    if document.get("assay_bundle") != BUNDLE_SCHEMA:
+        return None, ("--with %r wrote bundle schema %r and this is schema %d"
+                      % (with_cmd, document.get("assay_bundle"), BUNDLE_SCHEMA))
+    # BOTH SCHEMAS, on this path as on the file one. The envelope and the record are
+    # versioned apart, so a far binary whose bundle schema happens to match can still
+    # mean something else by `vector` — and that is the comparison the check exists to
+    # refuse, not the one it exists to allow.
+    if document.get("assay_probe") != PROBE_SCHEMA:
+        return None, ("--with %r wrote records of schema %r and this is schema %d"
+                      % (with_cmd, document.get("assay_probe"), PROBE_SCHEMA))
+    if document.get("error"):
+        return None, "--with %r could not build a bundle: %s" % (with_cmd,
+                                                                 document["error"])
+    return document, None
+
+
+def _cross_buckets(scan, document):
+    """(ladder key, vector) -> (my refs, their refs). Sorted, and only shared buckets.
+
+    THE BUCKET IS THE COMPARISON, and it is a legitimate one only because `collect`
+    already refused everything `compare_cross` would have refused: a vector holding an
+    outcome the interlingua cannot state, and a vector the ladder never told apart from
+    a constant. What survives to a bucket is a pair that command would have called
+    `same`. If that stops being true, this prints findings the pairwise command
+    disagrees with, and the weaker answer is the one on screen.
+    """
+    buckets = {}
+    for ref, vector in scan.probed.items():
+        buckets.setdefault((scan.keys[ref], tuple(vector)), ([], []))[0].append(ref)
+    for record in document.get("records") or []:
+        key = (record.get("ladder"), tuple(record.get("vector") or []))
+        if key in buckets:
+            buckets[key][1].append(record.get("ref"))
+    return sorted(((key, sorted(mine), sorted(theirs))
+                   for key, (mine, theirs) in buckets.items() if theirs),
+                  key=lambda item: (item[1][0], item[2][0]))
+
+
+def cmd_sweep(args, config, out):
+    """Which functions in THIS tree does the other language already answer?
+
+    `cross` needs the pair named. This needs neither name, which is what makes it the
+    command that finds the duplication a polyglot repository actually accumulates: two
+    implementations of one rule, one per language, that no differential test covers
+    because writing one means agreeing by hand on what `False` and `false` have in
+    common.
+
+    BOTH CENSUSES ARE PRINTED, and the other half's is the one that would otherwise
+    lie by omission. A function the OTHER binary refused was never compared, and a
+    report that says `same none` while staying quiet about the two hundred functions
+    the far side never probed is reporting "we never looked" as "we found none" —
+    across a boundary where the reader has no way to check.
+    """
+    if not args.paths:
+        return _fail(args, out, "sweep needs a path")
+    document, why = _other_side(args.against, args.with_cmd)
+    if document is None:
+        return _fail(args, out, why)
+    if document.get("language") == "python":
+        return _fail(args, out,
+                     "--against is a python bundle and this is the python half — "
+                     "`scan` compares one language's functions on its own ladder, "
+                     "which is stronger")
+    report = Report()
+    scan = collect(args.paths, mode="cross")
+    theirs = document.get("language") or "unknown"
+    shared = _cross_buckets(scan, document)
+    for key, mine, them in shared:
+        report.finding(
+            "same answer across languages (%s): %s [python]  vs  %s [%s]"
+            % (key[0], ", ".join(mine), ", ".join(them), theirs), mine[0],
+            "no input in the shared ladder told them apart — READ them; only a "
+            "person decides whether the duplication is a defect")
+    if not shared:
+        report.note("\nsame   none — no function here shares an outcome vector with "
+                    "one in the %s bundle" % theirs)
+    report_scan(scan, report)
+    if document.get("census"):
+        report_census(document["census"], report, label="[%s]" % theirs)
+    report.scan = scan.to_dict()
+    report.other = {"language": theirs, "records": len(document.get("records") or []),
+                    "census": document.get("census")}
+    return _finish(args, report, config, out)
+
+
+
 CROSS_TIMEOUT = 120     # seconds for the OTHER half's `probe`, run through --with
+BUNDLE_TIMEOUT = 900    # seconds for the OTHER half's `bundle`: a whole tree, not one
 
 COMMANDS = {
     "why": cmd_why,
@@ -666,6 +866,8 @@ COMMANDS = {
     "scan": cmd_scan,
     "pair": cmd_pair,
     "search": cmd_search,
+    "bundle": cmd_bundle,
+    "sweep": cmd_sweep,
 }
 
 
@@ -759,6 +961,19 @@ def build_parser():
     p.add_argument("b", metavar="FILE::NAME|RECORD.json")
     p.add_argument("--with", dest="with_cmd", default=None, metavar="CMD",
                    help="run CMD `probe REF` for the side this half cannot probe")
+
+    p = sub.add_parser("bundle", parents=[_common()],
+                       help="a whole tree's cross vectors, as JSON on stdout")
+    p.add_argument("paths", nargs="*")
+
+    p = sub.add_parser("sweep", parents=[_common()],
+                       help="which functions here does the OTHER language answer?")
+    p.add_argument("paths", nargs="*")
+    p.add_argument("--against", nargs="+", required=True,
+                   metavar="BUNDLE.json|PATH",
+                   help="the other half's bundle, or its paths with --with CMD")
+    p.add_argument("--with", dest="with_cmd", default=None, metavar="CMD",
+                   help="run CMD `bundle PATHS` for the half this one cannot probe")
 
     p = sub.add_parser("search", parents=[_common()],
                        help="does the tree already answer this?")

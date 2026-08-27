@@ -20,6 +20,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 from assay import cli  # noqa: E402
+from assay.sameness import BUNDLE_SCHEMA, PROBE_SCHEMA  # noqa: E402
 
 TWINS = ('def a(s):\n'
          '    if not isinstance(s, str):\n        raise TypeError("str")\n'
@@ -172,7 +173,7 @@ class JsonOutput(unittest.TestCase):
     """
 
     KEYS = {"schema", "tool", "version", "language", "command", "root", "error",
-            "items", "notes", "baseline", "scan", "exit_code"}
+            "items", "notes", "baseline", "scan", "other", "exit_code"}
 
     def payload(self, *argv):
         code, text = run(*argv)
@@ -947,6 +948,231 @@ class AsASubprocess(unittest.TestCase):
                               capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["outcomes"], ["V:2", "V:4"])
+
+
+# Two functions with a TYPE GUARD, which is what makes them comparable ACROSS the
+# languages rather than merely inside one. `s.upper()` and `s.toUpperCase()` answer the
+# same question; `"a" * 2` and `'a' * 2` do not, because one repeats and the other is
+# NaN — so a fixture without the guard proves the ladder found a coercion difference,
+# not that the sweep works.
+CROSS_TWINS = ('def shout(s):\n'
+               '    if not isinstance(s, str):\n        raise TypeError("str")\n'
+               '    return s.upper() + "!"\n\n\n'
+               'def twice(x):\n'
+               '    if not isinstance(x, (int, float)) or isinstance(x, bool):\n'
+               '        raise TypeError("number")\n'
+               '    return x * 2\n')
+
+
+def as_other_half(document, language="javascript", suffix=".mjs"):
+    """The same bundle, relabelled as though the OTHER binary had written it.
+
+    THE RECORD IS THE CONTRACT and this fixture is what says so. `sweep` compares
+    vectors and ladder keys; nothing about the comparison depends on which process
+    produced them, which is exactly why one half can answer for a tree it cannot parse.
+    Relabelling a bundle this half wrote exercises the bucketing without a second
+    runtime — and a suite that skips when a runtime is missing reports a pass for a
+    check that never ran.
+    """
+    out = json.loads(json.dumps(document))
+    out["language"] = language
+    for record in out["records"]:
+        record["language"] = language
+        record["ref"] = record["ref"].replace(".py::", suffix + "::")
+    return out
+
+
+class BundleAndSweep(unittest.TestCase):
+    """The tree-wide half of the cross-language question.
+
+    `cross` answers about a pair somebody already suspected. Nobody suspects the pair
+    that matters — a rule written once in the API and again in the front end, by two
+    people, a year apart — so the command that finds it must not need either name.
+    """
+
+    def bundle(self, *paths):
+        code, text = run("bundle", *paths)
+        return code, json.loads(text)
+
+    def other(self, files, **kwargs):
+        """A bundle for `files`, written to disk as though by the other half."""
+        _code, document = self.bundle(tree(files))
+        path = os.path.join(tree({}), "other.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(as_other_half(document, **kwargs), fh)
+        return path
+
+    def test_a_bundle_carries_both_schemas_the_records_and_the_census(self):
+        code, document = self.bundle(tree({"m.py": CROSS_TWINS}))
+        self.assertEqual(code, 0)
+        self.assertEqual(document["assay_bundle"], BUNDLE_SCHEMA)
+        self.assertEqual(document["assay_probe"], PROBE_SCHEMA)
+        self.assertEqual(document["language"], "python")
+        self.assertEqual({r["ref"].rpartition("::")[2] for r in document["records"]},
+                         {"shout", "twice"})
+        self.assertEqual(document["census"]["probed"], 2)
+
+    def test_a_bundle_RECORD_is_the_shape_assay_probe_writes(self):
+        """A record lifted out of a bundle is one `cross` already reads. Two shapes
+        for one artefact is two answers to what `vector` means."""
+        _code, document = self.bundle(tree({"m.py": CROSS_TWINS}))
+        for record in document["records"]:
+            self.assertEqual(set(record), {"assay_probe", "ref", "language", "arity",
+                                           "ladder", "vector", "error"})
+            self.assertTrue(record["ladder"].startswith("cross"))
+
+    def test_a_bundle_RECORD_holds_what_assay_probe_WROTE(self):
+        """The shape is not the contract; the VECTOR is.
+
+        A bundle built on the NATIVE ladder still carries cross ladder keys, and every
+        one of them matches the other half's key while meaning something else entirely
+        — the mismatched-ladder comparison the key exists to refuse, arriving inside
+        the artefact that carries the key. Nothing about the record's shape would say
+        so, and relabelling one bundle as the other half cannot say so either, because
+        both sides of that fixture drift together.
+        """
+        _code, document = self.bundle(tree({"m.py": CROSS_TWINS}))
+        self.assertTrue(document["records"])
+        for record in document["records"]:
+            code, text = run("probe", record["ref"])
+            self.assertEqual(code, 0, text)
+            probed = json.loads(text)
+            self.assertEqual(probed["ladder"], record["ladder"])
+            self.assertEqual(probed["vector"], record["vector"])
+
+    def test_a_bundle_with_NO_PATH_emits_the_same_shape_and_exits_2(self):
+        """ONE SHAPE, ALWAYS. This command's output IS JSON, so a broken invocation
+        that printed prose would hand a consumer a parse error at exactly the moment
+        the tool could not run — and a sloppy consumer reads that as no findings."""
+        code, document = self.bundle()
+        self.assertEqual(code, 2)
+        self.assertEqual(document["assay_bundle"], BUNDLE_SCHEMA)
+        self.assertIn("needs a path", document["error"])
+
+    def test_a_refused_function_is_in_the_CENSUS_and_not_in_the_RECORDS(self):
+        """A short `records` list with no census says "nothing here answers that" for
+        a tree that was never probed, which is the one claim this refuses to make."""
+        _code, document = self.bundle(tree({"m.py": "import random\n\n\n"
+                                                   "def r(n):\n    return random.random() + n\n"}))
+        self.assertEqual(document["records"], [])
+        self.assertEqual(document["census"]["not_probed"], 1)
+        self.assertTrue(any("random" in why
+                            for why in document["census"]["skipped_refs"].values()))
+
+    def test_sweep_finds_the_pair_NOBODY_NAMED(self):
+        root = tree({"m.py": CROSS_TWINS})
+        code, text = run("sweep", root, "--against",
+                         self.other({"m.py": CROSS_TWINS}))
+        self.assertEqual(code, 1, text)
+        self.assertIn("same answer across languages", text)
+        self.assertIn("[python]", text)
+        self.assertIn("[javascript]", text)
+        self.assertIn("shout", text)
+
+    def test_sweep_that_matches_nothing_exits_0_and_SAYS_SO(self):
+        root = tree({"m.py": "def only(n):\n"
+                             "    if not isinstance(n, int) or isinstance(n, bool):\n"
+                             "        raise TypeError('int')\n"
+                             "    return n * 3 + 1\n"})
+        code, text = run("sweep", root, "--against", self.other({"m.py": CROSS_TWINS}))
+        self.assertEqual(code, 0, text)
+        self.assertIn("same   none", text)
+
+    def test_sweep_prints_the_OTHER_halfs_census_TOO(self):
+        """The far side is where a silence costs the most: a report that says `same
+        none` while staying quiet about the functions the OTHER binary never probed is
+        reporting "we never looked" as "we found none", across a boundary the reader
+        cannot check."""
+        other = self.other({"m.py": "import random\n\n\n"
+                                    "def r(n):\n    return random.random() + n\n"})
+        code, text = run("sweep", tree({"m.py": CROSS_TWINS}), "--against", other)
+        self.assertEqual(code, 0, text)
+        self.assertIn("[javascript] 1 functions, 0 probed, 1 not probed", text)
+
+    def test_sweep_REFUSES_a_bundle_of_its_own_language(self):
+        """`scan` compares one language's functions on its own ladder, which is
+        stronger. Answering the weaker question without saying so is the failure."""
+        _code, document = self.bundle(tree({"m.py": CROSS_TWINS}))
+        path = os.path.join(tree({}), "same.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(document, fh)
+        code, text = run("sweep", tree({"m.py": CROSS_TWINS}), "--against", path)
+        self.assertEqual(code, 2)
+        self.assertIn("`scan`", text)
+
+    def test_sweep_REFUSES_a_bundle_from_another_schema(self):
+        """Comparing a new answer against the wrong earlier answer is precisely the
+        defect a difference checker exists to catch."""
+        _code, document = self.bundle(tree({"m.py": CROSS_TWINS}))
+        document = as_other_half(document)
+        document["assay_bundle"] = BUNDLE_SCHEMA + 1
+        path = os.path.join(tree({}), "old.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(document, fh)
+        code, text = run("sweep", tree({"m.py": CROSS_TWINS}), "--against", path)
+        self.assertEqual(code, 2)
+        self.assertIn("bundle schema", text)
+
+    def test_sweep_REFUSES_a_bundle_that_could_not_be_BUILT(self):
+        """An `error` bundle has an empty `records` list, and comparing against it
+        would print `same none` for a tree the other half never managed to probe."""
+        path = os.path.join(tree({}), "broken.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"assay_bundle": BUNDLE_SCHEMA, "assay_probe": PROBE_SCHEMA,
+                       "language": "javascript", "records": [], "census": None,
+                       "error": "bundle needs a path"}, fh)
+        code, text = run("sweep", tree({"m.py": CROSS_TWINS}), "--against", path)
+        self.assertEqual(code, 2)
+        self.assertIn("could not be built", text)
+
+    def test_sweep_names_the_OTHER_BINARY_rather_than_guessing_at_it(self):
+        """Both packages install a command called `assay`, so a half that guessed
+        would run itself and compare a tree with itself."""
+        code, text = run("sweep", tree({"m.py": CROSS_TWINS}), "--against", "other/src")
+        self.assertEqual(code, 2)
+        self.assertIn("--with", text)
+
+    def test_sweep_reports_a_broken_with_COMMAND_rather_than_an_empty_bundle(self):
+        code, text = run("sweep", tree({"m.py": CROSS_TWINS}), "--against", "other/src",
+                         "--with", sys.executable + " -c pass")
+        self.assertEqual(code, 2)
+        self.assertIn("--with", text)
+
+    def test_sweep_checks_BOTH_schemas_of_a_bundle_it_ran_itself(self):
+        """The envelope and the record are versioned apart, so a far binary whose
+        BUNDLE schema matches can still mean something else by `vector`."""
+        stale = json.dumps({"assay_bundle": BUNDLE_SCHEMA,
+                            "assay_probe": PROBE_SCHEMA + 1,
+                            "language": "javascript", "records": [], "census": None,
+                            "error": None})
+        far = os.path.join(tree({"far.py": "print(%r)\n" % stale}), "far.py")
+        code, text = run("sweep", tree({"m.py": CROSS_TWINS}), "--against", "other/src",
+                         "--with", "%s %s" % (sys.executable, far))
+        self.assertEqual(code, 2, text)
+        self.assertIn("records of schema", text)
+
+    def test_sweep_NEVER_buckets_what_the_pairwise_command_would_REFUSE(self):
+        """A constant is not discriminated by the ladder, so `cross` calls two of them
+        a `look`. A bucketing scan that admitted them would print a FINDING for the
+        same pair — two answers to one question, and the weaker one on screen."""
+        const = "def k(n):\n    return 7\n"
+        _code, document = self.bundle(tree({"m.py": const}))
+        self.assertEqual(document["records"], [])
+        self.assertEqual(list(document["census"]["skipped_refs"].values()),
+                         ["not discriminated by the ladder"])
+        code, text = run("sweep", tree({"m.py": const}),
+                         "--against", self.other({"m.py": const}))
+        self.assertEqual(code, 0, text)
+
+    def test_an_outcome_the_INTERLINGUA_CANNOT_STATE_is_never_bucketed(self):
+        """`compare_cross` calls an `X:` rung a `look` because a value it cannot read
+        is one it must not pronounce on. Equality on the raw vector would call two of
+        them `same` — the verdict that FAILS."""
+        from assay.sameness import admit                   # noqa: PLC0415
+
+        key, why = admit(["V:1", "X:set", "V:2"], 1, "cross")
+        self.assertIsNone(key)
+        self.assertIn("interlingua", why)
 
 
 class ItRunsOnItself(unittest.TestCase):
