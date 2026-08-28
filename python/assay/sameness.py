@@ -260,47 +260,83 @@ def free_names(node):
     return out
 
 
-def purity(func):
-    """None if this function may be executed, else the reason it may not be.
+def refusals(func):
+    """EVERY reason this function may not be executed, in gate order. [] if none.
+
+    `purity` answers with the FIRST one, because one refusal is enough to REFUSE. This
+    answers with all of them, because one is not enough to ACT ON — and the difference
+    is a wrong inference the census actively invites.
+
+    THE CENSUS TALLIES ONE REASON PER FUNCTION, SO ITS BUCKETS ARE NOT INDEPENDENT. A
+    reader looking at `arity 4  14` reasonably concludes that raising the arity cap
+    would get fourteen more functions probed. Measured on a real tree, it gets none:
+    those fourteen moved into `needs docx`, `touches os` and `needs matplotlib`, the
+    tally changed, and the probed count did not move at all. Every one of them was
+    already refused by a second gate that the first one hid.
 
     Every branch is a REFUSAL, not a guess. This executes code out of somebody's tree,
     so what it will run is enumerated rather than assumed safe.
+
+    IT DOES NOT SHORT-CIRCUIT and that is the whole point, so it walks the body even
+    for a function the first gate already refused. The walk is cheap next to the
+    subprocess it decides whether to spawn, and paying it always is what makes the
+    answer complete.
     """
     node = func.node
+    found = []
+
+    def note(why):
+        # ONE ENTRY PER REASON, not per occurrence: a function touching `os` five times
+        # trips one gate, and counting it five times would report the AST's shape where
+        # a reader expects the gate's.
+        if why not in found:
+            found.append(why)
+
     if node.decorator_list:
-        return "decorated"
+        note("decorated")
     if node.args.vararg or node.args.kwarg or node.args.kwonlyargs:
-        return "star or keyword-only args"
+        note("star or keyword-only args")
     if func.params and func.params[0] in ("self", "cls"):
-        return "method"
+        note("method")
     if not func.params:
-        return "no arguments (a ladder cannot discriminate)"
+        note("no arguments (a ladder cannot discriminate)")
     if len(func.params) > MAX_ARITY:
-        return "arity %d (no ladder above %d)" % (len(func.params), MAX_ARITY)
+        note("arity %d (no ladder above %d)" % (len(func.params), MAX_ARITY))
     for sub in ast.walk(node):
         if isinstance(sub, (ast.Global, ast.Nonlocal)):
-            return "mutates module state"
+            note("mutates module state")
         if isinstance(sub, (ast.Yield, ast.YieldFrom)):
-            return "generator"
+            note("generator")
         # `await` is sequencing, not reach: an `async def` that only computes is as
         # pure as the `def` beside it, and `outcome_of` runs it to the value it settles
         # on. `async for` and `async with` are a different matter — both drive an
         # object's protocol methods, which is behaviour the ladder cannot supply.
         if isinstance(sub, (ast.AsyncFor, ast.AsyncWith)):
-            return "async iteration"
+            note("async iteration")
         if isinstance(sub, ast.Name) and sub.id in IMPURE_NAMES:
-            return "calls %s()" % sub.id
+            note("calls %s()" % sub.id)
         if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name):
             root = func.module.imports.get(sub.value.id, sub.value.id)
             if root in IMPURE_MODULES:
-                return "touches %s" % root
+                note("touches %s" % root)
         if isinstance(sub, (ast.Import, ast.ImportFrom)):
             for alias in sub.names:
                 root = (alias.name if isinstance(sub, ast.Import)
                         else (sub.module or "")).split(".")[0]
                 if root not in ALLOWED_IMPORTS:
-                    return "imports %s" % (root or "relatively")
-    return None
+                    note("imports %s" % (root or "relatively"))
+    return found
+
+
+def purity(func):
+    """None if this function may be executed, else the FIRST reason it may not be.
+
+    ONE ENUMERATION, and this reads its front. A second list of gates kept in step with
+    `refusals` by hand is the duplication this package exists to report, and the way
+    the two would drift is silent: the census would count a reason `why` never names.
+    """
+    every = refusals(func)
+    return every[0] if every else None
 
 
 def preamble_for(func, depth=HELPER_DEPTH, seen=None):

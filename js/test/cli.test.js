@@ -1753,3 +1753,72 @@ test('all --scan carries the CENSUS AS DATA', async () => {
   assert.notEqual(data.scan, null);
   assert.equal(data.scan.probed, 2);
 });
+
+// --------------------------------------------------------------------------- //
+// Refusals are NOT independent
+//
+// The census tallies ONE reason per function, so its buckets do not add up. A reader
+// looking at `arity 4  14` concludes that raising the arity cap gets fourteen more
+// functions probed. Measured on a real tree it gets none: all fourteen were also
+// refused by `needs docx`, `touches os` or `needs matplotlib`. The tally moved and the
+// probed count did not.
+// --------------------------------------------------------------------------- //
+
+// A FUNCTION-level fixture, deliberately. `require("fs")` or `Math.random()` anywhere
+// in the file refuses the whole MODULE, and a file-level refusal never reaches the
+// function gate at all — so a fixture built from those would test the wrong gate and
+// pass for the wrong reason. Arity and `this` are both read from the function itself.
+const MANY_GATES = 'export function multi(a, b, c, d) {\n'
+  + '  return this.scale * a + b + c + d;\n}\n';
+
+test('functionRefusals names EVERY gate and functionRefusal names the first', async () => {
+  const { functionRefusal, functionRefusals } = await import('../src/sameness.js');
+  // ARITY ONE, DELIBERATELY. The arity and zero-arity reasons are prepended OUTSIDE the
+  // pattern walk, so an arity-4 fixture reaches `length > 1` on that entry alone and
+  // passes even when the walk is crippled to return only its first hit. A mutation that
+  // did exactly that came back NOT DETECTED against the arity-4 version: the fixture
+  // could not tell the guard from its absence. Every reason below comes from the walk.
+  const src = 'function multi(a) { const t = Date.now(); return Math.random() + t + a; }';
+  const every = functionRefusals(src, 1);
+  assert.ok(every.length > 1, JSON.stringify(every));
+  assert.ok(every.some((r) => /clock/.test(r)), JSON.stringify(every));
+  assert.ok(every.some((r) => /random/.test(r)), JSON.stringify(every));
+  // ONE ENUMERATION, and `functionRefusal` reads its front rather than repeating it.
+  assert.equal(functionRefusal(src, 1), every[0]);
+});
+
+test('a reason is counted ONCE however often it is tripped', async () => {
+  // Two patterns can carry the same `why`; counting it twice would report the table's
+  // shape where a reader expects the gate's.
+  const { functionRefusals } = await import('../src/sameness.js');
+  const src = 'function f(a) { return Date.now() + Date.now() + new Date(a); }';
+  const every = functionRefusals(src, 1);
+  assert.equal(new Set(every).size, every.length, JSON.stringify(every));
+});
+
+test('a clean function has NO refusals', async () => {
+  // The guard must be readable in both directions: a detector that only ever says no
+  // is one nobody can tell from a broken one.
+  const { functionRefusal, functionRefusals } = await import('../src/sameness.js');
+  assert.deepEqual(functionRefusals('function f(a) { return a * 2; }', 1), []);
+  assert.equal(functionRefusal('function f(a) { return a * 2; }', 1), null);
+});
+
+test('why SAYS how many gates rather than just the first', async () => {
+  // `why` is where somebody goes after reading the census, which makes it the place
+  // the census's shape is most likely to have misled them.
+  const root = tree({ 'm.js': MANY_GATES });
+  const { code, text } = await cli('why', `${path.join(root, 'm.js')}::multi`);
+  assert.equal(code, 0, text);
+  assert.match(text, /trips \d+ gates, not one/);
+  assert.match(text, /clearing that one alone/);
+});
+
+test('a function tripping ONE gate keeps the plain detail', async () => {
+  // No number where there is nothing to count: `1 gate, not one` would be noise, and a
+  // detail that fires on every refusal stops being read.
+  const root = tree({ 'm.js': 'export function solo() { return 7; }\n' });
+  const { code, text } = await cli('why', `${path.join(root, 'm.js')}::solo`);
+  assert.equal(code, 0, text);
+  assert.doesNotMatch(text, /gates, not one/);
+});

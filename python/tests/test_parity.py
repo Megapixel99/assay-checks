@@ -306,6 +306,36 @@ class TheTwoHalvesAgree(unittest.TestCase):
         for source in (py("cli.py"), js("cli.js")):
             self.assertIn("NOT checked for staleness", source)
 
+    def test_both_halves_enumerate_EVERY_gate_and_read_the_FIRST_off_it(self):
+        """The census tallies one reason per function, so its buckets are not
+        independent — and a half that could only name the first would report a
+        different, shorter answer to `assay why` than the other.
+
+        ONE ENUMERATION PER HALF, with the single-reason accessor reading its front. A
+        second list of gates kept in step by hand is the duplication this package
+        exists to report, and the way the two would drift is silent: the census would
+        count a reason `why` never names.
+        """
+        from assay.sameness import purity, refusals         # noqa: PLC0415
+
+        self.assertIn("def refusals(func):", py("sameness.py"))
+        self.assertIn("export function functionRefusals(", js("sameness.js"))
+        # The single-reason accessor DELEGATES rather than re-deciding, in both.
+        self.assertIn("every = refusals(func)", py("sameness.py"))
+        self.assertIn("functionRefusals(source, arity)", js("sameness.js"))
+        # A clean function refuses nothing, so the guard reads in both directions.
+        self.assertEqual(refusals.__doc__.split("\n")[0].strip()[:5], "EVERY")
+        self.assertIsNotNone(purity.__doc__)
+
+    def test_both_halves_SAY_when_a_refusal_is_not_the_only_one(self):
+        """`arity 4  14` invites the reader to raise the arity cap; measured on a real
+        tree that frees none of the fourteen, because every one of them also trips a
+        gate the tally never showed. Both halves have to say so or the same function
+        gets two different explanations."""
+        for source in (py("cli.py"), js("cli.js")):
+            self.assertIn(flat("gates, not one"), flat(source))
+            self.assertIn(flat("the census counts only the FIRST"), flat(source))
+
     def test_both_halves_carry_the_CENSUS_AS_DATA_out_of_a_complete_run(self):
         """`all --scan --json` answered `"scan": null` in JavaScript and the census in
         Python — one documented invocation, two different documents, decided by which

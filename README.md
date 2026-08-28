@@ -180,6 +180,28 @@ two ways in, because it is the same question asked one step earlier: writing the
 first in order to be told the file was never the problem is what `--stdin` exists to
 avoid.
 
+**A refusal reason is the FIRST gate, not the only one — and the census cannot show
+that.** The tally counts one reason per function, so its buckets are not independent
+and do not add up:
+
+```
+  no arguments                                 21
+  arity 4                                      14
+  needs docx                                   12
+```
+
+Raising the arity cap there frees none of the fourteen: every one also trips `needs
+docx`, `touches os` or `needs matplotlib`. `assay why` is where that gets said, because
+it is where somebody goes after reading the census:
+
+```
+$ assay why training/self_play_loop.py::retrain
+look     training/self_play_loop.py::retrain — arity 4 (no ladder above 3)
+         it trips 5 gates, not one: arity 4 (no ladder above 3); touches random;
+         touches subprocess; touches os; calls open() — the census counts only the
+         FIRST, so clearing that one alone would still leave this function unprobed
+```
+
 **A query the ladder cannot tell apart is a `look`, never a `none`.** The census files
 every function it cannot discriminate under *not probed*, so a constant or a projection
 can only fail to find the other constants and projections — the match was never

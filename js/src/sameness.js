@@ -296,11 +296,12 @@ export function stripNonCode(source, blankStrings = true) {
  * lex the file it returns null and the raw match stands — refusing something probeable
  * costs coverage and says so in the census; the other mistake loads it.
  */
-function firstGate(patterns, source) {
+function allGates(patterns, source) {
   // Lexed only when a pattern actually matches the raw text, and at most once per
   // scope. A clean file trips nothing and is never scanned at all; this runs per file
   // AND per function, so doing it eagerly would lex a large module dozens of times.
   const cache = new Map();
+  const found = [];
   const cleaned = (scope) => {
     if (!cache.has(scope)) cache.set(scope, stripNonCode(source, scope === CODE));
     return cache.get(scope);
@@ -309,9 +310,18 @@ function firstGate(patterns, source) {
     if (!pattern.test(source)) continue;
     const text = cleaned(scope);
     if (text !== null && !pattern.test(text)) continue;
-    return why;
+    // ONE ENTRY PER REASON, not per occurrence: two patterns can carry the same `why`,
+    // and counting it twice would report the table's shape where a reader expects the
+    // gate's.
+    if (!found.includes(why)) found.push(why);
   }
-  return null;
+  return found;
+}
+
+/** The FIRST gate `source` trips, or null. Reads the front of `allGates`. */
+function firstGate(patterns, source) {
+  const [first] = allGates(patterns, source);
+  return first === undefined ? null : first;
 }
 
 /** Why this FILE may not be loaded at all, or null. */
@@ -377,11 +387,37 @@ export function declaredArity(source) {
   return count;
 }
 
-/** Why this FUNCTION may not be probed, or null. `source` is fn.toString(). */
+/**
+ * EVERY reason this FUNCTION may not be probed, in gate order. `[]` if none.
+ *
+ * `functionRefusal` answers with the FIRST one, because one refusal is enough to
+ * REFUSE. This answers with all of them, because one is not enough to ACT ON — and the
+ * difference is a wrong inference the census actively invites.
+ *
+ * THE CENSUS TALLIES ONE REASON PER FUNCTION, SO ITS BUCKETS ARE NOT INDEPENDENT. A
+ * reader looking at `arity 4  14` reasonably concludes that raising the arity cap would
+ * get fourteen more functions probed. Measured on a real tree, it gets none: those
+ * fourteen moved into `needs docx`, `touches os` and `needs matplotlib`, the tally
+ * changed, and the probed count did not move at all. Every one was already refused by a
+ * second gate that the first one hid.
+ */
+export function functionRefusals(source, arity) {
+  const found = [];
+  if (arity === 0) found.push('no arguments (a ladder cannot discriminate)');
+  if (arity > MAX_ARITY) found.push(`arity ${arity} (no ladder above ${MAX_ARITY})`);
+  return [...found, ...allGates(IMPURE_FUNCTION, source)];
+}
+
+/**
+ * Why this FUNCTION may not be probed, or null. `source` is fn.toString().
+ *
+ * ONE ENUMERATION, and this reads its front. A second list of gates kept in step with
+ * `functionRefusals` by hand is the duplication this package exists to report, and the
+ * way the two would drift is silent: the census would count a reason `why` never names.
+ */
 export function functionRefusal(source, arity) {
-  if (arity === 0) return 'no arguments (a ladder cannot discriminate)';
-  if (arity > MAX_ARITY) return `arity ${arity} (no ladder above ${MAX_ARITY})`;
-  return firstGate(IMPURE_FUNCTION, source);
+  const [first] = functionRefusals(source, arity);
+  return first === undefined ? null : first;
 }
 
 /* -------------------------------------------------------------------------- *
