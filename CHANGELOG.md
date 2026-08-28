@@ -72,6 +72,80 @@ and buys nothing either, on the evidence available. A coverage change justified 
 number measured as zero is the defect this package exists to report.
 
 Five mutations added, two existing anchors repaired.
+### `anchors`: zero extracted anchors is a `look`, not an `ok`
+
+`ok  <path>  0 anchors, each matching exactly once` is literally true of the empty set,
+so a harness whose table shape the extractor never recognised printed the same line as
+one whose anchors are all unique. Measured on the tree this tool is pointed at most
+often: **296 anchors across 101 runners, "no findings" — and 82 of the 95 audited
+runners had contributed ZERO of them.** Thirteen supplied all 296. Among the 82 was a
+harness carrying an anchor that matches twice in the file it points at: the exact defect
+the rule exists to find, under an `ok`.
+
+Two zeros are kept apart, because they are different things to do next:
+
+| | |
+|---|---|
+| no table found at all | nothing here is recognised as a mutation table |
+| a table found, no readable anchor | the shape was not recognised |
+
+A `look` rather than a finding — a harness legitimately holding no anchors exists, one
+that replaces functions or mutates strings in memory, and `anchor_exempt` is where that
+is said with the reason. What must not happen is the tool claiming to have checked it.
+
+**The totals now name the denominator.** "296 anchors checked across 101 runners" is a
+true sentence about a run in which 82 of them contributed nothing, and it is the
+sentence a reader turns into "101 runners are clean". Both halves print how many
+contributed zero and how many of those are exempt. This is the aggregate form of the gap
+0.4.0 closed for a single finding: a number without its population reads as coverage.
+
+### `anchors`: the table a harness unpacks is a table (Python half)
+
+A table was recognised by its NAME — anything beginning `MUTATION` — and the anchor by
+counting back from the end of the entry. Both bounds cost real coverage:
+
+- `M = [(G, old, new, name, why), ...]` is a mutation table under a name no prefix rule
+  matches.
+- `(path, needle, repl, want_check, why)` puts a bare word **and a sentence of prose**
+  after the replacement, and no rule over values separates a sentence from a replacement
+  without guessing. All of it was offered as unreadable: 584 `look` lines.
+
+Those harnesses already say which column is which, in the loop that consumes the table:
+
+```python
+for path, needle, repl, want_check, why in MUTATIONS:
+```
+
+That is the declaration, not a guess. The column **before** the one named as the
+replacement is the anchor — adjacency, the same `replace(old, new)` invariant the value
+rule rests on — and a table is now recognised by **being consumed as one**. Columns are
+counted by position in the ENTRY rather than among its strings, which is what reaches a
+target column that is a module-level variable and so is not a string constant at all.
+
+**A wider value rule was tried first and measured.** Against the 947 entries whose
+columns are declared, the best variant read 586 correctly, offered 345 as unreadable and
+got **16 wrong** — and a wrong anchor is a false dead-anchor finding on a healthy
+harness. The declaration is exact for all 947 and changes none of the 298 anchors the
+value rule already read correctly, which stays underneath it unchanged.
+
+Guarded where it could go wrong rather than trusted: used only when the entry's width
+matches the unpack's, so a `+=` block of narrower entries is not read against the wrong
+declaration; only when the iterable is a bare name, since `for i, row in
+enumerate(TABLE)` shifts every column; and an anchor column that is not a string
+constant is offered as unreadable rather than read around. That last case was live —
+three entries were being reported as one clean anchor apiece, and the anchor was a
+declared test name.
+
+On that tree: 296 anchors becomes 914, runners contributing zero goes 82 → 0 (the six
+exempt aside), 584 `look` lines become 3, and **14 findings appear where there were
+none**; ten were verified by hand against each harness's own declared target.
+
+**The halves are now deliberately unequal, and `test_parity` says so.** Python parses the
+harness and can read its declaration; the JavaScript half reads the table as a VALUE and
+never sees source. This is safe in one direction only, which is why it is allowed: where
+a declaration is absent both halves fall back to the same value rule, and where it is
+present Python is more precise while the JavaScript half offers a `look`. The two never
+contradict each other about a repository — they differ in how much either can settle.
 
 ## 0.5.0
 

@@ -39,6 +39,16 @@
  * A HARNESS THAT EXPORTS NO TABLE IS A `look`, never a finding. It has not opted into
  * being read this way, and inventing a reading of it is the thing this file exists not
  * to do.
+ *
+ * AND SO IS A HARNESS THAT YIELDS ZERO ANCHORS, which is the failure this file was most
+ * recently wrong about. "0 anchors, each matching exactly once" is true of the empty set
+ * and reads as a clean bill of health, so a harness whose table shape was never
+ * recognised printed exactly what a harness with a page of unique anchors printed.
+ * Measured on the Python half's real tree: 82 of 95 audited runners printed it, 13
+ * carried every anchor, and one of the 82 held an anchor matching TWICE in the file it
+ * points at — the exact defect this audit exists to find, under an `ok`. A count of zero
+ * is now the tool saying it could not read the table, and the totals name how many
+ * harnesses said it.
  */
 
 import { spawn } from 'node:child_process';
@@ -237,19 +247,25 @@ export async function auditAnchors(root, config, report = new Report()) {
 
   report.note('ANCHORS — every anchor must match exactly once in some file\n');
   let total = 0;
+  let exempt = 0;
+  let measured = 0;
+  let silent = 0;
   for (const rel of runners) {
     if (config.anchorExempt.has(rel)) {
+      exempt += 1;
       report.note(`  exempt   ${rel.padEnd(46)} ${config.anchorExempt.get(rel).slice(0, 60)}`);
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
     const result = await readTable(path.join(root, rel));
     if (result.error) {
+      silent += 1;
       report.look(`${rel}: ${result.error}`, rel,
         'the table was not read, so nothing here is a claim about its anchors');
       continue;
     }
     if (result.absent) {
+      silent += 1;
       report.look(`${rel} exports no MUTATIONS table`, rel,
         'this half reads the table as DATA rather than parsing source, so a harness '
         + 'opts in with `export const MUTATIONS = [...]` — a regex that guessed which '
@@ -305,11 +321,37 @@ export async function auditAnchors(root, config, report = new Report()) {
         + `${JSON.stringify(label.slice(0, 50))} — more strings than either documented `
         + 'table shape', rel);
     }
-    if (!ambiguous.length && !dead.length) {
+    // ZERO ANCHORS IS A LOOK, NOT AN `ok`. The sentence below is true of the empty set
+    // and reads as a clean bill of health, so a harness whose shape was never
+    // recognised printed exactly what a harness with a page of unique anchors printed.
+    //
+    // A LOOK RATHER THAN A FINDING because a harness legitimately holding no anchors
+    // exists — one that replaces functions, or mutates strings in memory — and
+    // `anchorExempt` is where that is said, with the reason. What must not happen is
+    // this tool claiming to have checked it.
+    if (!found.length) {
+      silent += 1;
+      report.look(`${rel}: its exported table yielded NO anchor this can read — the `
+        + 'shape was not recognised, so nothing here is a claim about its anchors', rel,
+        `the table holds ${result.table.length} entr`
+        + `${result.table.length === 1 ? 'y' : 'ies'}; `
+        + 'an entry is read as `[label, old, new]` or `[label, target, old, new]`, and '
+        + 'a harness that carries neither belongs in `anchorExempt` with the reason');
+    } else if (!ambiguous.length && !dead.length) {
+      measured += 1;
       report.ok(`${rel.padEnd(46)} ${found.length} anchors, each matching exactly once`,
         rel);
+    } else {
+      measured += 1;
     }
   }
-  report.note(`\n  ${total} anchors checked across ${runners.length} runners`);
+  // THE DENOMINATOR IS PRINTED, because the numerator alone reads as coverage. "296
+  // anchors checked across 101 runners" is a true sentence about a run in which 82 of
+  // those runners contributed nothing at all, and it is the sentence a person reads as
+  // "101 runners are clean". A zero-anchor runner is not a clean one.
+  report.note(`\n  ${total} anchors from ${measured} of ${runners.length} runners, `
+    + 'each counted per file');
+  report.note(`  ZERO anchors: ${silent + exempt} runner(s), of which ${exempt} exempt `
+    + '— their tables were not read,\n  so no line above is evidence about them');
   return report;
 }

@@ -281,6 +281,54 @@ test('a harness with no exported table is a LOOK and never fails the run', async
   assert.match(messages(report, 'look')[0], /exports no MUTATIONS table/);
 });
 
+test('ZERO ANCHORS IS A LOOK, NOT AN `ok`', async () => {
+  // The failure this half was most recently wrong about. "0 anchors, each matching
+  // exactly once" is true of the empty set and reads as a clean bill of health, so a
+  // harness whose table shape was never recognised printed exactly what a harness with
+  // a page of unique anchors printed. Measured on the Python half's real tree: 82 of 95
+  // audited runners printed it, and one of the 82 held an anchor matching TWICE in the
+  // file it points at — the exact defect this audit exists to find, under an `ok`.
+  const report = await audit({
+    'src/thing.js': TARGET,
+    // Exported, so it is not `absent`; every entry too short to carry an anchor, so
+    // there is nothing to read out of it.
+    'mutations-a.js': harness("[['just a label']]"),
+  });
+  assert.deepEqual(report.findings, []);
+  assert.deepEqual(report.oks, []);
+  assert.match(messages(report, 'look')[0], /yielded NO anchor this can read/);
+  // ...and it says the table was not read, NOT that everything matched.
+  for (const message of messages(report, 'look')) {
+    assert.doesNotMatch(message, /matching exactly once/);
+  }
+});
+
+test('a harness WITH anchors still says ok', async () => {
+  // The other direction, and the reason the change above is not just louder: a zero
+  // that becomes a `look` is only an improvement if a real count still reads as one.
+  const report = await audit({
+    'src/thing.js': TARGET,
+    'mutations-a.js': harness("[['label', '  return x + 1;', '  return x - 1;']]"),
+  });
+  assert.equal(report.oks.length, 1);
+  assert.match(report.oks[0].message, /1 anchors, each matching exactly once/);
+  assert.deepEqual(report.of('look'), []);
+});
+
+test('the TOTALS name the denominator, not just the count', async () => {
+  // "296 anchors checked across 101 runners" is a true sentence about a run in which 82
+  // of those runners contributed nothing, and it is the sentence a person reads as "101
+  // runners are clean". A zero-anchor runner is not a clean one.
+  const report = await audit({
+    'src/thing.js': TARGET,
+    'mutations-a.js': harness("[['label', '  return x + 1;', '  return x - 1;']]"),
+    'mutations-b.js': harness("[['just a label']]"),
+  });
+  const notes = report.sections.join('\n');
+  assert.match(notes, /1 anchors from 1 of 2 runners/);
+  assert.match(notes, /ZERO anchors: 1 runner\(s\)/);
+});
+
 test('no harnesses at all is reported, not treated as a pass', async () => {
   const report = await audit({ 'src/thing.js': TARGET });
   assert.deepEqual(report.findings, []);

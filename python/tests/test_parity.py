@@ -942,6 +942,54 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertIn("if 2 <= len(parts) <= 4:", py("anchors.py"))
         self.assertIn("if (parts.length >= 2 && parts.length <= 4)", js("anchors.js"))
 
+    def test_the_PYTHON_HALF_ALONE_reads_a_harness_s_DECLARED_columns(self):
+        """The one place the halves are deliberately UNEQUAL, stated rather than left
+        for a reader to assume away.
+
+        Python parses the harness, so it can read the loop that consumes the table —
+        `for path, needle, repl, want_check, why in MUTATIONS:` — and take the column
+        the harness itself names. The JavaScript half reads the table as a VALUE and
+        never sees source, so that reading is not available to it and no amount of
+        care would make it so.
+
+        THIS IS SAFE IN ONLY ONE DIRECTION, which is the whole reason it is allowed.
+        Where the declaration is absent both halves fall back to the same value rule,
+        pinned above. Where it is present Python is MORE precise and the JavaScript
+        half offers a `look` — so the two never contradict each other about a
+        repository, they only differ in how much either can settle. A change that
+        made either half GUESS where the other looked would break that, and it is
+        what this test watches.
+        """
+        source = py("anchors.py")
+        self.assertIn("def declared_columns(tree):", source)
+        # Adjacency, not position: the anchor is the column BEFORE the replacement, so
+        # the reading cannot be off by a column however many columns precede it.
+        self.assertIn("REPLACEMENT_NAMES", source)
+        self.assertIn("index = i - 1", source)
+        # ...and the value rule is still there underneath it, unchanged, because it is
+        # what both halves share.
+        self.assertIn("if 2 <= len(parts) <= 4:", source)
+        self.assertNotIn("declaredColumns", js("anchors.js"))
+
+    def test_both_halves_refuse_to_call_ZERO_ANCHORS_an_ok(self):
+        """"0 anchors, each matching exactly once" is true of the empty set and reads as
+        a clean bill of health. A half that still printed it would report a harness whose
+        shape it never recognised as a harness it had checked — and measured on a real
+        tree that was 82 of 95 runners, one of them carrying an anchor that matched
+        twice in the file it points at.
+
+        A LOOK IN BOTH, never a finding: a harness legitimately holding no anchors
+        exists, and the exemption table is where that is said, with the reason.
+        """
+        for source in (py("anchors.py"), js("anchors.js")):
+            self.assertIn("ZERO", source)
+            self.assertIn("yielded NO anchor this can read", source)
+        # ...and both print the DENOMINATOR, so the count cannot read as coverage.
+        self.assertIn("ZERO anchors: %d runner(s), of which %d exempt",
+                      py("anchors.py"))
+        self.assertIn("ZERO anchors: ${silent + exempt} runner(s), of which "
+                      "${exempt} exempt", js("anchors.js"))
+
     def test_both_halves_keep_EVERY_harness_out_of_the_corpus(self):
         """In either language, which is the part a single-language audit gets wrong. A
         polyglot repository has a `mutations-x.js` beside a `mutations_a.py`; each half
