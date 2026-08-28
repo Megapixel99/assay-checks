@@ -15,7 +15,7 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
-## Unreleased
+## 0.5.0
 
 ### `all --sweep`: the cross half joins the complete run
 
