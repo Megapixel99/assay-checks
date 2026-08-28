@@ -32,7 +32,7 @@ class Parsing(unittest.TestCase):
         return os.path.join(project({"mutations_a.py": body}), "mutations_a.py")
 
     def test_an_assign_table_is_read(self):
-        found, _ = anchors_of(self.runner_path(
+        found, _, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'))
         self.assertIn("    return x + 1", found)
 
@@ -40,18 +40,18 @@ class Parsing(unittest.TestCase):
         """`MUTATIONS += [...]` is an AugAssign, not an Assign. Reading only the
         latter silently skips every anchor added in a `+=` block, and the tell is a
         total that does not move when a mutation is added — which nobody watches."""
-        found, _ = anchors_of(self.runner_path(
+        found, _, _ = anchors_of(self.runner_path(
             'MUTATIONS = []\n'
             'MUTATIONS += [("label", "    return x + 1", "    return x - 1")]\n'))
         self.assertIn("    return x + 1", found)
 
     def test_a_short_LABEL_is_not_mistaken_for_an_anchor(self):
-        found, _ = anchors_of(self.runner_path(
+        found, _, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("lbl", "    return x + 1", "    return x - 1")]\n'))
         self.assertNotIn("lbl", found)
 
     def test_a_four_element_table_with_a_target_column_still_yields_the_anchor(self):
-        found, _ = anchors_of(self.runner_path(
+        found, _, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("a label here", "target.py", "    return x + 1",'
             ' "    return x - 1")]\n'))
         self.assertIn("    return x + 1", found)
@@ -65,7 +65,7 @@ class Parsing(unittest.TestCase):
         matches nothing by construction, so every entry in such a table becomes a
         dead-anchor finding on a harness that is perfectly healthy.
         """
-        found, _ = anchors_of(self.runner_path(
+        found, _, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("a label here", "    return x + 1", "    return x - 1",'
             ' "test_handle_adds_one")]\n'))
         self.assertIn("    return x + 1", found)
@@ -76,7 +76,7 @@ class Parsing(unittest.TestCase):
         position swap: the target-column shape ends in a replacement, not a name, and
         its anchor is still the third column. This package's own runner is that
         shape, so getting it wrong would be self-inflicted."""
-        found, _ = anchors_of(self.runner_path(
+        found, _, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("a label here", "target.py", "    return x + 1",'
             ' "    return x - 1")]\n'))
         self.assertIn("    return x + 1", found)
@@ -87,15 +87,93 @@ class Parsing(unittest.TestCase):
         three-column mutation whose replacement happens to be a bare identifier, and
         re-reading it would trade a false finding on one shape for a false finding on
         another. Measured on a real tree: one such entry across 34 harnesses."""
-        found, _ = anchors_of(self.runner_path(
+        found, _, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("label", "    return x + 1", "pass")]\n'))
         self.assertIn("    return x + 1", found)
         self.assertNotIn("label", found)
 
     def test_a_table_under_another_name_is_ignored(self):
-        found, _ = anchors_of(self.runner_path(
+        found, _, _ = anchors_of(self.runner_path(
             'OTHER_LIST = [("label", "    return x + 1", "    return x - 1")]\n'))
         self.assertEqual(found, [])
+
+    def test_a_table_the_harness_UNPACKS_BY_NAME_is_read_under_any_name(self):
+        """`M = [(G, old, new, name, why), ...]` is a mutation table under a name no
+        prefix rule matches, and the loop that consumes it says so in words:
+
+            for path, old, new, name, why in M:
+
+        Measured on a real tree: four runners carry their table as `M`, and every one
+        of them printed `ok ... 0 anchors, each matching exactly once`.
+        """
+        found, _, tables = anchors_of(self.runner_path(
+            'G = "target.py"\n'
+            'M = [(G, "    return x + 1", "    return x - 1", "test_it", "why")]\n'
+            'for path, old, new, name, why in M:\n'
+            '    pass\n'))
+        self.assertEqual(tables, ["M"])
+        self.assertIn("    return x + 1", found)
+
+    def test_the_declared_column_is_counted_BY_POSITION_IN_THE_ENTRY(self):
+        """Which is the whole reason it reaches shapes the value rule cannot. A target
+        column that is a module-level variable is not a string constant, so it vanishes
+        from the strings the value rule counts back through — and with two trailing
+        metadata columns behind it, counting back lands on the declared test NAME.
+
+        The declaration counts that column because the harness does.
+        """
+        found, _, _ = anchors_of(self.runner_path(
+            'G = "target.py"\n'
+            'M = [(G, "    return x + 1", "    return x - 1", "test_it",\n'
+            '      "a sentence of prose explaining why this mutation matters")]\n'
+            'for path, old, new, name, why in M:\n'
+            '    pass\n'))
+        self.assertEqual(found, ["    return x + 1"])
+        self.assertNotIn("test_it", found)
+
+    def test_the_column_BEFORE_the_replacement_is_taken_when_it_is_named(self):
+        """A harness naming its replacement `repl` fixes the anchor by ADJACENCY, so
+        the reading cannot be off by a column however many columns precede it."""
+        found, _, _ = anchors_of(self.runner_path(
+            'MUTATIONS = [("t.py", "    return x + 1", "    return x - 1", "c", "w")]\n'
+            'for path, needle, repl, want_check, why in MUTATIONS:\n'
+            '    pass\n'))
+        self.assertEqual(found, ["    return x + 1"])
+
+    def test_a_declaration_is_IGNORED_when_the_ENTRY_IS_A_DIFFERENT_WIDTH(self):
+        """A `+=` block appending narrower entries to the same table would otherwise be
+        read against the wrong declaration, off by however much the widths differ. The
+        value rule takes those, which is what it is for."""
+        found, _, _ = anchors_of(self.runner_path(
+            'MUTATIONS = [("t.py", "    return x + 1", "    return x - 1", "c", "w")]\n'
+            'MUTATIONS += [("label", "    return x - 1", "    return 0")]\n'
+            'for path, needle, repl, want_check, why in MUTATIONS:\n'
+            '    pass\n'))
+        self.assertEqual(sorted(found), ["    return x + 1", "    return x - 1"])
+
+    def test_a_declaration_over_a_CALL_rather_than_a_NAME_is_not_used(self):
+        """`for i, row in enumerate(TABLE)` shifts every column, and a rule that read
+        the names anyway would be confidently off by one — the failure this exists to
+        avoid, arriving inside the fix for it."""
+        found, _, _ = anchors_of(self.runner_path(
+            'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'
+            'for i, (label, old, new) in enumerate(MUTATIONS):\n'
+            '    pass\n'))
+        # Read by the value rule, which gets this three-column shape right anyway.
+        self.assertEqual(found, ["    return x + 1"])
+
+    def test_a_COMPUTED_anchor_column_is_offered_rather_than_read_around(self):
+        """`ast` sees an expression where the harness will see a string. Falling back to
+        the value rule here would read some OTHER column and report it matching exactly
+        once, which is a vacuous pass wearing a number. Measured on a real tree: three
+        entries, each reported as one clean anchor that was a declared test name."""
+        found, unreadable, _ = anchors_of(self.runner_path(
+            'PREFIX = "    return "\n'
+            'MUTATIONS = [("t.py", PREFIX + "x + 1", "    return x - 1", "c", "w")]\n'
+            'for path, needle, repl, want_check, why in MUTATIONS:\n'
+            '    pass\n'))
+        self.assertEqual(found, [])
+        self.assertEqual(unreadable, ["t.py"])
 
     def test_reading_a_runner_does_not_IMPORT_it(self):
         """Importing a harness drags in the tool it tests, and one that does work at
@@ -209,6 +287,65 @@ class Auditing(unittest.TestCase):
         self.assertEqual(rep.exit_code(), 0)
         self.assertTrue(any("cannot tell which column" in i.message
                             for i in rep.looks), [i.message for i in rep.looks])
+
+    def test_ZERO_EXTRACTED_ANCHORS_IS_A_LOOK_NOT_AN_OK(self):
+        """The failure that made this audit vacuous. "0 anchors, each matching exactly
+        once" is true of the empty set and reads as a clean bill of health, so a runner
+        whose table shape was never recognised printed exactly what a runner with a
+        page of unique anchors printed.
+
+        Measured on a real tree: 82 of 95 audited runners printed it, 13 carried every
+        anchor, and one of the 82 held an anchor matching TWICE in the file it points at
+        — this rule's own defect, sitting under an `ok`.
+        """
+        rep = self.audit({
+            "a.py": TARGET,
+            "mutations_a.py":
+                'NOT_A_TABLE = [("label", "    return x + 1", "    return x - 1")]\n'})
+        self.assertEqual(rep.oks, [], [i.message for i in rep.oks])
+        self.assertTrue(any("NO mutation table found" in i.message
+                            for i in rep.looks), [i.message for i in rep.looks])
+        # ...and it says the table was not read, NOT that everything matched.
+        for item in rep.looks:
+            self.assertNotIn("matching exactly once", item.message)
+
+    def test_a_table_that_yields_NO_READABLE_ANCHOR_is_a_look_too(self):
+        """The other zero: a table this DID find and could not read an anchor out of.
+        Kept apart from "no table at all" because they are two different things to do
+        next, and collapsing them reports a shape this could not parse as a harness
+        with nothing in it."""
+        rep = self.audit({
+            "a.py": TARGET,
+            "mutations_a.py":
+                'MUTATIONS = [("one string only",)]\n'})
+        self.assertEqual(rep.oks, [])
+        self.assertTrue(any("yielded NO anchor this can read" in i.message
+                            for i in rep.looks), [i.message for i in rep.looks])
+
+    def test_A_RUNNER_WITH_ANCHORS_STILL_SAYS_OK(self):
+        """The other direction, and the reason the change above is not just louder. A
+        zero that becomes a `look` is only an improvement if a real count still reads
+        as one — otherwise the fix trades a silent pass for an unreadable report."""
+        rep = self.audit({
+            "a.py": TARGET,
+            "mutations_a.py":
+                'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n'})
+        self.assertEqual(len(rep.oks), 1, [i.message for i in rep.oks])
+        self.assertIn("1 anchors, each matching exactly once", rep.oks[0].message)
+        self.assertEqual(rep.looks, [], [i.message for i in rep.looks])
+
+    def test_the_TOTALS_NAME_THE_DENOMINATOR_not_just_the_count(self):
+        """"296 anchors checked across 101 runners" is a true sentence about a run in
+        which 82 of those runners contributed nothing, and it is the sentence a person
+        reads as "101 runners are clean". A zero-anchor runner is not a clean one."""
+        rep = self.audit({
+            "a.py": TARGET,
+            "mutations_a.py":
+                'MUTATIONS = [("label", "    return x + 1", "    return x - 1")]\n',
+            "mutations_b.py": 'NOT_A_TABLE = [("label", "x", "y")]\n'})
+        notes = "\n".join(rep.sections)
+        self.assertIn("1 anchors from 1 of 2 runners", notes)
+        self.assertIn("ZERO anchors: 1 runner(s)", notes)
 
     def test_an_exempt_runner_is_named_rather_than_skipped_silently(self):
         rep = self.audit(
