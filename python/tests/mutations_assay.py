@@ -725,6 +725,86 @@ MUTATIONS = [
   return trimmed[trimmed.length - 2];''',
      '''  return parts[parts.length - 2];'''),
 
+    # ---- anchors: zero is a look, in both halves ------------------------------- #
+    #
+    # THE VERSION THIS PACKAGE SHIPPED, kept as a mutation so it cannot come back
+    # quietly. `ok  <path>  0 anchors, each matching exactly once` is literally true of
+    # the empty set, so a harness whose table shape was never recognised printed the
+    # same line as one whose anchors are all unique. Measured on the tree this tool is
+    # pointed at most often: 82 of 95 audited runners printed it, and one of the 82 was
+    # carrying an anchor that matches twice in the file it points at.
+    ("anchors: zero extracted anchors goes back to being an ok",
+     "anchors.py",
+     '''        if not anchors:
+            silent += 1''',
+     '''        if False:
+            silent += 1'''),
+    # THE TWO ZEROS COLLAPSE. "no table found" and "a table found that yielded nothing"
+    # are different things to do next, and one message for both reports a shape this
+    # could not parse as a harness with nothing in it.
+    ("anchors: no-table and unreadable-table stop being different claims",
+     "anchors.py",
+     '''            if tables:
+                rep.look("%s: its table (%s) yielded NO anchor this can read''',
+     '''            if False:
+                rep.look("%s: its table (%s) yielded NO anchor this can read'''),
+    # THE NUMERATOR WITHOUT ITS POPULATION. "296 anchors checked across 101 runners" is
+    # a true sentence about a run in which 82 of those runners contributed nothing, and
+    # it is the sentence a reader turns into "101 runners are clean".
+    ("anchors: the totals stop naming how many runners contributed zero",
+     "anchors.py",
+     '''    rep.note("  ZERO anchors: %d runner(s), of which %d exempt — their tables were "
+             "not read,\\n  so no line above is evidence about them"
+             % (silent + exempt, exempt))''',
+     '''    rep.note("  every runner was read")'''),
+    ("anchors: the JavaScript half calls zero an ok and the two disagree",
+     "anchors.js",
+     '''    if (!found.length) {
+      silent += 1;''',
+     '''    if (false) {
+      silent += 1;'''),
+    ("anchors: the JavaScript totals stop naming the zero-anchor harnesses",
+     "anchors.js",
+     '''  report.note(`  ZERO anchors: ${silent + exempt} runner(s), of which ${exempt} exempt `
+    + '— their tables were not read,\\n  so no line above is evidence about them');''',
+     '''  report.note('  every harness was read');'''),
+
+    # ---- anchors: the column a harness declares -------------------------------- #
+    #
+    # THE WHOLE DECLARED READING DELETED, which is the difference between 914 anchors
+    # and 296 on that tree, and between 0 zero-contributing runners and 82.
+    ("anchors: a harness's own unpack stops being read, so wide tables go silent",
+     "anchors.py",
+     '''    declared = declared_columns(tree)''',
+     '''    declared = {}'''),
+    # ADJACENCY BROKEN BY ONE. The anchor is the column BEFORE the replacement because
+    # that is the call they feed; taking the replacement itself matches nothing by
+    # construction, so a healthy harness becomes a page of dead-anchor findings.
+    ("anchors: the declared column lands on the replacement instead of the anchor",
+     "anchors.py",
+     '''            if i > 0 and name in REPLACEMENT_NAMES:
+                index = i - 1''',
+     '''            if i > 0 and name in REPLACEMENT_NAMES:
+                index = i'''),
+    # THE ARITY GUARD DELETED. A `+=` block appending entries of a different width to
+    # the same table is then read against the wrong declaration, off by however much
+    # the widths differ — a wrong anchor, which is a false finding on healthy code.
+    ("anchors: a declaration is applied to entries of a different width",
+     "anchors.py",
+     '''            if spec and len(elts) == spec[0]:''',
+     '''            if spec:'''),
+    # A COMPUTED ANCHOR NEITHER COUNTED NOR OFFERED. `continue` still runs, so the
+    # entry leaves no trace in either list: the harness carries a mutation this audit
+    # has silently stopped having an opinion about. Three entries on that tree sat in
+    # this neighbourhood, each reported as one clean anchor that was a declared test
+    # name — the same vacuity, one door along.
+    ("anchors: a computed anchor column is silently dropped rather than offered",
+     "anchors.py",
+     '''                else:
+                    # A COMPUTED ANCHOR.''',
+     '''                elif False:
+                    # A COMPUTED ANCHOR.'''),
+
     # ---- config, read in both directions -------------------------------------- #
     ("config: broken JSON becomes an empty config rather than an error",
      "config.py",

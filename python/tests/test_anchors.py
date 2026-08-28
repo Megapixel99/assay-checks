@@ -143,13 +143,28 @@ class Parsing(unittest.TestCase):
     def test_a_declaration_is_IGNORED_when_the_ENTRY_IS_A_DIFFERENT_WIDTH(self):
         """A `+=` block appending narrower entries to the same table would otherwise be
         read against the wrong declaration, off by however much the widths differ. The
-        value rule takes those, which is what it is for."""
+        value rule takes those, which is what it is for.
+
+        THE NARROW ENTRY IS FOUR COLUMNS, NOT THREE, and that is the whole force of
+        this test rather than a detail of the fixture. The declaration here is
+        `(arity 5, anchor at column 1)`, and in a THREE-column `(label, old, new)`
+        entry column 1 IS the anchor — so dropping the guard returns the same string
+        and the test passes either way. Written that way first, and the mutation that
+        deletes the guard came back NOT DETECTED: a guard with a test that cannot fail
+        is the shape this whole package exists to report, arriving inside a change
+        about it.
+
+        At four columns, `(label, target, old, new)`, the declared index lands on the
+        TARGET. Now the two readings disagree and the guard is what decides.
+        """
         found, _, _ = anchors_of(self.runner_path(
             'MUTATIONS = [("t.py", "    return x + 1", "    return x - 1", "c", "w")]\n'
-            'MUTATIONS += [("label", "    return x - 1", "    return 0")]\n'
+            'MUTATIONS += [("label", "target.py", "    return x - 1",'
+            ' "    return 0")]\n'
             'for path, needle, repl, want_check, why in MUTATIONS:\n'
             '    pass\n'))
         self.assertEqual(sorted(found), ["    return x + 1", "    return x - 1"])
+        self.assertNotIn("target.py", found)
 
     def test_a_declaration_over_a_CALL_rather_than_a_NAME_is_not_used(self):
         """`for i, row in enumerate(TABLE)` shifts every column, and a rule that read
