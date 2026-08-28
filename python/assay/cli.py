@@ -42,8 +42,8 @@ from .config import (CONFIG_NAMES, ConfigError, apply_baseline, load,
 from .sameness import (BUNDLE_SCHEMA, PROBE_SCHEMA, UNSTATEABLE, admit, collect,
                        compare, compare_cross, cross_discriminating, cross_key,
                        cross_ladder, discriminating, discrimination_detail, group,
-                       ladder, ladder_key, probe, report_census, report_scan, resolve,
-                       resolve_source, resolve_why)
+                       ladder, ladder_key, probe, refusals, report_census,
+                       report_scan, resolve, resolve_source, resolve_why)
 from .verdicts import FINDING, Report, render, render_json
 
 
@@ -471,9 +471,7 @@ def cmd_why(args, config, out):
         return _finish(args, report, config, out)
     vector, refused = probe(func)
     if vector is None:
-        report.look("%s — %s" % (func.ref, refused), func.ref,
-                    "refused before the ladder, so it is in no bucket and can pair "
-                    "with nothing")
+        report.look("%s — %s" % (func.ref, refused), func.ref, _gates(func))
         return _finish(args, report, config, out)
     if _undiscriminated(report, func, vector):
         return _finish(args, report, config, out)
@@ -482,6 +480,27 @@ def cmd_why(args, config, out):
               % (func.ref, ladder_key(func), answered, len(vector), distinct),
               func.ref)
     return _finish(args, report, config, out)
+
+
+def _gates(func):
+    """The detail under a refusal: every gate this function trips, not just the first.
+
+    THE CENSUS COUNTS ONE REASON PER FUNCTION AND THAT INVITES A WRONG INFERENCE. A
+    reader looking at `arity 4  14` concludes that raising the arity cap gets fourteen
+    more functions probed; measured on a real tree it gets none, because all fourteen
+    were also refused by `needs docx`, `touches os` or `needs matplotlib`. The tally
+    moved and the probed count did not.
+
+    So the one place that answers about ONE function says how many gates it actually
+    trips. `assay why` is where somebody goes after reading the census, which makes it
+    the place the census's shape is most likely to have misled them.
+    """
+    every = refusals(func)
+    if len(every) > 1:
+        return ("it trips %d gates, not one: %s — the census counts only the FIRST, so "
+                "clearing that one alone would still leave this function unprobed"
+                % (len(every), "; ".join(every)))
+    return "refused before the ladder, so it is in no bucket and can pair with nothing"
 
 
 def _why_cross(func, report):

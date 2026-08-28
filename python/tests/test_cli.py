@@ -1449,6 +1449,78 @@ class AllFoldsInTheCrossHalf(unittest.TestCase):
         self.assertIn("--scan", out)
 
 
+# Three gates in one function: arity, a gated module, and a gated builtin. It is the
+# shape the census cannot show — filed under whichever gate happens to be first.
+MANY_GATES = ('import os\n\n\n'
+              'def multi(a, b, c, d):\n'
+              '    return os.getcwd() + open(a).read() + str(b) + str(c) + str(d)\n')
+
+
+class RefusalsAreNotIndependent(unittest.TestCase):
+    """The census tallies ONE reason per function, so its buckets do not add up.
+
+    A reader looking at `arity 4  14` concludes that raising the arity cap gets
+    fourteen more functions probed. Measured on a real tree it gets none: all fourteen
+    were also refused by `needs docx`, `touches os` or `needs matplotlib`. The tally
+    moved and the probed count did not.
+    """
+
+    def func(self, body=MANY_GATES, name="multi"):
+        from assay.sameness import parse                    # noqa: PLC0415
+
+        root = tree({"m.py": body})
+        return parse(os.path.join(root, "m.py")).funcs[name]
+
+    def test_refusals_names_EVERY_gate_and_purity_names_the_first(self):
+        from assay.sameness import purity, refusals         # noqa: PLC0415
+
+        func = self.func()
+        every = refusals(func)
+        self.assertGreater(len(every), 1)
+        self.assertTrue(any("arity 4" in r for r in every))
+        self.assertIn("touches os", every)
+        self.assertIn("calls open()", every)
+        # ONE ENUMERATION, and `purity` reads its front rather than repeating it.
+        self.assertEqual(purity(func), every[0])
+
+    def test_a_reason_is_counted_ONCE_however_often_it_is_tripped(self):
+        """A function touching `os` five times trips one gate. Counting occurrences
+        would report the AST's shape where a reader expects the gate's."""
+        from assay.sameness import refusals                 # noqa: PLC0415
+
+        func = self.func('import os\n\n\n'
+                         'def multi(a):\n'
+                         '    return os.getcwd() + os.sep + os.linesep + str(a)\n')
+        self.assertEqual(refusals(func).count("touches os"), 1)
+
+    def test_a_clean_function_has_NO_refusals(self):
+        """The guard must be readable in both directions: a detector that only ever
+        says no is one nobody can tell from a broken one."""
+        from assay.sameness import purity, refusals         # noqa: PLC0415
+
+        func = self.func("def multi(a):\n    return a * 2\n")
+        self.assertEqual(refusals(func), [])
+        self.assertIsNone(purity(func))
+
+    def test_why_SAYS_how_many_gates_rather_than_just_the_first(self):
+        """`why` is where somebody goes after reading the census, which makes it the
+        place the census's shape is most likely to have misled them."""
+        root = tree({"m.py": MANY_GATES})
+        code, text = run("why", os.path.join(root, "m.py") + "::multi")
+        self.assertEqual(code, 0, text)
+        self.assertIn("trips 3 gates, not one", text)
+        self.assertIn("touches os", text)
+        self.assertIn("clearing that one alone", text)
+
+    def test_a_function_tripping_ONE_gate_keeps_the_plain_detail(self):
+        """No number where there is nothing to count: `1 gate, not one` would be
+        noise, and a detail that fires on every refusal stops being read."""
+        root = tree({"m.py": "def solo(a):\n    return a\n"})
+        code, text = run("why", os.path.join(root, "m.py") + "::solo")
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("gates, not one", text)
+
+
 class ItRunsOnItself(unittest.TestCase):
 
     def test_the_package_holds_no_two_functions_that_answer_the_same_question(self):

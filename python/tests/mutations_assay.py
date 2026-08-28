@@ -450,15 +450,15 @@ MUTATIONS = [
     ("sameness: a generator is executed",
      "sameness.py",
      '''        if isinstance(sub, (ast.Yield, ast.YieldFrom)):
-            return "generator"''',
+            note("generator")''',
      '''        if False:
-            return "generator"'''),
+            note("generator")'''),
     ("sameness: a zero-arity function is probed",
      "sameness.py",
      '''    if not func.params:
-        return "no arguments (a ladder cannot discriminate)"''',
+        note("no arguments (a ladder cannot discriminate)")''',
      '''    if False:
-        return "no arguments (a ladder cannot discriminate)"'''),
+        note("no arguments (a ladder cannot discriminate)")'''),
     ("sameness: an impure sibling helper is carried in anyway",
      "sameness.py",
      '''            why = purity(helper)
@@ -830,6 +830,40 @@ MUTATIONS = [
      '''        rep.scan = scan.to_dict()
 
     def sweep_half(rep):'''),
+    # ---- refusals are NOT independent, and the census hides that -------------- #
+    #
+    # `arity 4  14` invites the reader to raise the arity cap. Measured on a real tree
+    # it frees NONE of the fourteen: every one also trips `needs docx`, `touches os` or
+    # `needs matplotlib`. The tally moved and the probed count did not.
+    ("sameness: the gate walk stops at the first reason again",
+     "sameness.py",
+     '''        if why not in found:
+            found.append(why)''',
+     '''        if why not in found and not found:
+            found.append(why)'''),
+    ("sameness.js: the gate walk stops at the first reason again",
+     "sameness.js",
+     '''    if (!found.includes(why)) found.push(why);''',
+     '''    if (!found.includes(why) && !found.length) found.push(why);'''),
+    ("cli: `why` names one gate where the function trips several",
+     "cli.py",
+     '''    every = refusals(func)
+    if len(every) > 1:''',
+     '''    every = refusals(func)
+    if False:'''),
+    ("cli.js: `why` names one gate where the function trips several",
+     "cli.js",
+     '''  if (gates.length > 1) {''',
+     '''  if (false) {'''),
+    # A reason counted per OCCURRENCE reports the AST's shape where a reader expects
+    # the gate's: `touches os` five times for one function that mentions `os` five
+    # times, and a tally that no longer counts functions at all.
+    ("sameness: a reason is counted once per occurrence rather than once",
+     "sameness.py",
+     '''        if why not in found:
+            found.append(why)''',
+     '''        if True:
+            found.append(why)'''),
     ("cli.js: `all` claims it swept when no far side was given",
      "cli.js",
      '''  if (document) {

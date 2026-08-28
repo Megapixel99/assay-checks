@@ -15,6 +15,64 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## Unreleased
+
+### The census counts one reason per function, and that invited a wrong inference
+
+Found by pointing 0.5.0 at four real Python trees rather than at its own suite.
+
+The census tallies refusals like this:
+
+```
+  no arguments                                 21
+  arity 4                                      14
+  needs docx                                   12
+  touches os                                   12
+```
+
+A reader concludes that raising the arity cap gets fourteen more functions probed. It
+gets **none**. Raising `MAX_ARITY` on that tree moved all fourteen into `needs docx`,
+`touches os` and `needs matplotlib` — the tally changed and `7 probed` did not move at
+all. Every one of them was already refused by a second gate the first one hid.
+
+**The cause is that `purity` returned the FIRST reason and stopped**, and the census
+tallies what it returns. So the buckets are not independent and do not add up, and
+nothing on screen said so.
+
+`refusals(func)` (Python) and `functionRefusals(source, arity)` (JavaScript) now
+enumerate EVERY gate a function trips, in gate order. `purity` and `functionRefusal`
+read the front of that list rather than repeating the enumeration — one decider, because
+two lists of gates kept in step by hand would drift silently, and the census would come
+to count a reason `why` never names.
+
+`assay why` says so where it matters:
+
+```
+$ assay why training/self_play_loop.py::retrain
+look     training/self_play_loop.py::retrain — arity 4 (no ladder above 3)
+         it trips 5 gates, not one: arity 4 (no ladder above 3); touches random;
+         touches subprocess; touches os; calls open() — the census counts only the
+         FIRST, so clearing that one alone would still leave this function unprobed
+```
+
+Before, that read `refused before the ladder, so it is in no bucket and can pair with
+nothing` — true, and no help at all to somebody deciding what to fix. **38 of that
+tree's 118 refused functions trip more than one gate.**
+
+A reason is counted **once per gate, not once per occurrence**: a function mentioning
+`os` five times trips one gate, and counting five would report the AST's shape where a
+reader expects the gate's. A function tripping exactly one gate keeps the plain detail,
+because `1 gate, not one` is noise and a detail that fires on every refusal stops being
+read.
+
+**`MAX_ARITY` was left at 3.** Raising it was the first thing tried, and the measurement
+above is why it was reverted rather than shipped: the ladder's rung count is flat from
+arity 2 upward (61 rungs at arity 2, 61 at arity 6), so the cap costs nothing to raise —
+and buys nothing either, on the evidence available. A coverage change justified by a
+number measured as zero is the defect this package exists to report.
+
+Five mutations added, two existing anchors repaired.
+
 ## 0.5.0
 
 ### `all --sweep`: the cross half joins the complete run

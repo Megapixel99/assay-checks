@@ -252,7 +252,7 @@ async function probeRef(ref, cross = false) {
   if (result.error) return { unresolved: result.error };
   const entry = (result.functions || []).find((f) => f.name === name);
   if (!entry) return { unresolved: `${file} exports no function named ${name}` };
-  if (entry.skip) return { display, unprobed: entry.skip };
+  if (entry.skip) return { display, unprobed: entry.skip, gates: entry.gates };
   return { entry, display };
 }
 
@@ -303,9 +303,7 @@ async function whyRef(ref, report, cross = false) {
   }
   if (entry.skip) {
     report.look(cross ? `${display} — ${entry.skip}, on the SHARED ladder`
-      : `${display} — ${entry.skip}`, display,
-    cross ? 'refused before the ladder, so it is in no bundle and can cross with nothing'
-      : 'refused before the ladder, so it is in no bucket and can pair with nothing');
+      : `${display} — ${entry.skip}`, display, gateDetail(entry, cross));
     return { answered: true };
   }
   if (cross) reportCrossProbed(entry, display, report);
@@ -326,6 +324,31 @@ function reportProbed(entry, display, report) {
   const { returned, distinct } = discriminating(entry.vector, inputs);
   report.ok(`${display} — probed on ${ladderKey(entry.arity)}: ${returned} of `
     + `${entry.vector.length} rungs answered, ${distinct} distinct value(s)`, display);
+}
+
+/**
+ * The detail under a refusal: every gate this function trips, not just the first.
+ *
+ * THE CENSUS COUNTS ONE REASON PER FUNCTION AND THAT INVITES A WRONG INFERENCE. A
+ * reader looking at `arity 4  14` concludes that raising the arity cap gets fourteen
+ * more functions probed; measured on a real tree it gets none, because all fourteen
+ * were also refused by `needs docx`, `touches os` or `needs matplotlib`. The tally
+ * moved and the probed count did not.
+ *
+ * So the one place that answers about ONE function says how many gates it actually
+ * trips. `assay why` is where somebody goes after reading the census, which makes it
+ * the place the census's shape is most likely to have misled them.
+ */
+function gateDetail(entry, cross = false) {
+  const gates = (entry && entry.gates) || [];
+  if (gates.length > 1) {
+    return `it trips ${gates.length} gates, not one: ${gates.join('; ')} — the census `
+      + 'counts only the FIRST, so clearing that one alone would still leave this '
+      + 'function unprobed';
+  }
+  return cross
+    ? 'refused before the ladder, so it is in no bundle and can cross with nothing'
+    : 'refused before the ladder, so it is in no bucket and can pair with nothing';
 }
 
 /**
@@ -908,7 +931,7 @@ async function probeStdin(text, wanted, cross = false) {
     [entry] = roster;
   }
   const display = `${SNIPPET_PATH}::${entry.name}`;
-  if (entry.skip) return { display, unprobed: entry.skip };
+  if (entry.skip) return { display, unprobed: entry.skip, gates: entry.gates };
   return { entry, display };
 }
 
@@ -1053,11 +1076,7 @@ export async function run(argv, write = (s) => process.stdout.write(s),
           report.look(opts.cross
             ? `${found.display} — ${found.unprobed}, on the SHARED ladder`
             : `${found.display} — ${found.unprobed}`, found.display,
-          opts.cross
-            ? 'refused before the ladder, so it is in no bundle and can cross with '
-              + 'nothing'
-            : 'refused before the ladder, so it is in no bucket and can pair with '
-              + 'nothing');
+          gateDetail({ gates: found.gates }, opts.cross));
         } else if (opts.cross) {
           reportCrossProbed(found.entry, found.display, report);
         } else reportProbed(found.entry, found.display, report);

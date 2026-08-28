@@ -22,7 +22,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
-  ANSWER_FD, crossOutcome, declaredArity, functionRefusal, loadRefusal, moduleBindings,
+  ANSWER_FD, crossOutcome, declaredArity, functionRefusals, loadRefusal, moduleBindings,
   PER_INPUT_MS, probeOutcome, reachRefusal,
 } from './sameness.js';
 
@@ -112,8 +112,12 @@ export async function probeFunction(fn, name, ladders, cross = false, mod = null
   if (arity < fn.length) {
     return { name, skip: `parameter list disagrees with fn.length (${arity} < ${fn.length})` };
   }
-  const why = functionRefusal(source, arity);
-  if (why) return { name, skip: why };
+  // EVERY gate, not just the first, and the extras travel WITH the refusal. The census
+  // counts one reason per function, so a reader who clears the reason at the top of the
+  // tally frees none of the functions under it — `assay why` is where that is worth
+  // saying, and the child is the only place that can see the function's source.
+  const gates = functionRefusals(source, arity);
+  if (gates.length) return { name, skip: gates[0], gates };
   // WHAT THIS FUNCTION CAN REACH, which its own text cannot answer. `functionRefusal`
   // read the body; a free name resolves in the module scope around it, and a helper
   // three lines down calling `writeFileSync` is reached by a body that mentions none of
