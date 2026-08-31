@@ -1,0 +1,216 @@
+{
+  "no_evidence": null,
+  "runs": {
+    "baseline": {
+      "command": [
+        "node",
+        "node_modules/@stryker-mutator/core/bin/stryker.js",
+        "run"
+      ],
+      "detail": "tree identical to pristine",
+      "exit_code": 0,
+      "fallback_after": 0.0,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": null,
+      "label": "baseline",
+      "orphans_outlived_leader": false,
+      "output_tail": "\u001b[32m05:21:12 (9) INFO ProjectReader\u001b[39m Found 1 of 5 file(s) to be mutated.\n\u001b[32m05:21:12 (9) INFO Instrumenter\u001b[39m Instrumented 1 source file(s) with 18 mutant(s)\n\u001b[32m05:21:12 (9) INFO ConcurrencyTokenProvider\u001b[39m Creating 1 test runner process(es).\n\u001b[32m05:21:13 (9) INFO DryRunExecutor\u001b[39m Starting initial test run (mocha test runner with \"off\" coverage analysis). This may take a while.\n\u001b[32m05:21:14 (9) INFO DryRunExecutor\u001b[39m Initial test run succeeded. Ran 3 tests in 1 second (net 1204 ms, overhead 4 ms).\n\nAll tests/calc.test.js\n  \u2713 calc clamps (killed 8)\n  \u2713 calc scores (killed 5)\n  \u2713 calc tallies (killed 3)\n\n[Survived] EqualityOperator\nsrc/calc.js:6:7\n-     if (value < low) return low;\n+     if (value <= low) return low;\n\n[Survived] EqualityOperator\nsrc/calc.js:7:7\n-     if (value > high) return high;\n+     if (value >= high) return high;\n\nRan 1.83 tests per mutant on average.\n----------|------------------|----------|-----------|------------|----------|----------|\n          | % Mutation score |          |           |            |          |          |\nFile      |  total | covered | # killed | # timeout | # survived | # no cov | # errors |\n----------|--------|---------|----------|-----------|------------|----------|----------|\nAll files |  88.89 |   88.89 |       16 |         0 |          2 |        0 |        0 |\n calc.js  |  88.89 |   88.89 |       16 |         0 |          2 |        0 |        0 |\n----------|--------|---------|----------|-----------|------------|----------|----------|\n\u001b[32m05:21:32 (9) INFO MutationTestExecutor\u001b[39m Done in 20 seconds.\n",
+      "polls": 405,
+      "scratch_roots": [],
+      "signal_delivered": null,
+      "signal_requested": "none",
+      "signal_target": "group",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "tree_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "undocumented_scratch": [],
+      "verdict": "CLEAN",
+      "wall_seconds": 21.32,
+      "watch": [
+        "src/*.js"
+      ]
+    },
+    "sigkill": {
+      "command": [
+        "node",
+        "node_modules/@stryker-mutator/core/bin/stryker.js",
+        "run"
+      ],
+      "detail": "clean source, 5 path(s) left behind: .stryker-tmp  [killed mid-run; source was never mutated on disk]",
+      "exit_code": -9,
+      "fallback_after": 10.66,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": null,
+      "label": "sigkill",
+      "orphans_outlived_leader": false,
+      "output_tail": "\u001b[32m05:21:58 (9) INFO ProjectReader\u001b[39m Found 1 of 5 file(s) to be mutated.\n\u001b[32m05:21:58 (9) INFO Instrumenter\u001b[39m Instrumented 1 source file(s) with 18 mutant(s)\n\u001b[32m05:21:58 (9) INFO ConcurrencyTokenProvider\u001b[39m Creating 1 test runner process(es).\n\u001b[32m05:21:59 (9) INFO DryRunExecutor\u001b[39m Starting initial test run (mocha test runner with \"off\" coverage analysis). This may take a while.\n\u001b[32m05:22:00 (9) INFO DryRunExecutor\u001b[39m Initial test run succeeded. Ran 3 tests in 1 second (net 1205 ms, overhead 4 ms).\n",
+      "polls": 205,
+      "scratch_roots": [
+        ".stryker-tmp"
+      ],
+      "signal_delivered": {
+        "at": 10.679,
+        "files": [],
+        "reason": "no in-place mutation observed; killed mid-run at 10.68s",
+        "signal": "KILL",
+        "target": "group"
+      },
+      "signal_requested": "kill",
+      "signal_target": "group",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "tree_after": {
+        "added": [
+          ".stryker-tmp/sandbox-CeCpXE/package-lock.json",
+          ".stryker-tmp/sandbox-CeCpXE/package.json",
+          ".stryker-tmp/sandbox-CeCpXE/src/calc.js",
+          ".stryker-tmp/sandbox-CeCpXE/stryker.config.json",
+          ".stryker-tmp/sandbox-CeCpXE/test/calc.test.js"
+        ],
+        "deleted": [],
+        "modified": []
+      },
+      "undocumented_scratch": [],
+      "verdict": "SCRATCH",
+      "wall_seconds": 11.19,
+      "watch": [
+        "src/*.js"
+      ]
+    },
+    "sigterm": {
+      "command": [
+        "node",
+        "node_modules/@stryker-mutator/core/bin/stryker.js",
+        "run"
+      ],
+      "detail": "clean source, 5 path(s) left behind: .stryker-tmp  [killed mid-run; source was never mutated on disk]",
+      "exit_code": 143,
+      "fallback_after": 10.66,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": null,
+      "label": "sigterm",
+      "orphans_outlived_leader": false,
+      "output_tail": "\u001b[32m05:21:46 (8) INFO ProjectReader\u001b[39m Found 1 of 5 file(s) to be mutated.\n\u001b[32m05:21:46 (8) INFO Instrumenter\u001b[39m Instrumented 1 source file(s) with 18 mutant(s)\n\u001b[32m05:21:46 (8) INFO ConcurrencyTokenProvider\u001b[39m Creating 1 test runner process(es).\n\u001b[32m05:21:47 (8) INFO DryRunExecutor\u001b[39m Starting initial test run (mocha test runner with \"off\" coverage analysis). This may take a while.\n\u001b[32m05:21:48 (8) INFO DryRunExecutor\u001b[39m Initial test run succeeded. Ran 3 tests in 1 second (net 1208 ms, overhead 4 ms).\n",
+      "polls": 208,
+      "scratch_roots": [
+        ".stryker-tmp"
+      ],
+      "signal_delivered": {
+        "at": 10.675,
+        "files": [],
+        "reason": "no in-place mutation observed; killed mid-run at 10.67s",
+        "signal": "TERM",
+        "target": "group"
+      },
+      "signal_requested": "term",
+      "signal_target": "group",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "tree_after": {
+        "added": [
+          ".stryker-tmp/sandbox-nyxweR/package-lock.json",
+          ".stryker-tmp/sandbox-nyxweR/package.json",
+          ".stryker-tmp/sandbox-nyxweR/src/calc.js",
+          ".stryker-tmp/sandbox-nyxweR/stryker.config.json",
+          ".stryker-tmp/sandbox-nyxweR/test/calc.test.js"
+        ],
+        "deleted": [],
+        "modified": []
+      },
+      "undocumented_scratch": [],
+      "verdict": "SCRATCH",
+      "wall_seconds": 11.23,
+      "watch": [
+        "src/*.js"
+      ]
+    },
+    "sigterm-leader": {
+      "command": [
+        "node",
+        "node_modules/@stryker-mutator/core/bin/stryker.js",
+        "run"
+      ],
+      "detail": "clean source, 5 path(s) left behind: .stryker-tmp  [killed mid-run; source was never mutated on disk]  [orphans outlived the leader; group went quiet after 0.05]",
+      "exit_code": 143,
+      "fallback_after": 10.66,
+      "group_quiet_after": 0.05,
+      "in_place_mutation_observed": null,
+      "label": "sigterm-leader",
+      "orphans_outlived_leader": true,
+      "output_tail": "\u001b[32m05:21:34 (8) INFO ProjectReader\u001b[39m Found 1 of 5 file(s) to be mutated.\n\u001b[32m05:21:34 (8) INFO Instrumenter\u001b[39m Instrumented 1 source file(s) with 18 mutant(s)\n\u001b[32m05:21:34 (8) INFO ConcurrencyTokenProvider\u001b[39m Creating 1 test runner process(es).\n\u001b[32m05:21:35 (8) INFO DryRunExecutor\u001b[39m Starting initial test run (mocha test runner with \"off\" coverage analysis). This may take a while.\n\u001b[32m05:21:36 (8) INFO DryRunExecutor\u001b[39m Initial test run succeeded. Ran 3 tests in 1 second (net 1219 ms, overhead 9 ms).\n",
+      "polls": 208,
+      "scratch_roots": [
+        ".stryker-tmp"
+      ],
+      "signal_delivered": {
+        "at": 10.671,
+        "files": [],
+        "reason": "no in-place mutation observed; killed mid-run at 10.67s",
+        "signal": "TERM",
+        "target": "leader"
+      },
+      "signal_requested": "term",
+      "signal_target": "leader",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "tree_after": {
+        "added": [
+          ".stryker-tmp/sandbox-iPUGGE/package-lock.json",
+          ".stryker-tmp/sandbox-iPUGGE/package.json",
+          ".stryker-tmp/sandbox-iPUGGE/src/calc.js",
+          ".stryker-tmp/sandbox-iPUGGE/stryker.config.json",
+          ".stryker-tmp/sandbox-iPUGGE/test/calc.test.js"
+        ],
+        "deleted": [],
+        "modified": []
+      },
+      "undocumented_scratch": [],
+      "verdict": "SCRATCH",
+      "wall_seconds": 11.27,
+      "watch": [
+        "src/*.js"
+      ]
+    }
+  },
+  "spec": {
+    "command": [
+      "node",
+      "node_modules/@stryker-mutator/core/bin/stryker.js",
+      "run"
+    ],
+    "copy": [
+      "stryker.config.json"
+    ],
+    "deadline": 420,
+    "evidence": "Mutation score",
+    "expected_scratch": [
+      ".stryker-tmp",
+      "reports"
+    ],
+    "fixture": "javascript",
+    "homepage": "https://stryker-mutator.io/",
+    "language": "javascript",
+    "name": "stryker",
+    "notes": "Stryker's own defaults, including cleanTempDir: forcing the sandbox to persist would put residue in every row and cost the report the contrast between a run that finished and a run that was killed.",
+    "version": "8.7.1",
+    "watch": [
+      "src/*.js"
+    ]
+  }
+}

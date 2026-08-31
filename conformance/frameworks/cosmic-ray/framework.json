@@ -1,0 +1,28 @@
+{
+  "name": "cosmic-ray",
+  "version": "8.4.6",
+  "language": "python",
+  "fixture": "python",
+  "homepage": "https://github.com/sixty-north/cosmic-ray",
+  "watch": [
+    "calc/*.py"
+  ],
+  "command": [
+    "cosmic-ray",
+    "--verbosity",
+    "INFO",
+    "exec",
+    "cosmic-ray.toml",
+    "/session.sqlite"
+  ],
+  "deadline": 300,
+  "notes": "The session database is initialised at image build and kept outside the tree, so the scratch column is about what the RUN leaves behind and the signalled process is cosmic-ray itself.",
+  "copy": [
+    "cosmic-ray.toml"
+  ],
+  "expected_scratch": [],
+  "evidence": "Execution finished",
+  "env": {
+    "COLUMNS": "200"
+  }
+}

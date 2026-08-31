@@ -1,0 +1,218 @@
+{
+  "no_evidence": null,
+  "runs": {
+    "baseline": {
+      "command": [
+        "python3",
+        "mutations_calc.py"
+      ],
+      "detail": "tree identical to pristine",
+      "exit_code": 0,
+      "fallback_after": 0.0,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": {
+        "at": 1.435,
+        "files": [
+          "calc/__init__.py"
+        ]
+      },
+      "label": "baseline",
+      "orphans_outlived_leader": false,
+      "output_tail": "ALIVE if value < low:          -> NOT DETECTED\nDEAD  return hits / total      -> detected\nDEAD  out = out + v            -> detected\ndead=2 real=0 skipped=0\n",
+      "polls": 106,
+      "scratch_roots": [],
+      "signal_delivered": null,
+      "signal_requested": "none",
+      "signal_target": "group",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "tree_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "undocumented_scratch": [],
+      "verdict": "CLEAN",
+      "wall_seconds": 5.92,
+      "watch": [
+        "calc/*.py"
+      ]
+    },
+    "sigkill": {
+      "command": [
+        "python3",
+        "mutations_calc.py"
+      ],
+      "detail": "left mutated: calc/__init__.py",
+      "exit_code": -9,
+      "fallback_after": 2.96,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": {
+        "at": 1.544,
+        "files": [
+          "calc/__init__.py"
+        ]
+      },
+      "label": "sigkill",
+      "orphans_outlived_leader": false,
+      "output_tail": "",
+      "polls": 31,
+      "scratch_roots": [
+        "calc"
+      ],
+      "signal_delivered": {
+        "at": 1.544,
+        "files": [
+          "calc/__init__.py"
+        ],
+        "reason": "source file observed mutated on disk",
+        "signal": "KILL",
+        "target": "group"
+      },
+      "signal_requested": "kill",
+      "signal_target": "group",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": [
+          "calc/__init__.py"
+        ]
+      },
+      "tree_after": {
+        "added": [],
+        "deleted": [],
+        "modified": [
+          "calc/__init__.py"
+        ]
+      },
+      "undocumented_scratch": [
+        "calc"
+      ],
+      "verdict": "DIRTY",
+      "wall_seconds": 2.04,
+      "watch": [
+        "calc/*.py"
+      ]
+    },
+    "sigterm": {
+      "command": [
+        "python3",
+        "mutations_calc.py"
+      ],
+      "detail": "tree identical to pristine  [killed ON a live mutant]",
+      "exit_code": 1,
+      "fallback_after": 2.96,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": {
+        "at": 1.487,
+        "files": [
+          "calc/__init__.py"
+        ]
+      },
+      "label": "sigterm",
+      "orphans_outlived_leader": false,
+      "output_tail": "Traceback (most recent call last):\n  File \"/work/mutations_calc.py\", line 134, in <module>\n    sys.exit(main())\n             ^^^^^^\n  File \"/work/mutations_calc.py\", line 107, in main\n    ran, failed, _ = run_suite()\n                     ^^^^^^^^^^^\n  File \"/work/mutations_calc.py\", line 56, in run_suite\n    proc = subprocess.run(\n           ^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/subprocess.py\", line 2115, in _communicate\n    ready = selector.select(timeout)\n            ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/selectors.py\", line 415, in select\n    fd_event_list = self._selector.poll(timeout)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/work/mutations_calc.py\", line 46, in _on_sigterm\n    raise Terminated(\"SIGTERM\")\nTerminated: SIGTERM\n",
+      "polls": 30,
+      "scratch_roots": [],
+      "signal_delivered": {
+        "at": 1.487,
+        "files": [
+          "calc/__init__.py"
+        ],
+        "reason": "source file observed mutated on disk",
+        "signal": "TERM",
+        "target": "group"
+      },
+      "signal_requested": "term",
+      "signal_target": "group",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "tree_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "undocumented_scratch": [],
+      "verdict": "CLEAN",
+      "wall_seconds": 2.04,
+      "watch": [
+        "calc/*.py"
+      ]
+    },
+    "sigterm-leader": {
+      "command": [
+        "python3",
+        "mutations_calc.py"
+      ],
+      "detail": "tree identical to pristine  [killed ON a live mutant]",
+      "exit_code": 1,
+      "fallback_after": 2.96,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": {
+        "at": 1.439,
+        "files": [
+          "calc/__init__.py"
+        ]
+      },
+      "label": "sigterm-leader",
+      "orphans_outlived_leader": false,
+      "output_tail": "Traceback (most recent call last):\n  File \"/work/mutations_calc.py\", line 134, in <module>\n    sys.exit(main())\n             ^^^^^^\n  File \"/work/mutations_calc.py\", line 107, in main\n    ran, failed, _ = run_suite()\n                     ^^^^^^^^^^^\n  File \"/work/mutations_calc.py\", line 56, in run_suite\n    proc = subprocess.run(\n           ^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/subprocess.py\", line 2115, in _communicate\n    ready = selector.select(timeout)\n            ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/selectors.py\", line 415, in select\n    fd_event_list = self._selector.poll(timeout)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/work/mutations_calc.py\", line 46, in _on_sigterm\n    raise Terminated(\"SIGTERM\")\nTerminated: SIGTERM\n",
+      "polls": 29,
+      "scratch_roots": [],
+      "signal_delivered": {
+        "at": 1.439,
+        "files": [
+          "calc/__init__.py"
+        ],
+        "reason": "source file observed mutated on disk",
+        "signal": "TERM",
+        "target": "leader"
+      },
+      "signal_requested": "term",
+      "signal_target": "leader",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "tree_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "undocumented_scratch": [],
+      "verdict": "CLEAN",
+      "wall_seconds": 1.99,
+      "watch": [
+        "calc/*.py"
+      ]
+    }
+  },
+  "spec": {
+    "command": [
+      "python3",
+      "mutations_calc.py"
+    ],
+    "copy": [
+      "mutations_calc.py"
+    ],
+    "deadline": 120,
+    "evidence": "dead=\\d+ real=\\d+",
+    "expected_scratch": [],
+    "fixture": "python",
+    "homepage": "this repository",
+    "language": "python",
+    "name": "control-inplace",
+    "notes": "Passes all seven properties per `assay runners`, and mutates in place. Expected: baseline CLEAN, sigterm CLEAN, sigkill DIRTY.",
+    "version": "n/a",
+    "watch": [
+      "calc/*.py"
+    ]
+  }
+}

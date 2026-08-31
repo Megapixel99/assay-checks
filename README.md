@@ -93,6 +93,23 @@ was given the chance to put it back. That is `restore-verified`'s argument one l
 — a restore that ran is not a restore that worked, and this is a restore that never ran
 at all. See *Running harnesses in CI* below for the shape of the check.
 
+**That argument is now measured rather than asserted.** `conformance/` runs four real
+frameworks — mutmut, cosmic-ray, Stryker, PIT — under exactly this interruption, timed
+to land at the instant a mutant is observably on disk, and hashes the tree afterwards.
+Three of the four never mutate the tree at all: mutmut copies the project into
+`mutants/`, Stryker into `.stryker-tmp/`, and PIT mutates bytecode in memory, so their
+source survives SIGKILL because it was never dirty. **cosmic-ray, which mutates in
+place, is left DIRTY by a plain `timeout`** — a SIGTERM, not a SIGKILL, so it fails
+`sigterm` before this blind spot is even reached.
+
+The reading to take from that is narrower than the paragraph above and more useful:
+the invoker's check is load-bearing **for harnesses that mutate in place**, and if you
+are writing one, the remedy that actually closes the hole is to **mutate a copy**. No
+process can promise to clean up after being killed, and the only way to have nothing
+to clean up is to have put nothing there. The suite carries a harness satisfying all
+seven properties as its calibration row, and that harness is still DIRTY under
+SIGKILL — see [`conformance/README.md`](conformance/README.md).
+
 They collapse into one rule worth remembering on its own, because the seven are just
 instances of it:
 
