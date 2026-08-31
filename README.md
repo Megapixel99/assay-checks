@@ -8,7 +8,7 @@
 Two questions ordinary CI does not answer, about work that **already passes its tests**:
 
 > **Could those tests have failed?**
-> **Does the tree already answer this?** — *in either language*
+> **Does the tree already answer this?**: *in either language*
 
 A green suite tells you the code did what the suite asked. It tells you nothing about
 whether the suite could have objected, and nothing about whether the code needed to be
@@ -74,14 +74,14 @@ lie to you, and each is a failure that looks exactly like success:
 restore *path executes*; it says nothing about the file on disk. A harness that restores
 from a buffer it read *after* mutating, or writes the text back in a different encoding,
 or saved one of the two files it touches, satisfies the other six and still leaves the
-tree wrong — and every suite after it scores code nobody wrote. Hashing before and
+tree wrong, and every suite after it scores code nobody wrote. Hashing before and
 comparing after is the check, and the detector wants both halves of it: a digest nothing
 compares is arithmetic, and a message nothing computes is a string.
 
 **And `sigterm` has a blind spot of its own, which is SIGKILL.** SIGKILL cannot be
 caught, blocked or handled: no handler runs, no `finally` runs, and no property in the
 table above would have helped. The ordinary way to be SIGKILLed is not an impatient
-person but a **timeout** — `subprocess.run(..., timeout=...)` kills the child outright,
+person but a **timeout**: `subprocess.run(..., timeout=...)` kills the child outright,
 and so does the kill step of a CI runner that has waited long enough. So a harness
 satisfying all seven, invoked under a timeout it then exceeds, leaves the tree mutated
 exactly as though it carried none of them, and every suite after it scores code nobody
@@ -89,17 +89,17 @@ wrote.
 
 The remedy is not in the harness and cannot be: it belongs to **whatever invoked the
 harness**, which has to check that the tree came back rather than trust that the harness
-was given the chance to put it back. That is `restore-verified`'s argument one level up
-— a restore that ran is not a restore that worked, and this is a restore that never ran
+was given the chance to put it back. That is `restore-verified`'s argument one level up;
+a restore that ran is not a restore that worked, and this is a restore that never ran
 at all. See *Running harnesses in CI* below for the shape of the check.
 
 **That argument is now measured rather than asserted.** `conformance/` runs four real
-frameworks — mutmut, cosmic-ray, Stryker, PIT — under exactly this interruption, timed
+frameworks (mutmut, cosmic-ray, Stryker, PIT) under exactly this interruption, timed
 to land at the instant a mutant is observably on disk, and hashes the tree afterwards.
 Three of the four never mutate the tree at all: mutmut copies the project into
 `mutants/`, Stryker into `.stryker-tmp/`, and PIT mutates bytecode in memory, so their
 source survives SIGKILL because it was never dirty. **cosmic-ray, which mutates in
-place, is left DIRTY by a plain `timeout`** — a SIGTERM, not a SIGKILL, so it fails
+place, is left DIRTY by a plain `timeout`**: a SIGTERM, not a SIGKILL, so it fails
 `sigterm` before this blind spot is even reached.
 
 The reading to take from that is narrower than the paragraph above and more useful:
@@ -108,7 +108,7 @@ are writing one, the remedy that actually closes the hole is to **mutate a copy*
 process can promise to clean up after being killed, and the only way to have nothing
 to clean up is to have put nothing there. The suite carries a harness satisfying all
 seven properties as its calibration row, and that harness is still DIRTY under
-SIGKILL — see [`conformance/README.md`](conformance/README.md).
+SIGKILL: see [`conformance/README.md`](conformance/README.md).
 
 They collapse into one rule worth remembering on its own, because the seven are just
 instances of it:
@@ -197,7 +197,7 @@ two ways in, because it is the same question asked one step earlier: writing the
 first in order to be told the file was never the problem is what `--stdin` exists to
 avoid.
 
-**A refusal reason is the FIRST gate, not the only one — and the census cannot show
+**A refusal reason is the FIRST gate, not the only one, and the census cannot show
 that.** The tally counts one reason per function, so its buckets are not independent
 and do not add up:
 
@@ -221,7 +221,7 @@ look     training/self_play_loop.py::retrain — arity 4 (no ladder above 3)
 
 **A query the ladder cannot tell apart is a `look`, never a `none`.** The census files
 every function it cannot discriminate under *not probed*, so a constant or a projection
-can only fail to find the other constants and projections — the match was never
+can only fail to find the other constants and projections: the match was never
 possible, and printing the clean result there would say *we found none* where the truth
 is *we never looked*:
 
@@ -232,7 +232,7 @@ $ assay search --stdin --in src/ lib/ < draft.py
            1 distinct returned value across the 31 rungs that answered, and 2 is the minimum — as far as this ladder can see it is a constant
 ```
 
-It is the same answer `assay why` gives about the same vector, from the same code — the
+It is the same answer `assay why` gives about the same vector, from the same code: the
 two commands cannot disagree about it. A query the ladder *can* discriminate still gets
 the ordinary `same none`, which means the tree really was searched.
 
@@ -240,7 +240,7 @@ the ordinary `same none`, which means the tree really was searched.
 
 A validator reimplemented in a Django backend and a Node frontend is the highest-value
 duplication a polyglot repository has, and it is exactly what nobody writes a
-differential test for — because writing one means agreeing, by hand, on what `False` and
+differential test for, because writing one means agreeing, by hand, on what `False` and
 `false` have in common.
 
 ```bash
@@ -263,7 +263,7 @@ rather than assuming them.
 
 **One ladder, not two that resemble each other.** `BASE_VALUES` is a hand-written list
 per language, and the strongest thing that can be said about the pair is that they cover
-the same *shapes* — the languages have different primitives, so comparing lengths would
+the same *shapes*: the languages have different primitives, so comparing lengths would
 fail for a correct reason. That is enough for two Python functions and nothing like
 enough here, where two lists that were meant to hold the same values and quietly stopped
 is the entire hazard. So the cross ladder is **one JSON document**, carried verbatim by
@@ -277,17 +277,17 @@ choices about which mistake to make rather than accidents:
 
 | | |
 |---|---|
-| an integral float | renders as an integer — JavaScript has **one** number type, and Python's int/float split is a difference *inside* one language |
-| `undefined` and `null` | are one absence — Python has one and JavaScript has two, so the interlingua carries the one both can state |
-| a Python `tuple` | renders as an array — JavaScript has no tuple, and a function returning one answers the question an array answers there |
+| an integral float | renders as an integer: JavaScript has **one** number type, and Python's int/float split is a difference *inside* one language |
+| `undefined` and `null` | are one absence: Python has one and JavaScript has two, so the interlingua carries the one both can state |
+| a Python `tuple` | renders as an array: JavaScript has no tuple, and a function returning one answers the question an array answers there |
 
-Anything JSON cannot hold — bytes, a `Map`, a `Date`, a class instance — is **refused
+Anything JSON cannot hold (bytes, a `Map`, a `Date`, a class instance) is **refused
 rather than approximated**, and one such outcome makes the whole comparison a `look`.
 `NaN` and the infinities are spelled out, because `JSON.stringify` turns all three into
 `null`: three different answers reported as one absence.
 
-**A raise carries no name.** The two languages' error taxonomies genuinely diverge —
-`d['x']` is a `KeyError` in Python and `undefined` in JavaScript — so comparing names
+**A raise carries no name.** The two languages' error taxonomies genuinely diverge:
+`d['x']` is a `KeyError` in Python and `undefined` in JavaScript, so comparing names
 would make every honest pair `differs`, and declaring them equal is worse, because `same`
 is the verdict that *fails*. Every raise renders as one token, which masks a rung where
 **both** sides raised: two of them can never be a witness, and the vacuity guard counts
@@ -320,7 +320,7 @@ ok       differs: word.py::is_wordy [python]  vs  word.mjs::isWordy [javascript]
 `npm install assay-checks` gives you the other; neither can assume the other is on the
 machine, and a command that shells out to a binary that may not exist fails in a way that
 reads like the code being wrong. So `assay probe` writes a record and `assay cross` reads
-one — and `--with CMD` runs that first step for you when both are installed. Two
+one, and `--with CMD` runs that first step for you when both are installed. Two
 references in the *same* language are a `look` pointing at `pair`, which compares them on
 their own language's fuller ladder.
 
@@ -328,7 +328,7 @@ their own language's fuller ladder.
 
 `cross` answers about two functions somebody already suspected. **Nobody suspects the
 pair that matters.** A rule written once in the API and again in the front end, by two
-people, a year apart, is exactly the duplication no one goes looking for — so the
+people, a year apart, is exactly the duplication no one goes looking for, so the
 command that finds it must not need either name.
 
 Finding it means probing *both* trees, and the halves still do not invoke each other. So
@@ -362,22 +362,22 @@ finding  same answer across languages (cross1/v3/d3b2ba61ccb7):
 
 **A bundle is many `assay probe` records in one envelope**, byte-identically shaped, so
 an entry lifted out of one is a record `assay cross` already reads. It is versioned
-apart from the record it carries — adding a key to the envelope does not change what any
-one record means by `vector` — and both schemas are checked before anything is compared,
+apart from the record it carries: adding a key to the envelope does not change what any
+one record means by `vector`, and both schemas are checked before anything is compared,
 because comparing a new answer against the wrong earlier answer is precisely the defect
 a difference checker exists to catch.
 
 **Both censuses are printed, and the far one is the point.** A function the *other*
 binary refused was never compared. A report that says `same none` while staying quiet
 about the twenty-three functions the far side never probed is reporting *we never
-looked* as *we found none* — across a boundary where the reader has no way to check.
+looked* as *we found none*: across a boundary where the reader has no way to check.
 
 **A bucket is only a comparison because of what never reached it.** `sweep` groups by
 vector equality, which is legitimate only because every pair `assay cross` would refuse
 was refused first: an outcome the interlingua cannot state, and a vector no rung told
 apart from a constant. One place decides that for both commands. Two places deciding it
 is how the tree-wide command comes to print a `finding` for a pair the pairwise command
-calls a `look` — two answers to one question, and the weaker one on screen.
+calls a `look`; two answers to one question, and the weaker one on screen.
 
 A bundle of your own language is a `look`-shaped refusal pointing at `scan`, which
 compares one language's functions on its own fuller ladder.
@@ -385,7 +385,7 @@ compares one language's functions on its own fuller ladder.
 ### ...and for ONE function, before you write it: `search --against`
 
 `sweep` needs a whole tree on both sides; `cross` needs the pair named. Neither answers
-the question you actually have at the keyboard — **I am about to write this one
+the question you actually have at the keyboard: **I am about to write this one
 function; does the other language already have it?**
 
 ```bash
@@ -407,12 +407,12 @@ are about to create is in a language your editor is not even open in. A `FILE::N
 works too, for the function you already wrote and now suspect.
 
 **`--in` and `--against` are independent, and either alone is a complete question.**
-Give both and you get both verdicts in one run, kept apart — the native ladder is the
+Give both and you get both verdicts in one run, kept apart: the native ladder is the
 stronger of the two, so the answers are not interchangeable and neither replaces the
 other. Give neither and it is exit 2 rather than a clean `no findings` from a run that
 looked nowhere.
 
-**A query the shared ladder cannot tell apart is a `look`, never a `none`** — the same
+**A query the shared ladder cannot tell apart is a `look`, never a `none`**: the same
 rule the one-language `search` follows, from the same `admit` that fills the bundle. A
 constant can only fail to match the other constants, because every constant was kept
 out of the bundle in the first place; printing the clean result there would say *we
@@ -446,7 +446,7 @@ ok       src/cache.py::entries — probed on arity1/v3: 24 of 31 rungs answered,
 ```
 
 Both are true. The native ladder probes it happily; the shared one cannot state a `set`
-at all. The two ladders hold different values and refuse different functions — a
+at all. The two ladders hold different values and refuse different functions: a
 function the native ladder discriminates can be a *constant* on the shared one, because
 the shared one is the intersection of what the two languages can express. Reporting one
 verdict for the other question would be confident and wrong, with nothing on screen to
@@ -507,14 +507,14 @@ $ assay why src/slug.js::slugify
 
 It never produces a finding: it reports what the tool did, and decides nothing. `--stdin`
 asks it about a snippet instead of a name, with `--name` picking one definition out of
-several, exactly as `search` does. It also splits the one reason the census cannot split — `not discriminated by the ladder` covers
+several, exactly as `search` does. It also splits the one reason the census cannot split: `not discriminated by the ladder` covers
 a **constant**, a **projection**, and a function the ladder **never reached**, and those
 need a wider ladder, a different function, and inputs of another shape respectively.
 
 On the JavaScript half the answer may be at the **file** level, and it says so: a file
 that reaches for the clock *on the way in* is refused whole, so none of its functions
 were ever looked at and every one of them has the same answer. A clock inside a **body**
-is a different answer — it refuses that function and leaves the rest of the file
+is a different answer; it refuses that function and leaves the rest of the file
 probeable.
 
 **Files and functions are counted separately, and the second line is an equation.** A
@@ -560,7 +560,7 @@ object instead of the prose report:
 **One shape, always.** A run that could not start emits the same keys as one that
 finished, with `error` set and `items` empty. Prose on the failure path and JSON
 everywhere else hands you a parse error at exactly the moment the tool could not run,
-and a sloppy consumer reads a parse error as *no findings* — the same collapse `2` is
+and a sloppy consumer reads a parse error as *no findings*: the same collapse `2` is
 never suppressible to prevent.
 
 **`look` gets no severity.** The three verdicts are not mapped onto somebody else's
@@ -574,7 +574,7 @@ separate population from functions. A command that ran no scan emits `null` rath
 
 **And it names what it never looked at.** `unloadable` and `skipped` count;
 `unloadable_paths` and `skipped_refs` say *which*, and carry the whole reason rather
-than the tallied key. `could not load 12` is a number you cannot act on — the only
+than the tallied key. `could not load 12` is a number you cannot act on: the only
 recourse is `assay why FILE::NAME`, which has to be told a file and a function name in
 it, the two things the tally withheld. The full reason matters most in the biggest
 bucket: a tally key stops at the first `(`, which is exactly where a load error's
@@ -629,7 +629,7 @@ Paths are relative to `--root`, and **the language of the path is not a category
 `runner_exempt` and `baseline` take Python and JavaScript entries side by side,
 because a polyglot repository has one root and the audit that reads this file may be
 either binary. `anchor_exempt` affects only `assay anchors`, which both halves now
-run — the Python half by parsing the table out with `ast`, the JavaScript half by
+run: the Python half by parsing the table out with `ast`, the JavaScript half by
 importing the harness and reading the exported table as data.
 
 **A `baseline` line is the exact text of a `finding`, and only a `finding`.** It is
@@ -646,7 +646,7 @@ cannot:
 |---|---|---|
 | `line` | required | the finding's exact text |
 | `reason` | required in the object form | why you accepted it |
-| `from` | optional | the command that can produce it — one of `runners`, `anchors`, `diff`, `scan`, `sweep` |
+| `from` | optional | the command that can produce it, one of `runners`, `anchors`, `diff`, `scan`, `sweep` |
 
 `from` is what makes staleness a property of the **line** rather than of the run; see
 below. A `from` naming no real command is a hard error rather than a line nobody can
@@ -664,7 +664,7 @@ With no line it takes every new finding; with one it takes that one. It fills in
 from the audit that actually produced the line, so the check that fires it is the one
 that can later call it stale. `--reason` is required.
 
-It refuses **a `look`** — a look never fails the run, so the entry could never be
+It refuses **a `look`**: a look never fails the run, so the entry could never be
 suppressed and never expire, a record of nothing indistinguishable from a record of
 something already fixed. *This package shipped a config example that baselined a look.*
 It was corrected by editing the example, and an example is corrected once per copy of
@@ -689,8 +689,8 @@ between a **suppression file** and a **record**.
 
 `reason` is required and not decorative: **an exemption without one cannot be told
 from an oversight**, and six months later nobody can say which it was. The `baseline`
-is the table this matters most for — it accumulates fastest and rots first, because a
-fixed finding leaves its line behind in silence — which is why the object form asks for
+is the table this matters most for; it accumulates fastest and rots first, because a
+fixed finding leaves its line behind in silence, which is why the object form asks for
 one and `assay accept` will not write an entry without it.
 
 Adopting this on an existing project means starting with a backlog. The two dishonest
@@ -715,7 +715,7 @@ BASELINE assay.json — 3 accepted, 0 new, 1 stale, 2 NOT checked for staleness
 ```
 
 *Stale* is a line this run could have seen fire and did not. *Not checked* is a line
-this run could not have seen at all — counted, and never folded into the stale number,
+this run could not have seen at all: counted, and never folded into the stale number,
 because **`0 stale` from a run that never looked reads as "nothing is stale"** and those
 are different claims. A line with no `from` keeps the old rule: only a run that
 performed every audit can call it fixed, since nothing narrower knows what produces it.
@@ -723,7 +723,7 @@ performed every audit can call it fixed, since nothing narrower knows what produ
 Every command still *suppresses* accepted findings, because that direction is safe from
 any run: a line that fires is a line that fires.
 
-**`assay all --scan PATH` is the complete run** — `all` alone does not perform the
+**`assay all --scan PATH` is the complete run**: `all` alone does not perform the
 sameness half, and saying otherwise is how a `same answer` line got called stale on a
 clean tree. Tag your entries with `from` and any command answers its own; leave them
 untagged and the complete run is the only one that can.
@@ -739,9 +739,9 @@ assay all --base origin/main --scan src --sweep src --against js/src --with assa
 **`sweep` is a legal `from` but is deliberately *not* part of what makes a run
 complete**, and those are two different questions that it would be a defect to conflate
 in either direction. Add it to completeness and every `assay.json` written before this
-release quietly stops having its untagged entries checked — the tool doing less, on
+release quietly stops having its untagged entries checked: the tool doing less, on
 configs that were fine yesterday. Refuse it as a tag instead and a cross finding lands
-untagged, where `all --scan` — complete by the older definition, having never swept —
+untagged, where `all --scan` (complete by the older definition, having never swept)
 calls it stale on a clean tree.
 
 The two sets differ by exactly that one name, and it is safe for a reason about *time*
@@ -844,20 +844,20 @@ rather than the file. Two compensations: it happens in a child process,
 and the file's source is gated *before* it is loaded at all.
 
 **The gate is two questions, because it guards two events.** *May this module be
-imported?* is asked of **module-scope code only** — top-level statements, initializers,
-IIFEs, class fields — because that is what running an import actually executes. A
+imported?* is asked of **module-scope code only**, top-level statements, initializers,
+IIFEs, class fields, because that is what running an import actually executes. A
 `new Date()` sitting in a function body is no evidence about importing the module, and
 refusing the file for it took every pure helper beside it down with it: on a barrel of
 ten Handlebars helpers, two clock-using ones cost the other eight their eligibility.
 
-A body is deferred **wherever a body cannot run** — under a declaration, bound to a
+A body is deferred **wherever a body cannot run**: under a declaration, bound to a
 name, or as an object-literal property or shorthand method, which is how CommonJS
 exposes a barrel. An **IIFE** is refused in every position: it runs on the way in. So is
-an **accessor** — `{ get x() { … } }` runs when the property is *read*, and enumerating
+an **accessor**: `{ get x() { … } }` runs when the property is *read*, and enumerating
 a module's exports reads every one of them.
 
 *May this function be called?* is the second question, and `fn.toString()` cannot answer
-it alone — **a free name resolves in a module scope the function's own text cannot
+it alone: **a free name resolves in a module scope the function's own text cannot
 see**. So the per-function gate runs over its real source (including the **declared
 parameter list**, because `fn.length` stops counting at the first default) and then over
 everything it **reaches**: local bindings, followed transitively, and relative imports
@@ -866,7 +866,7 @@ core module, an unknown global and a name declared twice are each refused **by n
 Probing *calls* the function, so this is the last thing between the ladder and a real
 side effect on a real path.
 
-The refusal is a chain you can walk back to the code —
+The refusal is a chain you can walk back to the code:
 `reaches config, which reaches env, which touches process`.
 
 **The residue is genuine:** a module with an import-time side effect that mentions none
@@ -893,7 +893,7 @@ regex cannot tell a label from an anchor, and **a check reporting confident nons
 about which strings are anchors is worse than no check**.
 
 But the JavaScript half already loads modules. A table that is **exported** is readable
-as *data* — a property access, no parser, no dependency, no approximation anywhere in
+as *data*: a property access, no parser, no dependency, no approximation anywhere in
 the path:
 
 ```javascript
@@ -903,7 +903,7 @@ export const MUTATIONS = [
 ```
 
 Two consequences, one in each direction. The harness **gets imported**, so guard your
-`main()` behind the entry-point check every program in this package already carries — a
+`main()` behind the entry-point check every program in this package already carries: a
 harness that does work at import time will do that work, in a child process that cannot
 reach your session but on the real tree. In exchange, a **computed** anchor is simply a
 string here, where the Python half can only report it as a shape it cannot read.
@@ -917,7 +917,7 @@ real one. If your harnesses are Python, run the Python half over them.
 
 `python/tests/test_parity.py` asserts the contract rather than trusting it: same
 property names, same verdict names, same config keys, same subcommands, same ladder
-version, same thresholds, same baseline families, same probe schema — and, for
+version, same thresholds, same baseline families, same probe schema, and, for
 `assay cross`, the same cross ladder **byte for byte**, because two lists that were
 meant to hold the same values and quietly stopped is the only thing that comparison
 rests on. Two implementations of one contract is exactly the duplication this tool
@@ -930,7 +930,7 @@ exists to find, so it is checked.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }   # `diff` needs a base ref; a shallow clone has none
-- uses: Megapixel99/assay-checks@v0.5.0
+- uses: Megapixel99/assay-checks@v0.5.1
   with:
     command: all       # every audit that can produce a baseline line
     paths: src         # ...and with `all`, paths mean `--scan`: the sameness half
@@ -938,7 +938,7 @@ exists to find, so it is checked.
 
 # The same action runs the other half. `language` is `python` unless you say otherwise,
 # so a JavaScript project has to name it.
-- uses: Megapixel99/assay-checks@v0.5.0
+- uses: Megapixel99/assay-checks@v0.5.1
   with:
     command: scan
     paths: js/src
@@ -947,7 +947,7 @@ exists to find, so it is checked.
 # ...and across the two, naming no pair. `against` is the far tree; `with` is the far
 # binary, which is named rather than guessed — both packages install `assay`, so a
 # half that guessed would compare a tree with itself.
-- uses: Megapixel99/assay-checks@v0.5.0
+- uses: Megapixel99/assay-checks@v0.5.1
   with:
     command: sweep
     paths: src
@@ -979,12 +979,12 @@ added to it is the one that has been asleep longest. **The dirt check runs after
 harness, not once at the end**, because a tree checked once names the last harness
 rather than the one that broke it, and a mutated file left behind means every harness
 after it scored code nobody wrote. **The failure is recorded and the loop continues**
-rather than exiting on the first one — a red run that means *one broke and the rest were
+rather than exiting on the first one: a red run that means *one broke and the rest were
 never asked* is the same collapse `dead-vs-real` exists to prevent, one level up. And
 **`rc` is what exits**, because a loop that reports failures and returns 0 is the
 sleeping suite this whole half of the tool is about.
 
-**Docker**, both runtimes, one image, for CI that has neither toolchain — and the one
+**Docker**, both runtimes, one image, for CI that has neither toolchain, and the one
 place `assay cross` needs no arranging, because both binaries are already there:
 
 ```bash
@@ -1008,14 +1008,14 @@ docker run --rm -v "$PWD:/work" assay sweep src --against js/src --with assay-js
   are out of reach. That needs a declared pairing, and this does not replace one.
 - **Cross-language discovery runs on a strictly weaker ladder than `scan` does.**
   `assay sweep` buckets every function of both trees on the shared ladder, which is the
-  *intersection* of what the two languages can express — so it discriminates less than
+  *intersection* of what the two languages can express, so it discriminates less than
   either native one, and a `same` it reports is worth less than a `same` from `scan`.
   Use `cross` on a pair you already suspect and you get the same ladder; use `pair` or
   `scan` within one language and you get a fuller one. A sweep is where to start
   looking, not where to stop.
 - **The cross ladder is a subset, and `same` there is worth less than `same` here.**
   It holds no tuple, no `set`, no `undefined`, and one number type. Two functions it
-  cannot tell apart may well be told apart by a value only one language has — which is
+  cannot tell apart may well be told apart by a value only one language has, which is
   why two references in the same language are refused, with a pointer at `pair`.
 - **The ladder is hand-written for three arities.** A domain whose inputs are structured
   (an AST, a socket, a dataframe) gets `not discriminated`, and correctly so.
@@ -1062,12 +1062,12 @@ docker run --rm -v "$PWD:/work" assay sweep src --against js/src --with assay-js
   `search` at the file.
 - **A JavaScript snippet that exports nothing needs `--name`.** A module's functions
   reach the probe through its exports, so an unexported declaration is invisible, and
-  finding it anyway would mean reading declarations out of source with a regex — the
+  finding it anyway would mean reading declarations out of source with a regex: the
   same thing `anchors` declines to do. The name is asked for instead. Python has no
   such gap: a top-level `def` is a top-level `def`.
 - **`assay anchors` under Node IMPORTS the harness, and that is a real hazard rather
   than a detail.** The Python half reads the table with `ast` and executes nothing; the
-  JavaScript half has no parser to read it with, so it reads the table as *data* — which
+  JavaScript half has no parser to read it with, so it reads the table as *data*, which
   means the module that builds it has run. It runs in a child process, so a crash or a
   hang costs the probe rather than the audit, but a harness that mutates the tree at
   import time mutates the tree, and no child process undoes that. Guard `main()` behind
@@ -1142,7 +1142,7 @@ config that was never loaded. `test_parity.py` now checks the bytes.
 **A mutation that comes back `NOT DETECTED` is not always a missing test, and it is
 never left in the table.** Three came back that way while 0.3.0 was being written: two
 were fixtures that could not reach the case, and the third was a guard whose absence
-produced *the same observable as its presence* — dead code with a comment explaining
+produced *the same observable as its presence*: dead code with a comment explaining
 what it did. That last one is the defect this package exists to report, arriving inside
 it, so the branch was deleted and the check moved to the thing it had been restating. A
 mutation nothing can catch is a table entry claiming a guard is covered when nothing
