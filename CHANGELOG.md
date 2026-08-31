@@ -3,7 +3,7 @@
 Versions follow [semantic versioning](https://semver.org/). The parts under version
 are the **CLI contract** (subcommand names, flags, the three exit codes), the
 **`assay.json` format**, the **verdict vocabulary**, and the **JSON schema** that
-`--json` emits — not the set of findings a given release reports, which is expected to
+`--json` emits, not the set of findings a given release reports, which is expected to
 grow.
 
 The JSON schema carries its own number (`"schema": 1`) beside the tool's, because a
@@ -14,6 +14,23 @@ exit code and the two do not move together.
 the honest reading: a tool whose whole purpose is finding things you had not checked
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
+
+## 0.5.2
+
+### The changelog, in the same voice as the README
+
+174 em dashes became none in the prose here, by the same rule 0.5.1 applied to the README:
+a colon for an appositive, a semicolon between independent clauses, a comma before a
+conjunction, parentheses for a paired aside. 10 remain inside fenced blocks and are staying
+there, because those are verbatim `assay` output.
+
+Four needed a hand rather than a rule, and they share a shape worth naming: a paired aside
+split across a line break, where treating each dash on its own puts a colon in front of the
+sentence's own main verb. *"were laid out two different ways: `assay/` with `tests/` at the
+root, against `js/src` with `js/test`: made the repository harder to read"* is what that
+reads like, and parentheses are what it wanted.
+
+No behaviour changed, and no check changed.
 
 ## 0.5.1
 
@@ -38,7 +55,7 @@ accurate exactly once.
 
 `conformance/` is a suite that runs mutation-testing frameworks under an interruption
 they cannot survive, at the instant they are least able to survive it, and hashes the
-tree. **No detector semantics change and no code outside `conformance/` is touched** —
+tree. **No detector semantics change and no code outside `conformance/` is touched**:
 this is evidence about the properties, not a change to them.
 
 The suite exists because the seven properties are framework-agnostic and had only ever
@@ -50,12 +67,12 @@ exceeds, leaves the tree mutated exactly as though it carried none of them.
 |---|---|---|---|---|---|---|
 | `control-inplace` | n/a | **CLEAN** | **CLEAN** | **CLEAN** | **DIRTY** | yes |
 | `cosmic-ray` | 8.4.6 | **SCRATCH** | **DIRTY** | **DIRTY** | **DIRTY** | yes |
-| `mutmut` | 3.7.0 | **SCRATCH** | **SCRATCH** | **SCRATCH** | **SCRATCH** | no — sandboxed |
-| `pit` | 1.16.1 | **SCRATCH** | **CLEAN** | **CLEAN** | **CLEAN** | no — sandboxed |
-| `stryker` | 8.7.1 | **CLEAN** | **SCRATCH** | **SCRATCH** | **SCRATCH** | no — sandboxed |
+| `mutmut` | 3.7.0 | **SCRATCH** | **SCRATCH** | **SCRATCH** | **SCRATCH** | no: sandboxed |
+| `pit` | 1.16.1 | **SCRATCH** | **CLEAN** | **CLEAN** | **CLEAN** | no: sandboxed |
+| `stryker` | 8.7.1 | **CLEAN** | **SCRATCH** | **SCRATCH** | **SCRATCH** | no: sandboxed |
 
 **cosmic-ray fails earlier than the open question predicted.** It mutates the file on
-disk, and a SIGTERM delivered to cosmic-ray itself — a plain `timeout`, not a kill —
+disk, and a SIGTERM delivered to cosmic-ray itself: a plain `timeout`, not a kill:
 leaves it mutated. That is `sigterm`, which is INSIDE the seven, so it never reaches
 the blind spot beyond them.
 
@@ -68,14 +85,14 @@ tree came back* is load-bearing only for harnesses that mutate in place, and the
 lesson for anyone writing one is not to handle more signals but to **mutate a copy**:
 no process can promise to clean up after being killed, and the only way to have
 nothing to clean up is to have put nothing there. The `Running harnesses in CI` recipe
-in the README is unchanged and still correct — it is the check for the row that fails.
+in the README is unchanged and still correct; it is the check for the row that fails.
 
 **The suite carries its own calibration row, because a column of CLEAN verdicts is
 worth nothing on its own.** `nothing found` and `nothing looked` are the same output
 otherwise, which is `evidence` one level up from the harnesses it audits.
 `conformance/frameworks/control-inplace/mutations_calc.py` mutates in place and
-satisfies all seven properties — `assay runners` reports `ok` on it, rather than a
-comment claiming so — and it is CLEAN under both SIGTERMs and DIRTY under SIGKILL.
+satisfies all seven properties: `assay runners` reports `ok` on it, rather than a
+comment claiming so, and it is CLEAN under both SIGTERMs and DIRTY under SIGKILL.
 
 Two measurement errors caught while building it, both instances of the properties
 this tool is about:
@@ -86,7 +103,7 @@ this tool is about:
   string or the whole row reports `NO-RUN`.
 - **cosmic-ray was invoked through `sh -c` and Stryker through `npx`**, so a
   leader-only signal killed the wrapper, orphaned the framework, and let it finish
-  unwatched — reported as CLEAN. The probe now records orphans outliving the leader,
+  unwatched: reported as CLEAN. The probe now records orphans outliving the leader,
   and both invocations were changed so the framework is the leader. Correcting it
   flipped Stryker's `sigterm-leader` from CLEAN to SCRATCH and cosmic-ray's from
   SCRATCH to DIRTY: that column had been entirely artifact.
@@ -110,7 +127,7 @@ The census tallies refusals like this:
 
 A reader concludes that raising the arity cap gets fourteen more functions probed. It
 gets **none**. Raising `MAX_ARITY` on that tree moved all fourteen into `needs docx`,
-`touches os` and `needs matplotlib` — the tally changed and `7 probed` did not move at
+`touches os` and `needs matplotlib`: the tally changed and `7 probed` did not move at
 all. Every one of them was already refused by a second gate the first one hid.
 
 **The cause is that `purity` returned the FIRST reason and stopped**, and the census
@@ -119,7 +136,7 @@ nothing on screen said so.
 
 `refusals(func)` (Python) and `functionRefusals(source, arity)` (JavaScript) now
 enumerate EVERY gate a function trips, in gate order. `purity` and `functionRefusal`
-read the front of that list rather than repeating the enumeration — one decider, because
+read the front of that list rather than repeating the enumeration, one decider, because
 two lists of gates kept in step by hand would drift silently, and the census would come
 to count a reason `why` never names.
 
@@ -134,7 +151,7 @@ look     training/self_play_loop.py::retrain — arity 4 (no ladder above 3)
 ```
 
 Before, that read `refused before the ladder, so it is in no bucket and can pair with
-nothing` — true, and no help at all to somebody deciding what to fix. **38 of that
+nothing`: true, and no help at all to somebody deciding what to fix. **38 of that
 tree's 118 refused functions trip more than one gate.**
 
 A reason is counted **once per gate, not once per occurrence**: a function mentioning
@@ -145,7 +162,7 @@ read.
 
 **`MAX_ARITY` was left at 3.** Raising it was the first thing tried, and the measurement
 above is why it was reverted rather than shipped: the ladder's rung count is flat from
-arity 2 upward (61 rungs at arity 2, 61 at arity 6), so the cap costs nothing to raise —
+arity 2 upward (61 rungs at arity 2, 61 at arity 6), so the cap costs nothing to raise:
 and buys nothing either, on the evidence available. A coverage change justified by a
 number measured as zero is the defect this package exists to report.
 
@@ -155,7 +172,7 @@ Five mutations added, two existing anchors repaired.
 `ok  <path>  0 anchors, each matching exactly once` is literally true of the empty set,
 so a harness whose table shape the extractor never recognised printed the same line as
 one whose anchors are all unique. Measured on the tree this tool is pointed at most
-often: **296 anchors across 101 runners, "no findings" — and 82 of the 95 audited
+often: **296 anchors across 101 runners, "no findings", and 82 of the 95 audited
 runners had contributed ZERO of them.** Thirteen supplied all 296. Among the 82 was a
 harness carrying an anchor that matches twice in the file it points at: the exact defect
 the rule exists to find, under an `ok`.
@@ -167,7 +184,7 @@ Two zeros are kept apart, because they are different things to do next:
 | no table found at all | nothing here is recognised as a mutation table |
 | a table found, no readable anchor | the shape was not recognised |
 
-A `look` rather than a finding — a harness legitimately holding no anchors exists, one
+A `look` rather than a finding: a harness legitimately holding no anchors exists, one
 that replaces functions or mutates strings in memory, and `anchor_exempt` is where that
 is said with the reason. What must not happen is the tool claiming to have checked it.
 
@@ -179,7 +196,7 @@ contributed zero and how many of those are exempt. This is the aggregate form of
 
 ### `anchors`: the table a harness unpacks is a table (Python half)
 
-A table was recognised by its NAME — anything beginning `MUTATION` — and the anchor by
+A table was recognised by its NAME (anything beginning `MUTATION`) and the anchor by
 counting back from the end of the entry. Both bounds cost real coverage:
 
 - `M = [(G, old, new, name, why), ...]` is a mutation table under a name no prefix rule
@@ -195,14 +212,14 @@ for path, needle, repl, want_check, why in MUTATIONS:
 ```
 
 That is the declaration, not a guess. The column **before** the one named as the
-replacement is the anchor — adjacency, the same `replace(old, new)` invariant the value
-rule rests on — and a table is now recognised by **being consumed as one**. Columns are
+replacement is the anchor: adjacency, the same `replace(old, new)` invariant the value
+rule rests on, and a table is now recognised by **being consumed as one**. Columns are
 counted by position in the ENTRY rather than among its strings, which is what reaches a
 target column that is a module-level variable and so is not a string constant at all.
 
 **A wider value rule was tried first and measured.** Against the 947 entries whose
 columns are declared, the best variant read 586 correctly, offered 345 as unreadable and
-got **16 wrong** — and a wrong anchor is a false dead-anchor finding on a healthy
+got **16 wrong**, and a wrong anchor is a false dead-anchor finding on a healthy
 harness. The declaration is exact for all 947 and changes none of the 298 anchors the
 value rule already read correctly, which stays underneath it unchanged.
 
@@ -210,7 +227,7 @@ Guarded where it could go wrong rather than trusted: used only when the entry's 
 matches the unpack's, so a `+=` block of narrower entries is not read against the wrong
 declaration; only when the iterable is a bare name, since `for i, row in
 enumerate(TABLE)` shifts every column; and an anchor column that is not a string
-constant is offered as unreadable rather than read around. That last case was live —
+constant is offered as unreadable rather than read around. That last case was live:
 three entries were being reported as one clean anchor apiece, and the anchor was a
 declared test name.
 
@@ -223,7 +240,7 @@ harness and can read its declaration; the JavaScript half reads the table as a V
 never sees source. This is safe in one direction only, which is why it is allowed: where
 a declaration is absent both halves fall back to the same value rule, and where it is
 present Python is more precise while the JavaScript half offers a `look`. The two never
-contradict each other about a repository — they differ in how much either can settle.
+contradict each other about a repository; they differ in how much either can settle.
 
 ## 0.5.0
 
@@ -231,7 +248,7 @@ contradict each other about a repository — they differ in how much either can 
 
 `assay all` is the command that decides whether a baseline line may be called stale, and
 it could not perform the cross audit at all. So a `same answer across languages` finding
-could be accepted into `assay.json` and then **never answered by anything** — a line no
+could be accepted into `assay.json` and then **never answered by anything**: a line no
 run could fire, sitting in the baseline forever.
 
 ```bash
@@ -243,18 +260,18 @@ assay all --base origin/main --scan src --sweep src --against js/src --with assa
 
 | | |
 |---|---|
-| `FAMILIES` | is this a legal `from`? — now includes `sweep` |
-| `COMPLETING` | may a run that skipped X call an **untagged** line stale? — does **not** include `sweep` |
+| `FAMILIES` | is this a legal `from`?: now includes `sweep` |
+| `COMPLETING` | may a run that skipped X call an **untagged** line stale?: does **not** include `sweep` |
 
 Conflating them is a defect in whichever direction you resolve it, and both directions
 are now tests rather than opinions:
 
 - Put `sweep` in the completeness set and **every existing `assay all --scan` stops being
-  a complete run** — untagged entries in every already-written `assay.json` silently stop
+  a complete run**: untagged entries in every already-written `assay.json` silently stop
   being checked for staleness. The tool quietly doing less, on configs that were fine the
   day before.
 - Leave `sweep` out of the legal tags and a cross finding lands **untagged**, where
-  `all --scan` — complete by the four-audit definition, having never swept — calls it
+  `all --scan` (complete by the four-audit definition, having never swept) calls it
   stale on a clean tree. That is the cry-wolf defect `apply_baseline` already carries a
   comment about.
 
@@ -264,7 +281,7 @@ that can exist was written before `sweep` did, and no line older than a command 
 been produced by it.
 
 **`sweep` joins `performed` only when it actually ran**, exactly as `scan` does. And the
-far side is resolved in ONE place for both `all` and `accept` — two resolvers could
+far side is resolved in ONE place for both `all` and `accept`; two resolvers could
 disagree about whether this run swept, and then `accept` would tag a line `from: sweep`
 that `all` never performs, which is a line nothing can ever call stale.
 
@@ -275,19 +292,19 @@ findings from a run that then exits 2 reads as though those findings were the fa
 documented and inert is the shape of a defect this package already shipped once.
 
 **A parity defect found on the way and fixed here:** `assay all --scan --json` answered
-`"scan": null` in the JavaScript half and the census in the Python one — one documented
+`"scan": null` in the JavaScript half and the census in the Python one, one documented
 invocation, two different documents, decided by which binary CI installed. The cause is
 the same shape in both halves: the sub-report each audit is handed exists ONLY to
 attribute findings, so a census set on it never reaches the renderer. No parity test
 covered `scan` on the `all` path; one does now, with a mutation per half.
 
-Four mutations were added, and one existing anchor was repaired — the completeness check
+Four mutations were added, and one existing anchor was repaired: the completeness check
 now reads `COMPLETING`, and the mutation that pinned `FAMILIES` there had to follow it.
 
 ### `why --cross`: which gate kept this function out of the bundle
 
 `sweep` prints `41 functions, 9 probed, 32 not probed`. That is the right shape for a
-tree and the wrong shape for a question — somebody who expected a *particular* function
+tree and the wrong shape for a question: somebody who expected a *particular* function
 to cross cannot read `not discriminated by the ladder 8` and learn whether theirs is one
 of the eight. `why` answered that for the native ladder and had nothing to say about the
 shared one.
@@ -305,7 +322,7 @@ ok       src/cache.py::entries — probed on arity1/v3: 24 of 31 rungs answered,
 
 **Both are true, and that is the argument for the flag.** The native ladder probes this
 function happily; the shared one cannot state a `set` at all. The two ladders hold
-different values and refuse different functions — one the native ladder discriminates
+different values and refuse different functions, one the native ladder discriminates
 can be a *constant* on the shared one, because the shared one is the intersection of
 what the two languages can express. Reporting one verdict for the other question would
 be confident and wrong, with nothing on screen to say the two ladders had been asked
@@ -320,7 +337,7 @@ module was never loaded, so no function in it was looked at on either.
 
 `discrimination_detail` now takes the ladder it is explaining. It is ONE function for
 both, and it can be, because its last branch DEDUCES the projection rather than
-re-deciding it — deduction needs no table of vacuous shapes, and a table is exactly what
+re-deciding it: deduction needs no table of vacuous shapes, and a table is exactly what
 would have had to be duplicated. The parity test that used to pin the dispatching line
 now asserts the stronger property: the projection guard is never named inside the
 explainer, in either half.
@@ -330,18 +347,18 @@ their reason. Swapping the explainer's decider cannot be made silent in Python: 
 native projection table parses its rungs as source and the cross ladder carries values,
 so handing one to the other's guard raises inside the tool. A crash is loud, and this
 runner's rule is that a mutation must make a guard silently permissive or silently
-strict — three entries were reshaped for exactly that in the past, and a fourth that
+strict; three entries were reshaped for exactly that in the past, and a fourth that
 cannot be reshaped does not belong. JavaScript has no such barrier, both ladders being
 plain arrays there, so its counterpart IS silent and IS in the table.
 
-`assay anchors` again found three defects in its own table on the way through — two
+`assay anchors` again found three defects in its own table on the way through; two
 existing entries pinned the explainer's old first line, and `why --cross` made
 `probe(func, mode="cross")` ambiguous with `assay probe`.
 
 ### `search --against`: the other language, for ONE function
 
 `sweep` needs a whole tree on both sides. `cross` needs the pair named. Neither answers
-the question somebody actually has at the keyboard — *I am about to write this one
+the question somebody actually has at the keyboard: *I am about to write this one
 function; does the other language already have it?*
 
 ```bash
@@ -360,12 +377,12 @@ question; both together give both verdicts in one run, kept apart, because the n
 ladder is the stronger of the two and the answers are not interchangeable. Neither given
 is exit 2 rather than a clean `no findings` from a run that looked nowhere.
 
-**A query the shared ladder cannot tell apart is a `look`, never a `none`** — from the
+**A query the shared ladder cannot tell apart is a `look`, never a `none`**, from the
 same `admit` that decides what goes into a bundle. A constant can only fail to match the
 other constants, because every constant was kept out of the bundle in the first place.
 
 **Stdin is read once.** `search` can now probe one snippet on two ladders, and a second
-`readStdin()` returns nothing — which would have reported an EMPTY snippet as though the
+`readStdin()` returns nothing, which would have reported an EMPTY snippet as though the
 caller had sent one: a verdict about code nobody wrote, printed under the name of code
 somebody did. There is a mutation and a parity test for that specifically.
 
@@ -373,14 +390,14 @@ Nine mutations were added. Three existing anchors had to be repaired, and `assay
 anchors` is what found them: `search` grew its own copy of the same-language refusal, so
 `sweep`'s anchor stopped being unique in two files, and the `undiscriminated` guard moved
 into a new helper. The parity file's `flat()` normalizer now strips backticks as well as
-`"` and `'` — a template literal wrapped mid-sentence leaves one between two words, and
+`"` and `'`: a template literal wrapped mid-sentence leaves one between two words, and
 without it a sentence both halves state identically compared unequal.
 
 ### `bundle` and `sweep`: the cross-language pair nobody named
 
 `assay cross` answered about two functions somebody already suspected. Nobody suspects
-the pair that matters — a rule written once in the API and again in the front end, by
-two people, a year apart — and the Limits section said so in as many words: discovery
+the pair that matters: a rule written once in the API and again in the front end, by
+two people, a year apart, and the Limits section said so in as many words: discovery
 "would mean probing every function of both trees on the shared ladder and bucketing
 across them". That is what these two commands are.
 
@@ -394,7 +411,7 @@ assay sweep  src/ --against js/src --with assay-js    # ...or in one step
 stdout. Its `records` are byte-identically shaped `assay probe` records, so an entry
 lifted out of one is a record `cross` already reads; `assay_bundle` is versioned apart
 from `assay_probe`, because adding a key to the envelope does not change what any one
-record means by `vector`. It emits ONE SHAPE on every path — a broken invocation is the
+record means by `vector`. It emits ONE SHAPE on every path: a broken invocation is the
 same document with `error` set and exit 2.
 
 **`sweep PATHS… --against BUNDLE|PATHS`** probes this tree on the shared ladder and
@@ -407,13 +424,13 @@ functions on its own fuller ladder.
 refused was never compared. `same none` printed while the far side's refusals go
 unmentioned is *we never looked* reported as *we found none*, across a boundary where
 the reader has no way to check. The renderer is now defined over the census DATA rather
-than over a live `Scan`, so both halves of that report come from one place — and it
+than over a live `Scan`, so both halves of that report come from one place, and it
 re-sorts the tallies, because a bundle's census arrives key-sorted from JSON and the
 near one arrives largest-bucket-first.
 
 **A bucket is only a comparison because of what never reached it.** `sweep` groups by
-vector equality, which is legitimate only because `admit` — one function, used by every
-collect in both halves — refuses everything `compare_cross` refuses: an outcome the
+vector equality, which is legitimate only because `admit` (one function, used by every
+collect in both halves) refuses everything `compare_cross` refuses: an outcome the
 interlingua cannot state, and a vector no rung told apart from a constant. Two places
 deciding that is how the tree-wide command comes to print a `finding` for a pair the
 pairwise command calls a `look`.
@@ -425,12 +442,12 @@ renamed.
 Sixteen mutations were added, eight per half. Three of them break the guards above in
 the direction that stays quiet: a bundle from another schema compared anyway, a bundle
 that could not be BUILT read as a tree with nothing in it, and a cross collect walking
-the NATIVE ladder while labelling its records `cross` — which would hand the other half
+the NATIVE ladder while labelling its records `cross`, which would hand the other half
 a key that matches and a vector that means something else.
 
 ### A body is deferred wherever a body cannot run
 
-The load gate deferred a function body only under a declaration keyword —
+The load gate deferred a function body only under a declaration keyword:
 `function`, `class`, `const`, `let`, `var` at depth 0. A CommonJS barrel has none of
 those:
 
@@ -442,23 +459,23 @@ module.exports = {
 ```
 
 Nothing here is a declaration, so the clock in one property refused the file and took
-every pure helper with it — **the very defect the gate was written to fix, surviving in
+every pure helper with it: **the very defect the gate was written to fix, surviving in
 the spelling most of a CommonJS estate is written in.** Object-literal property values
 and shorthand methods are now deferred like declarations. On a ten-helper Handlebars
 barrel written this way: 0 probed becomes 6.
 
 **The same edit closed a hole running the other way.**
-`const x = function () { return Date.now(); }();` is an IIFE — it reads the clock on the
-way in — and the gate blanked its body and called the file clean. That is the dangerous
+`const x = function () { return Date.now(); }();` is an IIFE; it reads the clock on the
+way in, and the gate blanked its body and called the file clean. That is the dangerous
 direction: a file the gate exists to refuse, loaded. The wrapped spelling
 `(function () { … })()` was already refused, but only because a parenthesised group is
-not followed by `=>` and the initializer scan gave up on it — correct by accident, in
+not followed by `=>` and the initializer scan gave up on it: correct by accident, in
 the one place where an accident is a loaded module. Both spellings are now refused
 deliberately, in property position and in initializer position alike.
 
 **An accessor is still not deferred, and that one is a guard rather than an accident.**
 `{ get x() { … } }` runs when the property is *read*, and `exportedFunctions` reads
-every export in order to enumerate it — so a getter body is reachable in a way an
+every export in order to enumerate it, so a getter body is reachable in a way an
 ordinary method's is not. There is a test that says so.
 
 `async` and generator properties are not deferred either, for want of the same check.
@@ -470,8 +487,8 @@ actually shipped.
 
 **A MINOR bump when it lands, and the rule at the top says why:** `why` grows two flags
 and `search` reports a case it used to print as a clean result, so a tree green on 0.4.0
-may show a new `look`. Nothing is removed and no exit code moves — a `look` has never
-failed a run — but two invocations that used to be accepted are now errors, and both
+may show a new `look`. Nothing is removed and no exit code moves: a `look` has never
+failed a run, but two invocations that used to be accepted are now errors, and both
 were flags or arguments the tool parsed and ignored. `anchors` moves the other way, and
 is the reason this is not a patch either: it stops reporting dead anchors on harnesses
 that carry a column after the replacement, so a tree red on 0.4.0 for that reason goes
@@ -483,7 +500,7 @@ ignored. Re-accept it with `assay accept` and the new line carries the file.
 ### The gate asks two questions, because it guards two events
 
 `fileRefusal` read the whole file, so one `new Date()` in one body refused every
-function beside it. It is now `loadRefusal` — *may this module be imported?* — asked of
+function beside it. It is now `loadRefusal` (*may this module be imported?*) asked of
 module-scope code only, paired with a per-function *may this be called?* that follows
 what a function **reaches**. On a barrel of ten Handlebars helpers this goes from 0
 probed to 6; the two clock helpers are still refused, individually and by name.
@@ -491,7 +508,7 @@ probed to 6; the two clock helpers are still refused, individually and by name.
 **Narrowing the file gate alone would have been unsafe**, and the reason was already
 written in `probe.js`: `functionRefusal` reads a function's own source and cannot see
 the module scope its free names resolve in. `slugA(s) { return stamp(s) }` mentions
-nothing gated, and `stamp` calls `writeFileSync`. So the call gate walks free names —
+nothing gated, and `stamp` calls `writeFileSync`. So the call gate walks free names:
 local bindings transitively, and relative imports into modules that pass the load gate
 themselves. Bare specifiers, core modules, unknown globals and doubly-declared names
 refuse by name.
@@ -503,12 +520,12 @@ covered re-exported functions, never callers of imported ones. On a two-file fix
 old build wrote a real file to a real absolute path; there is now a test that asserts it
 does not.
 
-Refusals are a chain you can walk back to the code — `reaches config, which reaches env,
-which touches process` — with every hop kept.
+Refusals are a chain you can walk back to the code: `reaches config, which reaches env,
+which touches process`, with every hop kept.
 
 **Coverage moves both ways, and it was measured rather than argued.** On
 `@azure/msal-common`: 6 files refused before loading down to 4, 142 functions found up
-to 166, 12 probed up to 13. The gains are barrels; the losses are real —
+to 166, 12 probed up to 13. The gains are barrels; the losses are real:
 `reaches nowSeconds, which reads the clock` refuses three functions the old build probed
 and should not have, because their outcome vectors were never deterministic. On `semver`
 every comparison now refuses through a `debug` helper two modules away that reads
@@ -518,7 +535,7 @@ That is the trade this makes.
 Five defects in the analysis were found by running it against real packages rather than
 by reading it, and each has a test: callback parameters read as free names, class method
 names read as references, regex flags read as identifiers, reached bindings judged by
-the probe's own eligibility rules, and — worst — files using ASI or opening with a
+the probe's own eligibility rules, and (worst) files using ASI or opening with a
 `'use strict'` directive finding **no** top-level bindings at all, which silently
 refused everything in ordinary CommonJS.
 
@@ -529,14 +546,14 @@ globals. `Buffer` deliberately does not: the allowlist is per name, and
 The parity suite now pins the call gate. Both halves resolve a free name through the
 module rather than refusing it on sight, both follow a helper and name it when it is
 impure, both call an unresolvable name `free name X`, and neither opens a module it
-would not have loaded to find out — Python by never importing the containing module and
+would not have loaded to find out: Python by never importing the containing module and
 admitting only an allowlist of stdlib roots, JavaScript by following a relative
 specifier only, and only into a module that passes the same load gate.
 
 **One rule is per-language on purpose, and is asserted rather than left to drift.**
 Python inlines each helper's source into a preamble it then executes, so it bounds the
 walk at `HELPER_DEPTH` and says when it stops; JavaScript reads text and never inlines,
-so its walk costs nothing to continue and terminates on a `seen` set instead — which
+so its walk costs nothing to continue and terminates on a `seen` set instead, which
 also makes recursion and mutual recursion ordinary rather than special. Both refuse
 rather than guess when they stop, so this is not a contradiction; a tree probed by one
 binary and not the other would be.
@@ -544,12 +561,12 @@ binary and not the other would be.
 ### The census names what it never looked at
 
 `--json` grows `unloadable_paths` and `skipped_refs` beside the existing tallies. Both
-map a name to the reason, both are additive, and the tallies are unchanged — so the
+map a name to the reason, both are additive, and the tallies are unchanged, so the
 schema number does not move.
 
 The counts could say how much a run never opened and not which. On a real tree that
 reads `could not load 12`, and the only recourse the tool offered was
-`assay why FILE::NAME` — which has to be told a file and a function name inside it, the
+`assay why FILE::NAME`, which has to be told a file and a function name inside it, the
 two things the tally had just withheld. A census that measures its own blind spot and
 then declines to locate it stops one step short of the claim it exists to make.
 
@@ -574,8 +591,8 @@ same   none — nothing in the tree matched <ref>'s outcome vector
        which is not proof that nothing answers it; see Limits
 ```
 
-For a **query the ladder cannot discriminate** — a constant, a projection, or a vector
-that raised on every rung — that line was never true. `collect` files exactly those
+For a **query the ladder cannot discriminate** (a constant, a projection, or a vector
+that raised on every rung) that line was never true. `collect` files exactly those
 functions under *not probed*, so a constant query can only fail to find the other
 constants: the match was never possible and the tree was never really searched. No false
 positive was ever possible either, which is why this was a reporting defect rather than
@@ -593,7 +610,7 @@ non-discriminating query as a `look` with the reason the census cannot give:
 
 **ONE DECIDER, not two that agree by hand.** The `look` is written in one place per half
 and both commands go through it, because the defect being fixed *was* the two of them
-answering one question differently — and a sentence kept in step by hand is how they get
+answering one question differently, and a sentence kept in step by hand is how they get
 back there. Exit codes are unchanged: a `look` never fails a run, and a query the ladder
 *can* discriminate still gets the ordinary `same none`.
 
@@ -606,15 +623,15 @@ file was never the problem. Both commands now resolve their query through one pl
 `--name` without `--stdin`, `--stdin` with a `FILE::NAME`, and a second reference are
 errors in both halves and for both commands rather than in some of the four.
 
-Two consequences worth naming: `search` inherits `why`'s three-way resolution failure —
+Two consequences worth naming: `search` inherits `why`'s three-way resolution failure:
 no such file, a file that does not parse, a file with no such function, instead of one
-`cannot resolve` that sends you to none of them — and `assay why` with no argument now
+`cannot resolve` that sends you to none of them, and `assay why` with no argument now
 says `why needs a FILE::NAME or --stdin`.
 
 ### `assay anchors` stopped calling a harness's metadata a dead anchor
 
 `anchors` reads a mutation table and checks that every anchor matches its target
-exactly once, and it found the anchor at `parts[-2]` — the second-to-last string in the
+exactly once, and it found the anchor at `parts[-2]`: the second-to-last string in the
 entry. That is right whenever the last column is the REPLACEMENT, which covers both
 documented shapes, `(label, old, new)` and `(label, target, old, new)`. It is wrong for
 every table carrying something *after* it:
@@ -626,26 +643,26 @@ every table carrying something *after* it:
 
 Those shapes exist for the reason this package exists: so that *something failed* and
 *the check that covers this failed* stay different claims. On them `parts[-2]` lands on
-the replacement, which matches nothing by construction — so **the most careful
+the replacement, which matches nothing by construction, so **the most careful
 harnesses in a tree were the ones reported as broken**, every entry a dead anchor, on a
 table that was perfectly healthy.
 
-Measured on a real tree: **79 findings on a repository with none** — 6 harnesses, 74
+Measured on a real tree: **79 findings on a repository with none**: 6 harnesses, 74
 entries. The same tree now reports 13, and all but one of those are three further
-mechanisms that carry no text anchor at all — regex substitution, function replacement,
-a table of callables — which are `anchor_exempt` questions rather than extraction ones.
+mechanisms that carry no text anchor at all: regex substitution, function replacement,
+a table of callables, which are `anchor_exempt` questions rather than extraction ones.
 
 Trailing metadata is now dropped before counting back, rather than each shape being
 enumerated: a metadata column is one bare word and a replacement is code, and that
 distinction does not need to know how many columns precede it. **The strip stops at
-three columns**, which is what makes it safe — `("label", code, "pass")` is an ordinary
+three columns**, which is what makes it safe: `("label", code, "pass")` is an ordinary
 three-column mutation whose replacement happens to be a bare word, and stripping there
 would put the anchor on the label, trading a false finding on one shape for a false
 finding on another. One such entry exists across the 34 harnesses measured.
 
 **This moves what `assay anchors` reports, in the direction of reporting less.** A tree
 that was red on 0.4.0 for this reason goes green, and no `anchor_exempt` entry written
-to silence it is needed any more — though one left in place stays harmless, and the
+to silence it is needed any more, though one left in place stays harmless, and the
 stale-exemption check does not fire on it. Nothing about the CLI contract, `assay.json`,
 the verdict vocabulary or the JSON schema moves. An audit that fires on correct code is
 one that gets switched off, which is why this is a fix rather than a tuning.
@@ -653,15 +670,15 @@ one that gets switched off, which is why this is a fix rather than a tuning.
 ### An anchor finding says WHERE, not just how many
 
 `assay anchors` reported `an anchor matches 2 times in ONE file` and named the
-**harness** — which is correct, since the harness is whose table has gone ambiguous,
+**harness**, which is correct, since the harness is whose table has gone ambiguous,
 and unhelpful, because the second copy is usually in some other file entirely.
 Frequently it is a file added since that harness was last touched: a new helper
 elsewhere in the tree grows a line that another experiment's harness had been using as
 its anchor, and the audit goes red naming a harness nobody has edited in days. The
 reader starts from the one file that is fine and greps the tree for the one that is not.
 
-The path was already in hand — `max()` over the per-file counts had it and threw it
-away — so both halves now carry it through:
+The path was already in hand: `max()` over the per-file counts had it and threw it
+away, so both halves now carry it through:
 
 ```
 finding  test/mutations_api.py: an anchor matches 2 times in ONE file (src/keycheck.py) —
@@ -675,7 +692,7 @@ is an accepted line that quietly stops being accepted.
 
 **The dead-anchor finding gained the other half of the same question**: how many files
 were searched. *Matches nothing* and *there was nothing to match it against* are
-different claims, and only the first is about the anchor — a `--root` pointed one
+different claims, and only the first is about the anchor: a `--root` pointed one
 directory too deep makes every anchor in the tree dead at once, and without the count
 that reads as a tree full of rotted anchors rather than as a mis-invocation.
 
@@ -683,8 +700,8 @@ that reads as a tree full of rotted anchors rather than as a mis-invocation.
 
 Documentation only; no verdict moves and no property changes. The `sigterm` property's
 own description named "a harness killed by a timeout" among the cases trapping SIGTERM
-protects you from. **It does not.** SIGKILL cannot be caught, blocked or handled — no
-handler runs, no `finally` runs — and the ordinary way to be SIGKILLed is precisely a
+protects you from. **It does not.** SIGKILL cannot be caught, blocked or handled: no
+handler runs, no `finally` runs, and the ordinary way to be SIGKILLed is precisely a
 timeout: `subprocess.run(..., timeout=...)` kills the child outright, and so does the
 kill step of a CI runner that has waited long enough. A harness satisfying all seven
 properties, invoked under a timeout it then exceeds, leaves the tree mutated exactly as
@@ -693,7 +710,7 @@ though it carried none of them.
 Naming the gap is the whole of the change, because the remedy is not available to this
 tool: it belongs to whatever **invoked** the harness, which has to check that the tree
 came back rather than trust that the harness was given the chance to put it back. That
-is `restore-verified`'s argument one level up — a restore that ran is not a restore that
+is `restore-verified`'s argument one level up: a restore that ran is not a restore that
 worked, and this is a restore that never ran at all. The README gains the shape of that
 check under *Running harnesses in CI*, and a Limits entry says plainly that `assay` does
 not see the invoker.
@@ -701,7 +718,7 @@ not see the invoker.
 ## 0.4.0
 
 **A MINOR bump, and the rule at the top says why:** the purity gate now refuses files
-it used to load, so a tree that was green on 0.3.0 may report new `look`s — and a
+it used to load, so a tree that was green on 0.3.0 may report new `look`s, and a
 project whose census counted certain functions as probed will find them counted as
 declined instead. Nothing about the CLI contract, `assay.json`, the verdict vocabulary
 or the JSON schema moves.
@@ -710,7 +727,7 @@ or the JSON schema moves.
 
 `config.js` imports `node:fs`, so the gate refuses it and `writeBaseline` is never
 probed there. `index.js` re-exports `writeBaseline` and imports no core module of its
-own — so it passed the same gate, and loading it handed the probe the very function the
+own, so it passed the same gate, and loading it handed the probe the very function the
 gate had just refused. `functionRefusal` could not catch it either: that gate looks for
 **import statements**, and a function body never contains one. `writeFileSync` is a
 free name resolved in a module scope the gate cannot see.
@@ -719,18 +736,18 @@ What stood in the way was the de-duplication skip in `exportedFunctions`, which 
 to name each function once and had no idea it was also the last thing between the probe
 and a real `writeFileSync` on a real path. Two mutations remove that skip, and the
 probe wrote **ten files named after the ladder's string rungs into the repository
-root** — which CI then reported as `a mutation was left applied — the restore did not
+root** (which CI then reported as `a mutation was left applied) the restore did not
 run`, naming the wrong cause for a real failure.
 
 The defining file's refusal now travels **with** the function. A function reached
 through a barrel is skipped by name, with the origin's reason, rather than silently
-dropped — so the census says what it declined to run instead of saying nothing.
+dropped, so the census says what it declined to run instead of saying nothing.
 
 ### `await import('node:fs')` was not an import
 
 The same gate refused `require('node:fs')` and `from 'node:fs'` and allowed the dynamic
 form, so a file could reach the filesystem through the one spelling nobody had written
-down — no barrel required. The Python half has always banned `__import__` by name; this
+down: no barrel required. The Python half has always banned `__import__` by name; this
 is the two halves agreeing again rather than a new rule.
 
 ### The probe no longer runs in your repository
@@ -744,7 +761,7 @@ pointed at.
 ### The suites got about five times faster
 
 `run_tests.py` runs one process per `TestCase` class. The suite is almost entirely
-waiting — a probe is a child process per function — so the cores sat idle through all
+waiting (a probe is a child process per function) so the cores sat idle through all
 of it: **25.4s serial against 4.9s in parallel**. The output contract is unchanged,
 because `mutations_assay.py` reads this suite's stdout to decide whether it RAN.
 
@@ -763,7 +780,7 @@ new check is added. A tree green on 0.3.0 is green on 0.3.1, faster.
 ### Probing no longer imports `asyncio` to find out it did not need it
 
 One probe is one child process per function, and that child imported `assay.sameness`,
-which imported `asyncio` at module scope — **85ms of the 190ms a spawn cost**, paid by
+which imported `asyncio` at module scope: **85ms of the 190ms a spawn cost**, paid by
 every function to serve the small minority that are coroutines. Both call sites were
 already behind `inspect.iscoroutine`, so the import moved inside the branch that awaits.
 A scan's probing is about **35% faster per function**, which is most of what a scan is;
@@ -778,13 +795,13 @@ refusal list, which is a string of module names and was never this import.
 `probeFile` gained an optional final `perInput`, and the request it writes to the child
 carries it. The Python worker has always received `per_input` this way; the JavaScript
 child read the constant from its own copy of the module instead, so a caller that
-shortened the budget shortened it only for itself. Additive — a request without the
+shortened the budget shortened it only for itself. Additive: a request without the
 field gets the same `PER_INPUT_MS` the child would have read anyway.
 
 ### The mutation runner drops cached bytecode
 
 A `.pyc` is judged valid by source **size** plus mtime **seconds**, so a same-length
-mutation — `MIN_DISTINCT = 2` -> `MIN_DISTINCT = 1` is one, and it is in the table —
+mutation: `MIN_DISTINCT = 2` -> `MIN_DISTINCT = 1` is one, and it is in the table:
 restores to an identical size within the same second, CPython's cache check passes it,
 and the **next** run executes bytecode compiled from the mutated file. It fails on a
 line that exists in no source file on disk, which reads like a defect in the tool rather
@@ -792,7 +809,7 @@ than an instrument fault.
 
 The suites now run with `PYTHONDONTWRITEBYTECODE=1`, and `__pycache__` beside the
 mutated package is dropped before the baseline, before each mutation and inside every
-restore — which every restore path already goes through, including the SIGTERM handler
+restore, which every restore path already goes through, including the SIGTERM handler
 and the outer `finally`. An eighth property this runner carries, beside the seven
 `assay runners` audits for.
 
@@ -802,7 +819,7 @@ The slowest test in each half was paying a timeout in full to assert something t
 timeout's *length* was no part of: a non-terminating Python function burned eight
 one-second alarms, and a never-settling JavaScript rung burned thirty-one 250ms ones.
 Both now set a shorter budget and ask the same question, and the two synchronous
-spinners bounded by the wall clock dropped from 2500ms to 1000ms — still five times
+spinners bounded by the wall clock dropped from 2500ms to 1000ms: still five times
 what the child needs to boot, load and answer. The JavaScript suite's `sameness` file
 went from 17s to 8s.
 
@@ -817,14 +834,14 @@ shortest route through the backlog.
 **Two contract changes to read before upgrading.** A `baseline` entry may now be an
 object, and the old bare string is still legal, so no config has to move. The `--json`
 payload's `baseline` object drops `complete`/`incomplete_because` for `performed` and
-`unchecked` — `--json` has not been in a release, so nothing published ever carried the
+`unchecked`: `--json` has not been in a release, so nothing published ever carried the
 older shape.
 
 ### `assay cross`: a Python function against a JavaScript one
 
 A validator reimplemented in a Django backend and a Node frontend is the highest-value
 duplication a polyglot repository has, and it is exactly what nobody writes a
-differential test for — because writing one means agreeing, by hand, on what `False` and
+differential test for, because writing one means agreeing, by hand, on what `False` and
 `false` have in common.
 
 ```bash
@@ -836,7 +853,7 @@ assay cross src/api.py::shout yell.json      # the other reads it
 
 **One ladder, not two that resemble each other.** `BASE_VALUES` is a hand-written list
 per language, and the strongest thing that could be said about the pair was that they
-cover the same *shapes* — the languages have different primitives, so comparing lengths
+cover the same *shapes*: the languages have different primitives, so comparing lengths
 would fail for a correct reason. Enough for two Python functions; nothing like enough
 here, where two lists meant to hold the same values that quietly stopped is the entire
 hazard. The cross ladder is **one JSON document** carried verbatim by both halves;
@@ -848,12 +865,12 @@ refuses a mismatched arity.
 mappings are choices about which mistake to make: an integral float renders as an integer
 (JavaScript has one number type), `undefined` and `null` are one absence (Python has one
 and JavaScript has two), and a Python `tuple` renders as an array. Anything JSON cannot
-hold — bytes, a `Map`, a `Date`, a class instance — is refused rather than approximated,
+hold (bytes, a `Map`, a `Date`, a class instance) is refused rather than approximated,
 and one such outcome makes the whole comparison a `look`. `NaN` and the infinities are
 spelled out, because `JSON.stringify` turns all three into `null`.
 
-**A raise carries no name.** The two error taxonomies genuinely diverge — `d['x']` is a
-`KeyError` in Python and `undefined` in JavaScript — so comparing names would make every
+**A raise carries no name.** The two error taxonomies genuinely diverge: `d['x']` is a
+`KeyError` in Python and `undefined` in JavaScript, so comparing names would make every
 honest pair `differs`, and declaring them equal is worse, because `same` is the verdict
 that *fails*. Every raise renders as one token, which is the whole of how a rung where
 **both** sides raised gets masked: two of them can never be a witness, and the vacuity
@@ -862,7 +879,7 @@ where **one** raised and the other answered stays a witness, and it is the most
 interesting kind there is.
 
 The first version of that masking was a branch in the comparison loop with a comment
-explaining what it did — and a mutation removing it changed nothing, because two raises
+explaining what it did, and a mutation removing it changed nothing, because two raises
 already render alike. The guard and its absence produced the same observable, which is
 precisely the failure this package exists to report, so the branch is gone and the
 parity test pins the rendering it restated.
@@ -899,7 +916,7 @@ adopts. In the object form `reason` is required, on the same terms an exemption'
 
 **`from` makes staleness a property of the line rather than of the run.** Naming a
 command that cannot produce a finding is a hard error rather than a line nobody can ever
-check — the same both-directions rule every other table here follows.
+check: the same both-directions rule every other table here follows.
 
 ### `assay accept`: a command that cannot baseline a `look`
 
@@ -913,7 +930,7 @@ from the audit that actually produced the line, so the check that fires it is th
 that can later call it stale, and `--reason` is required.
 
 **It refuses a `look`.** A look never fails the run, so a baselined one could never be
-suppressed and never expire — a record of nothing, indistinguishable from a record of
+suppressed and never expire: a record of nothing, indistinguishable from a record of
 something already fixed. The 0.2.2 changelog records shipping a config example that
 baselined a look; it was corrected by editing the example, and an example is corrected
 once per copy of it.
@@ -932,7 +949,7 @@ no longer performs, and that line could then never be called stale.
 
 Staleness used to need `assay all`, because `assay runners` cannot produce a finding
 that only `diff` reports and calling one stale from a partial run flagged every other
-command's lines as fixed — the audit reporting a problem with its own config, on a clean
+command's lines as fixed: the audit reporting a problem with its own config, on a clean
 tree, on every run. The fix was a whole-run flag: correct, and blunt enough to be its own
 problem. Every line in every other command went unchecked, and the run printed a
 disclaimer where a number belongs.
@@ -946,7 +963,7 @@ BASELINE assay.json — 3 accepted, 0 new, 1 stale, 2 NOT checked for staleness
 ```
 
 *Stale* is a line this run could have seen fire and did not. *Not checked* is one it
-could not have seen at all — **counted rather than folded into the stale number**,
+could not have seen at all: **counted rather than folded into the stale number**,
 because `0 stale` from a run that never looked reads as "nothing is stale" and those are
 different claims. An untagged line keeps the old rule.
 
@@ -979,7 +996,7 @@ convention about column order, and both halves bound the readable shapes identic
 an entry one offers as unreadable is not silently guessed at by the other.
 
 **The cost is stated rather than hidden.** The harness gets imported, so guard `main()`
-behind the entry-point check every program in this package already carries — a harness
+behind the entry-point check every program in this package already carries: a harness
 that does work at import time will do that work, in a child process that cannot reach
 your session but on the real tree. In exchange a **computed** anchor is simply a string
 here, where the Python half can only report it as a shape it cannot read. A harness that
@@ -989,7 +1006,7 @@ exports no table is a `look`, never a finding.
 harnesses a half can *read*; what has to leave the corpus is *all* of them. A polyglot
 repository has a `mutations-x.js` beside a `mutations_a.py`, and a JavaScript harness
 left in the Python corpus is a file full of anchor strings for that audit to match its
-own anchors against — a confident finding about a file the harness has nothing to do
+own anchors against: a confident finding about a file the harness has nothing to do
 with. Reading and excluding are two different questions, and answering both with one
 walk was the mistake.
 
@@ -1005,7 +1022,7 @@ cannot read `no arguments 274` and learn whether theirs is one of the 274, and g
 which of eight gates rejected it is the work the census was supposed to save them.
 
 `why` prints the gate that refused **this** function, or says it was probed and on which
-ladder. It never produces a finding — it reports what the tool did and decides nothing —
+ladder. It never produces a finding; it reports what the tool did and decides nothing:
 so a refusal is a `look` and a probe is an `ok`, printed rather than left silent for the
 reason every other `ok` is.
 
@@ -1017,7 +1034,7 @@ another shape, and the census sends all three to the same place. The explanation
 and then says which branch refused, because a second decider for one question is two
 answers that can disagree.
 
-**A `look` now prints its detail**, exactly as a finding does — that is where `why` puts
+**A `look` now prints its detail**, exactly as a finding does; that is where `why` puts
 its whole answer, and dropping it answered half the question.
 
 **Three answers where `resolve` had one.** No such file, a file that does not parse, and
@@ -1027,7 +1044,7 @@ the reason: a module's functions arrive through its exports, and finding an unex
 declaration would mean reading source with a regex.
 
 On the JavaScript half the answer is often at the **file** level. A file that reaches for
-the clock is refused whole, so none of its functions were ever looked at — reporting a
+the clock is refused whole, so none of its functions were ever looked at: reporting a
 per-function reason for a file nobody opened would be a reason invented after the fact.
 
 ### A seventh runner property: `restore-verified`
@@ -1035,7 +1052,7 @@ per-function reason for a file nobody opened would be a reason invented after th
 `restore-in-finally` proves the restore **path executes**. It does not prove the tree
 came back. A harness that restores from a buffer it read *after* mutating, that writes
 the text back in a different encoding, or that saved one of the two files it touches,
-satisfies all six of the other properties and still leaves the working tree wrong —
+satisfies all six of the other properties and still leaves the working tree wrong:
 and every suite after that one scores code nobody wrote, at a tally that reads exactly
 like a clean run.
 
@@ -1043,15 +1060,15 @@ Hashing before and comparing after is the check. The detector wants **both halve
 a digest nothing compares is arithmetic, and a message nothing computes is a string,
 so it looks for a digest *and* a named failure for the case where the two disagree.
 The tells live in one list per half and `test_parity.py` pins them equal, because this
-is the one property whose two detectors read different files — a `.py` harness is
-audited by the Python half and a `.js` one by the JavaScript half — and a tell in one
+is the one property whose two detectors read different files: a `.py` harness is
+audited by the Python half and a `.js` one by the JavaScript half, and a tell in one
 list and not the other means a correct harness passes in one language and is a finding
 in the other.
 
 `python/tests/mutations_assay.py` now carries the property it audits for: it digests
 the **bytes** of every file it will touch before writing anything and compares them
 after the last restore, and a mismatch exits 2 whatever the mutation score was. The
-digest is over bytes rather than over decoded text on purpose — hashing the string
+digest is over bytes rather than over decoded text on purpose: hashing the string
 would agree with itself after a restore that wrote the file back in a different
 encoding, which is one of the three ways a restore runs and still leaves the tree
 wrong.
@@ -1065,7 +1082,7 @@ is a second emitter over a structure that existed rather than a rewrite.
 **One shape, always.** A run that could not start emits the same keys as one that
 finished, with `error` set and `items` empty. Prose on the failure path and JSON
 everywhere else hands a consumer a parse error at exactly the moment the tool could not
-run, and a sloppy consumer reads a parse error as *no findings* — which is the failure
+run, and a sloppy consumer reads a parse error as *no findings*, which is the failure
 this package exists to report, arriving in its own output. Every exit-2 site routes
 through one helper.
 
@@ -1083,7 +1100,7 @@ claims.
 `unchecked` names every entry it could not have seen fire, rather than an empty `stale`
 list that reads as *checked, found none*. (This shipped with a `complete` boolean and an
 `incomplete_because` string; both are gone in the same unreleased cycle, because
-completeness stopped being a property of the run — see *Per-line baseline staleness*
+completeness stopped being a property of the run: see *Per-line baseline staleness*
 below. `schema` stays at 1: version 1 has never been released, so there is nothing for a
 consumer to have pinned.)
 
@@ -1098,7 +1115,7 @@ string.
 
 ### `assay search --stdin`: ask about a function before it is a file
 
-`search` took a `FILE::NAME`, which names something that already exists — so the
+`search` took a `FILE::NAME`, which names something that already exists, so the
 command sold as **search before you generate** required you to write the file first,
 which is the thing you were trying to find out whether to write. `--stdin` takes the
 function on its way to being written.
@@ -1111,7 +1128,7 @@ will.
 
 **Which function is never guessed.** One definition is unambiguous; several without
 `--name` is a refusal rather than a default, because picking one would make the tool
-answer about code nobody asked about — and that reads exactly like an answer about the
+answer about code nobody asked about, and that reads exactly like an answer about the
 code you did ask about.
 
 `--name` without `--stdin` is an **error**, not a silently ignored flag. A flag that is
@@ -1120,7 +1137,7 @@ a docstring about.
 
 Two limits, both in the README: a snippet may not import from the tree, and a
 JavaScript snippet that exports nothing needs `--name`. The second is a real difference
-between the halves rather than an oversight — a module's functions reach the probe
+between the halves rather than an oversight: a module's functions reach the probe
 through its exports, and finding an unexported declaration would mean reading source
 with a regex, which is the thing `anchors` declines to do.
 
@@ -1155,23 +1172,23 @@ in its own README.
 ## 0.2.1
 
 **The installed `assay` command did nothing and exited 0.** `npm` puts a `bin` on the
-path as a SYMLINK — `node_modules/.bin/assay` pointing at
-`node_modules/assay-checks/js/src/cli.js` — so `process.argv[1]` is the link while
+path as a SYMLINK: `node_modules/.bin/assay` pointing at
+`node_modules/assay-checks/js/src/cli.js`, so `process.argv[1]` is the link while
 `import.meta.url` is its target. The check for "was I run as a program" compared the two
 with `path.resolve`, which makes a path absolute and leaves symlinks alone, so it never
-matched: the CLI printed nothing, ran nothing, and exited **0** — the code that means
+matched: the CLI printed nothing, ran nothing, and exited **0**: the code that means
 *the tool ran and there is nothing to read*. A published auditing tool reported a clean
 tree by never having run, which is the exact failure this package exists to find.
 
 It affects **0.1.0 and 0.2.0**, on every install where the command is reached through
-`npx assay`, `node_modules/.bin/assay`, or a global install. Running the file by path —
-`node node_modules/assay-checks/js/src/cli.js` — was never affected, which is why the
+`npx assay`, `node_modules/.bin/assay`, or a global install. Running the file by path:
+`node node_modules/assay-checks/js/src/cli.js`: was never affected, which is why the
 repository's own suite and CI never saw it: both invoke it by path.
 
 Both sides are now realpath'd, which also drops a hand-built `file://` URL that mangled
 any directory containing a space or a `#`. The test creates the symlink itself rather
-than relying on the platform having one — the same lesson the symlink guard in
-`changed_files` learned — and asserts both that the linked command prints and that a
+than relying on the platform having one: the same lesson the symlink guard in
+`changed_files` learned, and asserts both that the linked command prints and that a
 run with findings still exits 1, since exiting 0 in silence was the whole defect.
 
 Python was never affected: its console script calls `main()` directly and never
@@ -1181,7 +1198,7 @@ compares `argv[0]` to anything.
 
 A MINOR bump by the contract at the top of this file, and it earns it twice over: the
 ladder key changed, and `async` functions are probed where they used to be refused. Both
-can turn a build red that was green on `0.1.0` — the first by invalidating baseline
+can turn a build red that was green on `0.1.0`: the first by invalidating baseline
 lines, the second by finding duplication it could not previously reach. Neither is a
 break in the CLI contract, the `assay.json` format or the verdict vocabulary, which are
 the parts the version is about.
@@ -1190,8 +1207,8 @@ the parts the version is about.
 
 **Every `same answer` line in an existing `assay.json` baseline stops matching**, because
 the ladder key is part of the finding text. Re-run `assay all`, read the findings again,
-and accept the ones you accept. Vectors from `v2` and `v3` are never compared — that is
-what the key is for — so nothing silently gets the wrong answer; the lines simply have
+and accept the ones you accept. Vectors from `v2` and `v3` are never compared; that is
+what the key is for, so nothing silently gets the wrong answer; the lines simply have
 to be re-accepted.
 
 **An `async` function is probed on the value it settles on.** It used to be refused
@@ -1199,7 +1216,7 @@ outright: 73 refusals on the first real tree, 34 of them in `services/` and 24 i
 `controllers/`, which put a modern Node service layer permanently out of reach. What
 made `async` a refusal was reading the promise object instead of the value it resolves
 to, so `async function f(x) { return x * 2 }` was unprobeable while
-`function h(x) { return Promise.resolve(x * 2) }` scored `E:AsyncResult` on every rung —
+`function h(x) { return Promise.resolve(x * 2) }` scored `E:AsyncResult` on every rung:
 two functions that answer the same question, one never probed and the other never
 comparable to anything. Both are now compared with the plain `function g(x) { return x
 * 2 }` beside them, and all three group. A rejection is the same outcome as a throw, by
@@ -1207,14 +1224,14 @@ type and never by message.
 
 The Python half had the same gap and a worse symptom: `ast.AsyncFunctionDef` is not a
 subclass of `ast.FunctionDef`, so an `async def` was not refused, it was **never seen**.
-It appeared in no count at all — not probed, not skipped, not in the census — and a file
+It appeared in no count at all (not probed, not skipped, not in the census) and a file
 of `async def` reported zero of everything, which reads as a clean sweep.
 
 `async for` and `async with` are still refused, because both drive an object's protocol
 methods and the ladder cannot supply one. The two halves diverge in mechanism and not in
 verdict: `asyncio.run` is callable from synchronous code, so Python needs one entry
 point, while JavaScript has no synchronous await and so keeps a separate `probeOutcome`
-for probing — the sync `outcomeOf` stays for the projection vectors, which the module
+for probing: the sync `outcomeOf` stays for the projection vectors, which the module
 generates itself and which can never be promises.
 
 **Probing no longer waits for the event loop to drain**, and that was the larger half
@@ -1222,19 +1239,19 @@ of what it cost. Node keeps a process alive while any handle is open, and the ha
 belong to the code under test: a module that opens a pool, a socket or an interval AT
 IMPORT TIME keeps the probe child alive long after its last answer is written, so every
 such file paid the full twenty-second wall timeout for work that finished in a fraction
-of a second — measured at seventeen and a half minutes over one directory of
+of a second: measured at seventeen and a half minutes over one directory of
 controllers. The child now exits when it has answered. **This was never an async
 problem**: a file of ordinary synchronous functions pays it too, as long as its module
 opened something on the way in, and it did so on `v2` exactly as on `v3`.
 
 **An awaited rung is bounded by a timer racing the promise**, and it becomes
-`E:TimeoutError` — the same outcome, by the same name, that the Python half's per-input
+`E:TimeoutError`: the same outcome, by the same name, that the Python half's per-input
 `SIGALRM` produces. The claim that there was no interrupt to deliver from inside the
 process was wrong: it is true of a synchronous loop, which never yields, and false of a
 pending promise, where the event loop is free. A synchronous hang is still the wall
 clock's and still a `look`, because there really is nothing to interrupt it with. The
 bound is 250ms rather than the Python half's second, because this half spends one child
-on a whole FILE while Python spends one on a single function — and it is safe to make it
+on a whole FILE while Python spends one on a single function, and it is safe to make it
 that small because it can only ever fire on a promise, never on a computation.
 
 **The mutation runner survives a suite that hangs rather than one that fails.** A
@@ -1245,17 +1262,17 @@ reported, and never a detection.
 
 **This widens what gets executed**, and the README says so in Limits. A service function
 that awaits a database is a function this tool will now call. Loading a module already
-ran its top-level code, so the hazard is not new — but there is more of it.
+ran its top-level code, so the hazard is not new, but there is more of it.
 
 **The JavaScript half chose the ladder by `fn.length`, and reported a wrong finding
 for it.** `fn.length` stops counting at the first parameter with a default, so
 `withDefault(a, b = 10)` came back as arity 1: probed on the one-argument ladder,
 never handed a second argument, and reported as answering the same question as a
-genuinely one-argument `plainOne` — `withDefault(1, 2)` is `3`, `plainOne(1)` is `11`.
+genuinely one-argument `plainOne`: `withDefault(1, 2)` is `3`, `plainOne(1)` is `11`.
 That is the worst category this package has, a finding a reader must dismiss, and it
 was a parity break as well: the Python half reads the declared list off the AST, probes
 at 2, and the first rung separates them. Arity now comes from the declared parameter
-list in `fn.toString()`, which the per-function gates already parse textually — with
+list in `fn.toString()`, which the per-function gates already parse textually, with
 commas inside defaults, destructured parameters and bare-identifier arrows all counted
 correctly, and a list that cannot be read REFUSED rather than fallen back to
 `fn.length`, because a fallback restores the wrong answer exactly where the parser
@@ -1263,13 +1280,13 @@ found it hardest. The parsed count is checked against `fn.length` as a lower bou
 since `fn.length` can never exceed the declared count.
 
 **One non-terminating function cost the whole file.** Synchronous JavaScript has no
-per-input interrupt, so the probe is bounded by a wall clock and a SIGKILL — and a
+per-input interrupt, so the probe is bounded by a wall clock and a SIGKILL, and a
 child that answered once at the end lost everything it had already computed when that
 fired. A file with one `while (true)` and one perfectly probeable function reported
 `1 files, 1 not loaded / probe failed` and nothing about the function that was fine.
 The child now writes one NDJSON line per function to fd 3 as each completes, after a
 roster line naming what it will attempt. A kill costs the function that hung and, after
-it, the ones never started — reported separately, because "it hung here" and "we never
+it, the ones never started: reported separately, because "it hung here" and "we never
 got to it" are different facts. Everything already answered keeps its vector. A
 trailing partial line is dropped rather than repaired: parsing half an object would be
 inventing an answer.
@@ -1280,7 +1297,7 @@ of JavaScript. It now says so per half.
 
 - Test fixtures declare `"type": "module"`, so the JavaScript suites pass on Node
   18 as `engines` claims. A `.js` file containing `export` with no `package.json`
-  beside it is a SyntaxError on Node 18 and loads fine on Node 22 — the fixture was
+  beside it is a SyntaxError on Node 18 and loads fine on Node 22: the fixture was
   the unrealistic thing, since a real project declares its type. The version
   difference is now stated in the README's limits, because it changes what the
   census reports rather than producing a wrong answer.
@@ -1301,7 +1318,7 @@ thing quietly; none changed the CLI contract, the config format or the verdict n
 
 **Findings it should never have made.** A CommonJS module whose export is a function
 arrives through the ESM bridge under two keys, `default` and `module.exports`, pointing
-at one object — reported as a pair, so every `module.exports = fn` file duplicated
+at one object: reported as a pair, so every `module.exports = fn` file duplicated
 itself: eleven of fourteen findings on the first tree it was run against. A barrel
 module re-exporting its helpers was the same mistake one scope out. Both are now
 rejected by identity, which leaves a function genuinely copied into two files reported
@@ -1310,7 +1327,7 @@ as the two implementations it is.
 **A whole directory it never opened.** The probe child wrote its answer to stdout,
 which it shared with whatever the loaded module printed at import time. A `dotenv`
 banner in front of the JSON broke the parse and replaced a diagnosis the child had
-already computed — `could not load (JWT_SECRET must be set...)` — with `probe failed
+already computed (`could not load (JWT_SECRET must be set...)`) with `probe failed
 (silent)`: 58 of 119 skips in one directory. The answer now travels on fd 3, and a
 failure quotes what the child actually said.
 
@@ -1323,7 +1340,7 @@ Python half had the mirror defect: a file that did not parse was dropped before
 **Gates that read prose.** The purity patterns are regexes and matched inside comments
 and property names: the English word "this" in a comment refused a plain function as a
 method, and `perms.global.includes(...)` refused an entire file as touching the global
-object. Comments and string bodies are now blanked before matching — except for module
+object. Comments and string bodies are now blanked before matching: except for module
 specifiers, whose subject IS a string literal, and with any file the scanner cannot lex
 keeping its refusal rather than being cleared by a guess.
 
@@ -1337,7 +1354,7 @@ and the gap did not show in its score: it printed a full tally while every guard
 `js/src` had nothing breaking it on purpose. A tally over the half you can reach reads
 exactly like a tally over the whole thing, which is the defect this package exists to
 report, so it was pointed at itself. A mutation names a file, the suffix says which
-half, and that half's suite is the one that has to go red — each half bringing its own
+half, and that half's suite is the one that has to go red; each half bringing its own
 four answers: where its sources are, how to run its suite, how to tell the suite RAN,
 and how to read a failure out of what it printed. Twelve JavaScript mutations now
 cover the six defects the first real project found, plus the vacuity guards, the
@@ -1346,23 +1363,23 @@ ladder-key check, the config validation and the baseline's cry-wolf rule.
 The `parses-mutant` property holds on the new half too: a `.js` mutant is checked with
 `node --check` **where it lives**, because Node reads module format from the nearest
 `package.json` and a check fed the text from anywhere else calls every valid mutant a
-syntax error — scoring the weakest possible mutation as the strongest possible catch.
+syntax error: scoring the weakest possible mutation as the strongest possible catch.
 
 **A dead mutation anchor is a finding, not a footnote.** `assay anchors` counted an
 anchor that matches nothing and then reported `ok`, so the failure its own docstring
-names — the code moved out from under the anchor, leaving a guard nobody is testing
-inside a suite that still passes — was the one thing it would not fail on. The reason
+names (the code moved out from under the anchor, leaving a guard nobody is testing
+inside a suite that still passes) was the one thing it would not fail on. The reason
 was real: the parser could not tell a label from an anchor, so failing on zero matches
-would have failed on every label. It reads the anchor precisely now — the
+would have failed on every label. It reads the anchor precisely now: the
 second-to-last string in an entry, which follows from `replace(old, new)` rather than
-from a guess about column order — and the count fell from 118 anchors with 60
+from a guess about column order, and the count fell from 118 anchors with 60
 unmatched to 73 anchors with none. An entry carrying more strings than either
 documented shape is a `look`: a wrong conviction about a table this audit has never
 seen is worse than saying it could not tell.
 
 **Both halves now call the same extensions source.** `assay diff` under Node audited
 `.mjs` and `.cjs`; under Python it did not, so one commit produced two different file
-lists depending on which binary CI invoked — and a file missing from the list is not a
+lists depending on which binary CI invoked, and a file missing from the list is not a
 finding, it is silence. `.js` was in the Python list all along, so auditing JavaScript
 was never the disagreement, only which JavaScript. The Python half widened rather than
 the JavaScript half narrowing, and `test_parity.py` now pins the two sets against each
@@ -1370,8 +1387,8 @@ other. The empty-run note reads `no source files changed` on both sides instead 
 naming a list that was wrong on one of them.
 
 **The Python half moved into `python/`, beside `js/`.** Two halves of one tool that
-were laid out two different ways — `assay/` with `tests/` at the root, against `js/src`
-with `js/test` — made the repository harder to read than the code in it. `python/assay`
+were laid out two different ways (`assay/` with `tests/` at the root, against `js/src`
+with `js/test`) made the repository harder to read than the code in it. `python/assay`
 now sits next to `js/src` and `python/tests` next to `js/test`.
 
 **The import name did not move.** `import assay`, `python3 -m assay` and the `assay`
@@ -1386,7 +1403,7 @@ half's distribution to its own half. Two traps are documented in the files thems
 adding a `.npmignore` REPLACES npm's `.gitignore` fallback, so everything that file was
 keeping out has to be restated or it silently starts shipping; and `packages` governs
 only the wheel, leaving the sdist to sweep up whatever sits beside the package. Both
-are checked rather than trusted — `npm pack --dry-run` and `twine check --strict` run
+are checked rather than trusted: `npm pack --dry-run` and `twine check --strict` run
 in the release workflow before anything is published.
 
 **The `assay.json` example in the README shows both languages**, since one file serves
@@ -1401,25 +1418,25 @@ passes its tests.
 
 **Could those checks have failed?**
 
-- `assay runners` — six properties over mutation harnesses: positive evidence a
+- `assay runners`: six properties over mutation harnesses: positive evidence a
   suite ran, a dead-vs-real partition before counting, restore in a `finally`,
   SIGTERM handled (it does not run `finally`), a parse guard so a file-breaking
   mutation is not scored as a catch, and no scratch state beside the code under test.
-- `assay anchors` — every mutation anchor must match its target exactly once.
-- `assay diff` — does this change carry the checks it needs?
-- `assay all` — every audit, and **the only command that can call a baseline entry
+- `assay anchors`; every mutation anchor must match its target exactly once.
+- `assay diff`: does this change carry the checks it needs?
+- `assay all`; every audit, and **the only command that can call a baseline entry
   stale**.
 
 **Does the tree already answer this?**
 
-- `assay scan` — functions that answer the same question, discovered by executing
+- `assay scan`: functions that answer the same question, discovered by executing
   them against a deterministic ladder and bucketing by outcome vector. Names are
   never read.
-- `assay pair` — the declared route, for two named functions.
-- `assay search` — search before you generate.
+- `assay pair`: the declared route, for two named functions.
+- `assay search`: search before you generate.
 
 **Both languages.** Python is complete; JavaScript ships everything except
-`anchors`, which needs a real parser the no-dependency rule forbids — under Node it
+`anchors`, which needs a real parser the no-dependency rule forbids: under Node it
 exits 2 and names where the command does exist. `python/tests/test_parity.py` asserts the
 two halves share property names, verdict names, config keys, ladder version and
 thresholds.

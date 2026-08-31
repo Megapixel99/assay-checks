@@ -930,7 +930,7 @@ exists to find, so it is checked.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }   # `diff` needs a base ref; a shallow clone has none
-- uses: Megapixel99/assay-checks@v0.5.1
+- uses: Megapixel99/assay-checks@v0.5.2
   with:
     command: all       # every audit that can produce a baseline line
     paths: src         # ...and with `all`, paths mean `--scan`: the sameness half
@@ -938,7 +938,7 @@ exists to find, so it is checked.
 
 # The same action runs the other half. `language` is `python` unless you say otherwise,
 # so a JavaScript project has to name it.
-- uses: Megapixel99/assay-checks@v0.5.1
+- uses: Megapixel99/assay-checks@v0.5.2
   with:
     command: scan
     paths: js/src
@@ -947,7 +947,7 @@ exists to find, so it is checked.
 # ...and across the two, naming no pair. `against` is the far tree; `with` is the far
 # binary, which is named rather than guessed — both packages install `assay`, so a
 # half that guessed would compare a tree with itself.
-- uses: Megapixel99/assay-checks@v0.5.1
+- uses: Megapixel99/assay-checks@v0.5.2
   with:
     command: sweep
     paths: src
