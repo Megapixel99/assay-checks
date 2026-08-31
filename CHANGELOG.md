@@ -15,7 +15,24 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
-## Unreleased
+## 0.5.1
+
+### The README, in Seth's voice
+
+79 em dashes became none in the prose. Each was replaced with what it was doing: a colon
+for an appositive, a semicolon between independent clauses, a comma before a conjunction,
+parentheses for a paired aside. 19 remain inside fenced blocks and are staying there,
+because those are verbatim `assay` output and editing them would make the README misquote
+the tool it documents.
+
+No behaviour changed, and no check changed.
+
+### Everything below shipped here for the first time
+
+`conformance/` was written after v0.5.0 and carried an `Unreleased` heading until this
+release went out with it in the tarball. A section named for what it is not yet is
+accurate exactly once.
+
 
 ### The seven properties, run against four frameworks nobody had pointed them at
 
