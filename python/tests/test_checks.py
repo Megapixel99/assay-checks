@@ -414,5 +414,70 @@ class ChangeAudit(unittest.TestCase):
         self.assertEqual(rep.exit_code(), 0)
 
 
+
+class Owns(unittest.TestCase):
+    """`owns()` — the attribution the FINDING branch needs.
+
+    Driven in both directions, per this file's rule. The regression that produced it:
+    a corpus of generated candidate programs contained `tax.py`, and a harness in an
+    unrelated directory mentioned the string `tax.py` inside a quoted markdown
+    fixture. Every one of those candidates was attributed to that harness and reported
+    as a failing finding.
+    """
+
+    def test_a_bare_basename_owns_within_the_harnesss_own_directory(self):
+        self.assertTrue(checks.owns("pkg/mutations_x.py", "pkg/widget.py",
+                                    {"widget.py"}))
+
+    def test_a_bare_basename_does_NOT_own_across_directories(self):
+        """The regression, reduced."""
+        self.assertFalse(checks.owns("exp/291/mutations_keys.py",
+                                     "exp/323/candidates/tax.py", {"tax.py"}))
+
+    def test_a_mention_inside_a_fixture_string_is_still_just_a_mention(self):
+        src = 'text = "## `tax.py`\\n| `tax` |"'
+        self.assertFalse(checks.owns("exp/291/mutations_keys.py",
+                                     "exp/323/candidates/tax.py",
+                                     checks.target_mentions(src)))
+
+    def test_an_explicit_path_owns_across_directories(self):
+        self.assertTrue(checks.owns("a/mutations_x.py", "tools/pycomplete/pycomplete.py",
+                                    {"tools/pycomplete/pycomplete.py"}))
+
+    def test_an_explicit_path_that_does_not_match_owns_nothing(self):
+        self.assertFalse(checks.owns("a/mutations_x.py", "tools/other/pycomplete.py",
+                                     {"tools/pycomplete/pycomplete.py"}))
+
+    def test_a_relative_path_mention_matches_by_suffix(self):
+        self.assertTrue(checks.owns("a/mutations_x.py", "trainingResearch/tools/t.py",
+                                    {"./tools/t.py"}))
+
+    def test_a_harness_owns_files_BELOW_its_directory(self):
+        self.assertTrue(checks.owns("pkg/mutations_x.py", "pkg/sub/widget.py",
+                                    {"widget.py"}))
+
+    def test_a_harness_does_not_own_its_PARENT_directory(self):
+        self.assertFalse(checks.owns("pkg/sub/mutations_x.py", "pkg/widget.py",
+                                     {"widget.py"}))
+
+    def test_a_ROOT_harness_owns_root_files(self):
+        self.assertTrue(checks.owns("mutations_x.py", "widget.py", {"widget.py"}))
+
+    def test_a_ROOT_harness_does_NOT_own_the_whole_tree(self):
+        """`everything below me` is the entire audit when dirname is empty, which is
+        the over-attribution again with one extra step."""
+        self.assertFalse(checks.owns("mutations_x.py", "deep/nested/widget.py",
+                                     {"widget.py"}))
+
+    def test_a_name_it_never_mentions_is_never_owned(self):
+        self.assertFalse(checks.owns("pkg/mutations_x.py", "pkg/widget.py",
+                                     {"other.py"}))
+
+    def test_target_mentions_keeps_paths_where_targets_mentioned_strips_them(self):
+        src = 'TOOL = "tools/pycomplete/pycomplete.py"'
+        self.assertEqual({"tools/pycomplete/pycomplete.py"}, checks.target_mentions(src))
+        self.assertEqual({"pycomplete.py"}, checks.targets_mentioned(src))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
