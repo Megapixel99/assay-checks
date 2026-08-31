@@ -1,0 +1,276 @@
+{
+  "no_evidence": null,
+  "runs": {
+    "baseline": {
+      "command": [
+        "cosmic-ray",
+        "--verbosity",
+        "INFO",
+        "exec",
+        "cosmic-ray.toml",
+        "/session.sqlite"
+      ],
+      "detail": "clean source, 6 path(s) left behind: .pytest_cache (undocumented: .pytest_cache)",
+      "exit_code": 0,
+      "fallback_after": 0.0,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": {
+        "at": 0.358,
+        "files": [
+          "calc/__init__.py"
+        ]
+      },
+      "label": "baseline",
+      "orphans_outlived_leader": false,
+      "output_tail": "         op=<cosmic_ray.operators.binary_operator_replacement._create_replace_binary_operator.<locals>.ReplaceBinaryOperator object at 0xffffa2c34950>, occurrence=0                \n                    INFO     INFO:cosmic_ray.testing:Running test (timeout=60.0): python -m pytest -q tests                                                                                testing.py:37\n[08/31/26 05:20:02] INFO     INFO:cosmic_ray.commands.execute:Job 0737c8a74e14434ea374db61125dce4b complete                                                                                execute.py:44\n                    INFO     INFO:cosmic_ray.mutating:Applying mutation: path=calc/__init__.py,                                                                                          mutating.py:180\n                             op=<cosmic_ray.operators.comparison_operator_replacement._create_operator.<locals>.ReplaceComparisonOperator object at 0xffffa2931430>, occurrence=0                       \n                    INFO     INFO:cosmic_ray.testing:Running test (timeout=60.0): python -m pytest -q tests                                                                                testing.py:37\n[08/31/26 05:20:04] INFO     INFO:cosmic_ray.commands.execute:Job 0fdfe66304794dfebd7d7d2a8b5ec20a complete                                                                                execute.py:44\n                    INFO     INFO:cosmic_ray.mutating:Applying mutation: path=calc/__init__.py,                                                                                          mutating.py:180\n                             op=<cosmic_ray.operators.binary_operator_replacement._create_replace_binary_operator.<locals>.ReplaceBinaryOperator object at 0xffffa288cb30>, occurrence=0                \n                    INFO     INFO:cosmic_ray.testing:Running test (timeout=60.0): python -m pytest -q tests                                                                                testing.py:37\n[08/31/26 05:20:05] INFO     INFO:cosmic_ray.commands.execute:Job 40e438b8029f4a718fcebc4b5504a038 complete                                                                                execute.py:44\n                    INFO     INFO:cosmic_ray.mutating:Applying mutation: path=calc/__init__.py,                                                                                          mutating.py:180\n                             op=<cosmic_ray.operators.binary_operator_replacement._create_replace_binary_operator.<locals>.ReplaceBinaryOperator object at 0xffffa288cb30>, occurrence=0                \n                    INFO     INFO:cosmic_ray.testing:Running test (timeout=60.0): python -m pytest -q tests                                                                                testing.py:37\n[08/31/26 05:20:07] INFO     INFO:cosmic_ray.commands.execute:Job bf36eb60b38e489ebbdd51124924cd00 complete                                                                                execute.py:44\n                    INFO     INFO:cosmic_ray.mutating:Applying mutation: path=calc/__init__.py, op=<cosmic_ray.operators.number_replacer.NumberReplacer object at 0xffffa2c34950>,       mutating.py:180\n                             occurrence=2                                                                                                                                                               \n                    INFO     INFO:cosmic_ray.testing:Running test (timeout=60.0): python -m pytest -q tests                                                                                testing.py:37\n[08/31/26 05:20:08] INFO     INFO:cosmic_ray.commands.execute:Job 76f4e7f4578c4d41b679aca01aac1e9d complete                                                                                execute.py:44\n                    INFO     INFO:cosmic_ray.commands.execute:Execution finished                                                                                                           execute.py:54\n",
+      "polls": 1341,
+      "scratch_roots": [
+        ".pytest_cache"
+      ],
+      "signal_delivered": null,
+      "signal_requested": "none",
+      "signal_target": "group",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": []
+      },
+      "tree_after": {
+        "added": [
+          ".pytest_cache/.gitignore",
+          ".pytest_cache/CACHEDIR.TAG",
+          ".pytest_cache/README.md",
+          ".pytest_cache/v/cache/lastfailed",
+          ".pytest_cache/v/cache/nodeids",
+          ".pytest_cache/v/cache/stepwise"
+        ],
+        "deleted": [],
+        "modified": []
+      },
+      "undocumented_scratch": [
+        ".pytest_cache"
+      ],
+      "verdict": "SCRATCH",
+      "wall_seconds": 71.58,
+      "watch": [
+        "calc/*.py"
+      ]
+    },
+    "sigkill": {
+      "command": [
+        "cosmic-ray",
+        "--verbosity",
+        "INFO",
+        "exec",
+        "cosmic-ray.toml",
+        "/session.sqlite"
+      ],
+      "detail": "left mutated: calc/__init__.py",
+      "exit_code": -9,
+      "fallback_after": 35.79,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": {
+        "at": 0.473,
+        "files": [
+          "calc/__init__.py"
+        ]
+      },
+      "label": "sigkill",
+      "orphans_outlived_leader": false,
+      "output_tail": "[08/31/26 05:20:15] INFO     INFO:root:Reading config from 'cosmic-ray.toml'                                                                                                               config.py:115\n[08/31/26 05:20:16] INFO     INFO:cosmic_ray.commands.execute:Beginning execution                                                                                                          execute.py:46\n                    INFO     INFO:cosmic_ray.mutating:Applying mutation: path=calc/__init__.py, op=<cosmic_ray.operators.number_replacer.NumberReplacer object at 0xffff966affe0>,       mutating.py:180\n                             occurrence=2                                                                                                                                                               \n                    INFO     INFO:cosmic_ray.testing:Running test (timeout=60.0): python -m pytest -q tests                                                                                testing.py:37\n",
+      "polls": 10,
+      "scratch_roots": [
+        "calc"
+      ],
+      "signal_delivered": {
+        "at": 0.473,
+        "files": [
+          "calc/__init__.py"
+        ],
+        "reason": "source file observed mutated on disk",
+        "signal": "KILL",
+        "target": "group"
+      },
+      "signal_requested": "kill",
+      "signal_target": "group",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": [
+          "calc/__init__.py"
+        ]
+      },
+      "tree_after": {
+        "added": [],
+        "deleted": [],
+        "modified": [
+          "calc/__init__.py"
+        ]
+      },
+      "undocumented_scratch": [
+        "calc"
+      ],
+      "verdict": "DIRTY",
+      "wall_seconds": 0.97,
+      "watch": [
+        "calc/*.py"
+      ]
+    },
+    "sigterm": {
+      "command": [
+        "cosmic-ray",
+        "--verbosity",
+        "INFO",
+        "exec",
+        "cosmic-ray.toml",
+        "/session.sqlite"
+      ],
+      "detail": "left mutated: calc/__init__.py",
+      "exit_code": -15,
+      "fallback_after": 35.79,
+      "group_quiet_after": null,
+      "in_place_mutation_observed": {
+        "at": 0.526,
+        "files": [
+          "calc/__init__.py"
+        ]
+      },
+      "label": "sigterm",
+      "orphans_outlived_leader": false,
+      "output_tail": "[08/31/26 05:20:13] INFO     INFO:root:Reading config from 'cosmic-ray.toml'                                                                                                               config.py:115\n                    INFO     INFO:cosmic_ray.commands.execute:Beginning execution                                                                                                          execute.py:46\n                    INFO     INFO:cosmic_ray.mutating:Applying mutation: path=calc/__init__.py,                                                                                          mutating.py:180\n                             op=<cosmic_ray.operators.comparison_operator_replacement._create_operator.<locals>.ReplaceComparisonOperator object at 0xffffaeeff5f0>, occurrence=0                       \n                    INFO     INFO:cosmic_ray.testing:Running test (timeout=60.0): python -m pytest -q tests                                                                                testing.py:37\n",
+      "polls": 11,
+      "scratch_roots": [
+        "calc"
+      ],
+      "signal_delivered": {
+        "at": 0.526,
+        "files": [
+          "calc/__init__.py"
+        ],
+        "reason": "source file observed mutated on disk",
+        "signal": "TERM",
+        "target": "group"
+      },
+      "signal_requested": "term",
+      "signal_target": "group",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": [
+          "calc/__init__.py"
+        ]
+      },
+      "tree_after": {
+        "added": [],
+        "deleted": [],
+        "modified": [
+          "calc/__init__.py"
+        ]
+      },
+      "undocumented_scratch": [
+        "calc"
+      ],
+      "verdict": "DIRTY",
+      "wall_seconds": 1.08,
+      "watch": [
+        "calc/*.py"
+      ]
+    },
+    "sigterm-leader": {
+      "command": [
+        "cosmic-ray",
+        "--verbosity",
+        "INFO",
+        "exec",
+        "cosmic-ray.toml",
+        "/session.sqlite"
+      ],
+      "detail": "left mutated: calc/__init__.py  [orphans outlived the leader; group went quiet after 0.55]",
+      "exit_code": -15,
+      "fallback_after": 35.79,
+      "group_quiet_after": 0.55,
+      "in_place_mutation_observed": {
+        "at": 0.5,
+        "files": [
+          "calc/__init__.py"
+        ]
+      },
+      "label": "sigterm-leader",
+      "orphans_outlived_leader": true,
+      "output_tail": "[08/31/26 05:20:10] INFO     INFO:root:Reading config from 'cosmic-ray.toml'                                                                                                               config.py:115\n                    INFO     INFO:cosmic_ray.commands.execute:Beginning execution                                                                                                          execute.py:46\n                    INFO     INFO:cosmic_ray.mutating:Applying mutation: path=calc/__init__.py,                                                                                          mutating.py:180\n                             op=<cosmic_ray.operators.binary_operator_replacement._create_replace_binary_operator.<locals>.ReplaceBinaryOperator object at 0xffff86512420>, occurrence=0                \n                    INFO     INFO:cosmic_ray.testing:Running test (timeout=60.0): python -m pytest -q tests                                                                                testing.py:37\n",
+      "polls": 10,
+      "scratch_roots": [
+        ".pytest_cache",
+        "calc"
+      ],
+      "signal_delivered": {
+        "at": 0.5,
+        "files": [
+          "calc/__init__.py"
+        ],
+        "reason": "source file observed mutated on disk",
+        "signal": "TERM",
+        "target": "leader"
+      },
+      "signal_requested": "term",
+      "signal_target": "leader",
+      "source_after": {
+        "added": [],
+        "deleted": [],
+        "modified": [
+          "calc/__init__.py"
+        ]
+      },
+      "tree_after": {
+        "added": [
+          ".pytest_cache/.gitignore",
+          ".pytest_cache/CACHEDIR.TAG",
+          ".pytest_cache/README.md",
+          ".pytest_cache/v/cache/nodeids",
+          ".pytest_cache/v/cache/stepwise"
+        ],
+        "deleted": [],
+        "modified": [
+          "calc/__init__.py"
+        ]
+      },
+      "undocumented_scratch": [
+        ".pytest_cache",
+        "calc"
+      ],
+      "verdict": "DIRTY",
+      "wall_seconds": 1.62,
+      "watch": [
+        "calc/*.py"
+      ]
+    }
+  },
+  "spec": {
+    "command": [
+      "cosmic-ray",
+      "--verbosity",
+      "INFO",
+      "exec",
+      "cosmic-ray.toml",
+      "/session.sqlite"
+    ],
+    "copy": [
+      "cosmic-ray.toml"
+    ],
+    "deadline": 300,
+    "env": {
+      "COLUMNS": "200"
+    },
+    "evidence": "Execution finished",
+    "expected_scratch": [],
+    "fixture": "python",
+    "homepage": "https://github.com/sixty-north/cosmic-ray",
+    "language": "python",
+    "name": "cosmic-ray",
+    "notes": "The session database is initialised at image build and kept outside the tree, so the scratch column is about what the RUN leaves behind and the signalled process is cosmic-ray itself.",
+    "version": "8.4.6",
+    "watch": [
+      "calc/*.py"
+    ]
+  }
+}

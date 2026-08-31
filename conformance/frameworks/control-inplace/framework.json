@@ -1,0 +1,21 @@
+{
+  "name": "control-inplace",
+  "version": "n/a",
+  "language": "python",
+  "fixture": "python",
+  "homepage": "this repository",
+  "watch": [
+    "calc/*.py"
+  ],
+  "command": [
+    "python3",
+    "mutations_calc.py"
+  ],
+  "copy": [
+    "mutations_calc.py"
+  ],
+  "deadline": 120,
+  "notes": "Passes all seven properties per `assay runners`, and mutates in place. Expected: baseline CLEAN, sigterm CLEAN, sigkill DIRTY.",
+  "expected_scratch": [],
+  "evidence": "dead=\\d+ real=\\d+"
+}

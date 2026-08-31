@@ -1,0 +1,22 @@
+{
+  "name": "mutmut",
+  "version": "3.7.0",
+  "language": "python",
+  "fixture": "python",
+  "homepage": "https://github.com/boxed/mutmut",
+  "watch": [
+    "calc/*.py"
+  ],
+  "command": [
+    "mutmut",
+    "run"
+  ],
+  "deadline": 300,
+  "notes": "mutmut 3 copies the project into ./mutants/ and mutates the copy.",
+  "expected_scratch": [
+    "mutants",
+    ".mutmut-cache",
+    "mutants.db"
+  ],
+  "evidence": "mutations/second"
+}

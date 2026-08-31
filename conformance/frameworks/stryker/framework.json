@@ -1,0 +1,25 @@
+{
+  "name": "stryker",
+  "version": "8.7.1",
+  "language": "javascript",
+  "fixture": "javascript",
+  "homepage": "https://stryker-mutator.io/",
+  "watch": [
+    "src/*.js"
+  ],
+  "command": [
+    "node",
+    "node_modules/@stryker-mutator/core/bin/stryker.js",
+    "run"
+  ],
+  "deadline": 420,
+  "notes": "Stryker's own defaults, including cleanTempDir: forcing the sandbox to persist would put residue in every row and cost the report the contrast between a run that finished and a run that was killed.",
+  "copy": [
+    "stryker.config.json"
+  ],
+  "expected_scratch": [
+    ".stryker-tmp",
+    "reports"
+  ],
+  "evidence": "Mutation score"
+}

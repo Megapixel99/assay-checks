@@ -1,0 +1,22 @@
+{
+  "name": "pit",
+  "version": "1.16.1",
+  "language": "java",
+  "fixture": "java",
+  "homepage": "https://pitest.org/",
+  "watch": [
+    "src/main/java/calc/*.java"
+  ],
+  "command": [
+    "mvn",
+    "-B",
+    "-o",
+    "org.pitest:pitest-maven:mutationCoverage"
+  ],
+  "deadline": 600,
+  "notes": "PIT mutates BYTECODE in memory rather than source on disk, so the sharp trigger cannot fire and the kill lands mid-run instead.",
+  "expected_scratch": [
+    "target"
+  ],
+  "evidence": "Generated \\d+ mutations"
+}
