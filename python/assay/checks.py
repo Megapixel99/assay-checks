@@ -319,6 +319,11 @@ def _git(root, *args):
     return proc.returncode, proc.stdout
 
 
+def target_mentions(src):
+    """Every file-like token a harness names, AS WRITTEN — paths kept."""
+    return {m.group(0) for m in FILE_RE.finditer(src)}
+
+
 def targets_mentioned(src):
     """Basenames a harness names, i.e. what it plausibly targets.
 
@@ -328,8 +333,48 @@ def targets_mentioned(src):
     rather than hidden — a harness that merely mentions a file counts as covering it,
     so this UNDER-reports missing coverage and never over-reports it. An audit that
     errs should err toward saying less.
+
+    THAT REASONING ONLY COVERS ONE OF THE TWO BRANCHES THIS FEEDS, which is how it
+    came to over-report. Under-attributing an owner makes `diff` say `look` — a
+    missing check, advisory. OVER-attributing one makes it say `finding` — a failing
+    check — about a file the named harness has never touched. The two branches have
+    opposite error tolerances and shared one attribution set. `owns()` is the
+    stronger test the finding branch needs; this function is unchanged for callers
+    that want the loose one.
     """
-    return {os.path.basename(m.group(0)) for m in FILE_RE.finditer(src)}
+    return {os.path.basename(t) for t in target_mentions(src)}
+
+
+def owns(runner_rel, target_rel, mentions):
+    """Does RUNNER plausibly target TARGET, rather than merely containing its name?
+
+    A bare basename is not an identifier. It was attributing every generated
+    `tax.py` in a corpus of candidate programs to a harness in a different
+    experiment whose only mention of the name was inside a quoted markdown fixture
+    — a fixture, in a string, about a different file with the same basename.
+
+    Two ways to own a file, and both are about REACH:
+
+      * an explicit PATH mention (`tools/pycomplete/pycomplete.py`), which
+        identifies the file wherever the harness lives; or
+      * a bare basename AND the file sitting in the harness's own directory or
+        below it — the only place a harness that builds paths with `os.path.join`
+        on its own `HERE` can reach.
+
+    A harness at the audited ROOT owns only files at the root, not the whole tree:
+    "everything below me" is the entire audit when `dirname` is empty, which is the
+    over-attribution again with one extra step.
+    """
+    target = target_rel.replace(os.sep, "/")
+    for tok in mentions:
+        t = tok.replace(os.sep, "/").lstrip("./")
+        if "/" in t and (target == t or target.endswith("/" + t)):
+            return True
+    if os.path.basename(target) not in {os.path.basename(t) for t in mentions}:
+        return False
+    rdir = os.path.dirname(runner_rel.replace(os.sep, "/"))
+    tdir = os.path.dirname(target)
+    return tdir == rdir or (bool(rdir) and tdir.startswith(rdir + "/"))
 
 
 def changed_files(root, base):
@@ -415,7 +460,7 @@ def audit_diff(root, base, config, report=None):
     for rel in find_runners(root):
         with open(os.path.join(root, rel), encoding="utf-8") as fh:
             runners[rel] = fh.read()
-    covers = {rel: targets_mentioned(src) for rel, src in runners.items()}
+    covers = {rel: target_mentions(src) for rel, src in runners.items()}
     per_file = guards_per_file(root, base)
 
     rep.note("\nCHANGE — %d source file(s) against %s" % (len(changed), base))
@@ -430,7 +475,7 @@ def audit_diff(root, base, config, report=None):
         # every file as deleted, and the audit had opinions about all of them.
         if not os.path.exists(os.path.join(root, name)):
             continue
-        owning = sorted(r for r, t in covers.items() if base_name in t)
+        owning = sorted(r for r, t in covers.items() if owns(r, name, t))
         if not owning:
             rep.look("%s has NO mutation runner naming it — a missing check is a "
                      "stronger signal than a failing one" % name, name)
@@ -449,7 +494,12 @@ def audit_diff(root, base, config, report=None):
             continue
         with open(path, encoding="utf-8") as fh:
             stale = LIMIT_RE.findall(fh.read())
-        if stale and any(os.path.basename(name) in t for t in covers.values()):
+        # `covers` holds mentions AS WRITTEN now, so this must project to basenames
+        # rather than test membership directly — it was a basename set before
+        # `owns()` needed the paths, and leaving it would have silently stopped
+        # matching every harness that names its target with a directory.
+        if stale and any(os.path.basename(name) in {os.path.basename(x) for x in t}
+                         for t in covers.values()):
             rep.look("%s carries %d limitation-shaped test(s) (%s...) — the day that "
                      "limitation lifts, a correct change turns those green checks red"
                      % (name, len(stale), stale[0][:44]), name)
