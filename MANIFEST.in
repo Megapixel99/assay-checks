@@ -26,6 +26,7 @@ exclude .npmignore
 # --- tests and development, none of which an installed package needs --------- #
 prune python/tests
 prune .github
+prune conformance
 exclude CONTRIBUTING.md
 exclude Dockerfile
 exclude action.yml

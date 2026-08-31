@@ -17,6 +17,67 @@ and use the `baseline` in `assay.json` to accept what you have read.
 
 ## Unreleased
 
+### The seven properties, run against four frameworks nobody had pointed them at
+
+`conformance/` is a suite that runs mutation-testing frameworks under an interruption
+they cannot survive, at the instant they are least able to survive it, and hashes the
+tree. **No detector semantics change and no code outside `conformance/` is touched** —
+this is evidence about the properties, not a change to them.
+
+The suite exists because the seven properties are framework-agnostic and had only ever
+been pointed at hand-rolled harnesses inside one tree, and because the README leaves a
+question open past them: a harness satisfying all seven, invoked under a timeout it
+exceeds, leaves the tree mutated exactly as though it carried none of them.
+
+| framework | version | baseline | sigterm-leader | sigterm | sigkill | mutates in place? |
+|---|---|---|---|---|---|---|
+| `control-inplace` | n/a | **CLEAN** | **CLEAN** | **CLEAN** | **DIRTY** | yes |
+| `cosmic-ray` | 8.4.6 | **SCRATCH** | **DIRTY** | **DIRTY** | **DIRTY** | yes |
+| `mutmut` | 3.7.0 | **SCRATCH** | **SCRATCH** | **SCRATCH** | **SCRATCH** | no — sandboxed |
+| `pit` | 1.16.1 | **SCRATCH** | **CLEAN** | **CLEAN** | **CLEAN** | no — sandboxed |
+| `stryker` | 8.7.1 | **CLEAN** | **SCRATCH** | **SCRATCH** | **SCRATCH** | no — sandboxed |
+
+**cosmic-ray fails earlier than the open question predicted.** It mutates the file on
+disk, and a SIGTERM delivered to cosmic-ray itself — a plain `timeout`, not a kill —
+leaves it mutated. That is `sigterm`, which is INSIDE the seven, so it never reaches
+the blind spot beyond them.
+
+**The other three never mutate the tree at all.** mutmut copies the project into
+`mutants/`, Stryker into `.stryker-tmp/`, and PIT mutates bytecode in memory. Their
+source survives SIGKILL because it was never dirty.
+
+That reframes the remedy rather than confirming it. *The invoker must check that the
+tree came back* is load-bearing only for harnesses that mutate in place, and the
+lesson for anyone writing one is not to handle more signals but to **mutate a copy**:
+no process can promise to clean up after being killed, and the only way to have
+nothing to clean up is to have put nothing there. The `Running harnesses in CI` recipe
+in the README is unchanged and still correct — it is the check for the row that fails.
+
+**The suite carries its own calibration row, because a column of CLEAN verdicts is
+worth nothing on its own.** `nothing found` and `nothing looked` are the same output
+otherwise, which is `evidence` one level up from the harnesses it audits.
+`conformance/frameworks/control-inplace/mutations_calc.py` mutates in place and
+satisfies all seven properties — `assay runners` reports `ok` on it, rather than a
+comment claiming so — and it is CLEAN under both SIGTERMs and DIRTY under SIGKILL.
+
+Two measurement errors caught while building it, both instances of the properties
+this tool is about:
+
+- **Stryker's first run died on `spawn ps ENOENT`** in a slim image missing `procps`,
+  having mutated nothing, and left a clean tree. Four passing verdicts about a run
+  that never happened. Every baseline now has to print a declared proof-of-work
+  string or the whole row reports `NO-RUN`.
+- **cosmic-ray was invoked through `sh -c` and Stryker through `npx`**, so a
+  leader-only signal killed the wrapper, orphaned the framework, and let it finish
+  unwatched — reported as CLEAN. The probe now records orphans outliving the leader,
+  and both invocations were changed so the framework is the leader. Correcting it
+  flipped Stryker's `sigterm-leader` from CLEAN to SCRATCH and cosmic-ray's from
+  SCRATCH to DIRTY: that column had been entirely artifact.
+
+`dead-vs-real`, `parses-mutant` and `restore-verified` are not measured. They are
+claims about how a framework SCORES what it observes, which needs a different
+instrument written per framework rather than once.
+
 ### The census counts one reason per function, and that invited a wrong inference
 
 Found by pointing 0.5.0 at four real Python trees rather than at its own suite.

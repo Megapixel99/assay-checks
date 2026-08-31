@@ -21,6 +21,7 @@ MANIFEST.in
 
 # --- tests. The suites are run from the repo, never from the tarball. -------- #
 js/test/
+conformance/
 
 # --- development and CI, none of which a consumer installs ------------------- #
 .github/
