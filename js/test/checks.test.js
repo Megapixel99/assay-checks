@@ -17,8 +17,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  auditDiff, auditRunners, changedFiles, checkExemptions, findRunners,
-  PROPERTIES, PROPERTY_KEYS, targetsMentioned,
+  auditDiff, auditRunners, changedFiles, checkExemptions, codeOnly, findRunners,
+  PROPERTIES, PROPERTY_KEYS, stateTargets, targetsMentioned,
 } from '../src/checks.js';
 import { Config } from '../src/config.js';
 import { Report } from '../src/verdicts.js';
@@ -50,8 +50,13 @@ function runner({
   const handler = sigterm
     ? "  handle('SIGTERM', () => {});\n"
     : "  handle('SIGUSR1', () => {});\n";
+  // A GENUINE EXECUTABLE WRITE, so the positive case cannot pass by the detector
+  // going back to matching text: the anchor test below quotes this very line and must
+  // stay clean while this one stays a finding.
   const scratch = treeWrite
-    ? "\nwriteFileSync(join(__dirname, 'results.json'), '{}');\n" : '';
+    ? "\nfunction save(results) {\n"
+      + "  writeFileSync(join(__dirname, 'results.json'), JSON.stringify(results));\n"
+      + '}\n' : '';
   // A restore that RAN is not a restore that WORKED. The verified harness digests the
   // bytes before anything is written and compares them after; the other one restores
   // exactly as diligently and never looks.
@@ -168,6 +173,60 @@ test('not checking the mutant parses is flagged', () => {
 
 test('writing scratch state beside the code is flagged', () => {
   assert.deepEqual([...missing(runner({ treeWrite: true }))], ['no-tree-writes']);
+});
+
+test('an ANCHOR QUOTING a write is not the harness writing', () => {
+  // The false positive six innocent runners hit in the repository this package came
+  // out of. A mutation runner is the one kind of file that deliberately QUOTES other
+  // files: its anchors are string literals holding fragments of the code under test,
+  // for `replace(old, next)` to find. BOTH DIRECTIONS ARE ASSERTED HERE on purpose —
+  // the quoted form clean AND the same line as code a finding — so this cannot pass by
+  // the detector having quietly stopped detecting.
+  const anchor = "\nexport const MORE = [['a label',\n"
+    + "  '  writeFileSync(join(__dirname, \"results.json\"), x);',\n"
+    + "  '  pass']];\n";
+  assert.deepEqual([...missing(runner() + anchor)], []);
+  assert.deepEqual([...missing(runner({ treeWrite: true }))], ['no-tree-writes']);
+});
+
+test('a path that LEAVES the directory is not state beside the code', () => {
+  // Only the segment DIRECTLY under the directory constant counts, as on the Python
+  // side: `join(__dirname, '..', other, 'x.json')` is somewhere else.
+  const source = `${runner()}\nconst OUT = join(__dirname, '..', 'elsewhere', 'x.json');\n`;
+  assert.deepEqual([...missing(source)], []);
+});
+
+test('a path a COMMENT mentions is not a write either', () => {
+  const source = `${runner()}\n// never join(__dirname, 'results.json')\n`;
+  assert.deepEqual([...missing(source)], []);
+});
+
+test('a REGEX holding a quote does not invert every literal after it', () => {
+  // The one ambiguity a scanner this size has to settle, and getting it wrong is a
+  // false CONVICTION rather than a miss: `/['"]/` read as the start of a string opens
+  // one that never closes, and every literal after it in the file is then read with
+  // its polarity inverted — so the anchor below would come back as "code".
+  const source = `${runner()}\nconst QUOTED = /['"]/;\n`
+    + "const ANCHOR = '  writeFileSync(join(__dirname, \"results.json\"), x);';\n";
+  assert.deepEqual([...missing(source)], []);
+});
+
+test('a DIVISION is not mistaken for a regular expression', () => {
+  // The mirror of the case above. Reading `a / b` as a regex swallows the code after
+  // it up to the next `/`, and a real write inside that span goes unreported.
+  const source = `${runner({ treeWrite: true })}\nconst RATIO = passed / total;\n`;
+  assert.deepEqual([...missing(source)], ['no-tree-writes']);
+});
+
+test('the scanner reduces a string literal to its VALUE and nothing else', () => {
+  // `codeOnly` and `stateTargets` driven directly, because the tests above prove the
+  // detector's VERDICT and not what it read. A literal's contents must arrive as a
+  // value between sentinels, a comment must not arrive at all, and the detector must
+  // be able to NAME what it objected to — a `look` at a harness is answered by
+  // opening it, and a finding that cannot say which path it means sends nobody there.
+  assert.match(codeOnly("const A = 'x.json';"), /\0x\.json\0/);
+  assert.equal(codeOnly('// join(HERE, "x.json")\n').trim(), '');
+  assert.deepEqual(stateTargets(runner({ treeWrite: true })), ['results.json']);
 });
 
 test('a restore nothing VERIFIES is flagged', () => {
