@@ -52,7 +52,13 @@ def runner(evidence=True, partition=True, restore_in_finally=True, sigterm=True,
     guard = '            ast.parse(mutated)\n' if parses else ''
     handler = ('    signal.signal(signal.SIGTERM, lambda *a: None)\n' if sigterm
                else '    signal.signal(signal.SIGUSR1, lambda *a: None)\n')
-    scratch = ('\nOUT = os.path.join(HERE, "results.json")\n' if tree_write else '')
+    # A GENUINE EXECUTABLE WRITE, not a bare path build, so the positive case cannot
+    # pass because the detector went back to matching text: `json.dump` into a file
+    # opened beside the harness is the thing the property forbids, and the anchor test
+    # below quotes this very line to prove the two are told apart.
+    scratch = ('\ndef save(results):\n'
+               '    json.dump(results, open(os.path.join(HERE, "results.json"), "w"))\n'
+               if tree_write else '')
     # A restore that RAN is not a restore that WORKED. The verified harness takes a
     # digest of the bytes before anything is written and compares it after; the other
     # one restores exactly as diligently and never looks.
@@ -67,6 +73,7 @@ def runner(evidence=True, partition=True, restore_in_finally=True, sigterm=True,
     return (
         'import ast\n'
         'import hashlib\n'
+        'import json\n'
         'import os\n'
         'import signal\n'
         'import subprocess\n'
@@ -172,6 +179,47 @@ class Properties(unittest.TestCase):
 
     def test_writing_scratch_state_beside_the_code_is_flagged(self):
         self.assertEqual(self.missing(runner(tree_write=True)), {"no-tree-writes"})
+
+    def test_an_ANCHOR_QUOTING_a_write_is_not_the_harness_writing(self):
+        """The false positive six innocent runners hit, and the reason a regex cannot
+        do this job.
+
+        A mutation runner is the one kind of file that deliberately QUOTES other files:
+        its anchors are string literals holding fragments of the code under test, for
+        `replace(old, new, 1)` to find. A harness whose target legitimately writes
+        `results.json` therefore carries those exact bytes without writing anything.
+
+        BOTH DIRECTIONS ARE ASSERTED IN ONE TEST, on purpose. The quoted form must be
+        clean AND the same line as code must be a finding, so this cannot pass by the
+        detector having quietly stopped detecting — which is the failure this package
+        exists to report and the one its own tests are likeliest to hide.
+        """
+        anchor = ('\nMORE = [("a label",\n'
+                  '         \'    json.dump(r, open(os.path.join(HERE, '
+                  '"results.json"), "w"))\',\n'
+                  '         "    pass")]\n')
+        self.assertEqual(self.missing(runner() + anchor), set())
+        self.assertEqual(self.missing(runner(tree_write=True)), {"no-tree-writes"})
+
+    def test_a_path_that_LEAVES_the_directory_is_not_state_beside_the_code(self):
+        """Only the segment DIRECTLY under HERE counts, which is what the text version
+        measured too: `os.path.join(HERE, "..", other, "x.json")` is somewhere else."""
+        src = runner() + '\nOUT = os.path.join(HERE, "..", "elsewhere", "x.json")\n'
+        self.assertEqual(self.missing(src), set())
+
+    def test_a_path_a_COMMENT_mentions_is_not_a_write_either(self):
+        """The other half of reading text instead of code, and the cheaper half to
+        get wrong: a comment explaining what the harness deliberately does NOT do."""
+        src = runner() + '\n# never os.path.join(HERE, "results.json")\n'
+        self.assertEqual(self.missing(src), set())
+
+    def test_the_detector_names_what_it_found(self):
+        """`state_targets` is driven directly as well as through the audit, because a
+        property reported by name says WHICH file it objects to only if the detector
+        can say. A `look` at a harness is answered by opening it."""
+        import ast                                            # noqa: PLC0415
+        src = runner(tree_write=True)
+        self.assertEqual(checks.state_targets(ast.parse(src)), ["results.json"])
 
     def test_a_restore_nothing_VERIFIES_is_flagged(self):
         """The seventh property, and the one the other six cannot see.

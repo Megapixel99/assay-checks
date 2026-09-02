@@ -15,6 +15,82 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## 0.6.0
+
+### `no-tree-writes` read quoted text as code, and it convicted six innocent harnesses
+
+The Python detector was a regular expression over the whole source file, and a mutation
+runner is the one kind of file where that cannot work. A runner's ANCHORS are string
+literals holding fragments of the code under test, for `replace(old, new, 1)` to find,
+so a harness whose target legitimately writes `results.json` carries the exact bytes
+`os.path.join(HERE, "results.json")` without writing anything itself. The scan read the
+quotation as the deed.
+
+It was measured rather than reasoned about. In the research repository this package was
+extracted from, six runners were failed by this property on one afternoon: 15 matching
+lines between them, all 15 inside an `ast.Constant`, none an executable statement. The
+suites those runners drive were then run to settle it against the world instead of
+against another reading of the same text: 148 checks, 0 failed, `git status
+--porcelain` empty afterwards. Two neighbouring runners passed the identical check only
+because their targets used `.npz`, which is not in the suffix list, so what separated
+the flagged from the clean was the file extension their TARGETS use, which is a
+property of neither.
+
+`state_targets()` walks the tree for a real `os.path.join(HERE, <string constant>)`
+call, because a string's contents are never parsed as code. The reach is unchanged:
+only the segment directly under `HERE` counts, so `os.path.join(HERE, "..", other,
+"x.json")` leaves the directory and is not state beside the code under test, exactly as
+the regular expression measured it.
+
+**The detector can still fire, and that is the part worth checking rather than
+assuming.** The obvious repair downstream was a blanket exemption, and a blanket
+exemption silences real violations too: with one in place, a planted executable
+`SCRATCH = os.path.join(HERE, "scratch.json")` still gave `assay all` exit 0. Over the
+seven runners as they stood before that repository worked around the bug, this release
+reports 7 findings before and 0 after; plant one genuine write into any of them and it
+is 1 finding and exit 1 again.
+
+### The two halves disagreed about what the property MEANS, which is the worse half
+
+`js/src/checks.js` required a literal `writeFileSync(...)` around the join. The Python
+half fired on the join alone. So a harness building `join(__dirname, 'corpus.json')`
+was a finding under `python3 -m assay` and clean under `npx assay`, off the same
+`assay.json`, with nothing saying so. That is the drift `python/tests/test_parity.py`
+exists to stop, sitting inside the check table it audits.
+
+**Both halves now key on the join rather than on the write call.** The write is usually
+performed by the CHILD suite: the conformance table marks `cosmic-ray` for a
+`.pytest_cache/` that its default test command wrote, not cosmic-ray. What a harness
+contributes is a LOCATION beside its own source, and the defect this property was
+extracted from wrote nothing at all, being an `os.environ.setdefault` that handed a
+path under `HERE` to a subprocess. Keying on the write makes the detector a whitelist
+of spellings (`open`, `json.dump`, `Path.write_text`, `csv`, `sqlite3.connect`, an
+`--out` argument, an environment variable), and what a whitelist omits is silence.
+
+**This is why the release is a MINOR rather than a patch.** The JavaScript half now
+reports a bare `join(__dirname, 'x.json')` that it used to pass, so a build that was
+green can go red. The changelog's own rule for that is a minor bump.
+
+JavaScript has no parser in the standard library and this package has no dependencies,
+so `codeOnly` is what stands in for `ast`: a scan that knows where a string literal
+begins and ends, which is the only distinction this property turns on. It settles the
+one ambiguity a scanner that size has, which is whether a `/` starts a regular
+expression or a division, and that is not cosmetic: `/['"]/` read as the start of a
+string opens one that never closes, and the literals after it are then scanned with
+their polarity inverted, which turns quoted anchors into "code" and produces a false
+conviction rather than a miss.
+
+`STATE_SUFFIXES` is a named constant in both halves and `test_parity.py` compares them
+as sets, for the reason the six runners demonstrate: an extension in one list and not
+the other is that same accident with a language attached.
+
+### Counts
+
+`python/tests/run_tests.py`: 416 tests, 0 failures, 0 errors (was 409). `node --test
+js/test/*.test.js`: 394 tests, 0 failures (was 388). `python/tests/mutations_assay.py`:
+256 mutations (was 251), and the five new ones put this defect back rather than merely
+changing the code.
+
 ## 0.5.2
 
 ### The changelog, in the same voice as the README

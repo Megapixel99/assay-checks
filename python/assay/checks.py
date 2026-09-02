@@ -158,16 +158,73 @@ def _p_parses(src, tree):
     return _has(src, "ast.parse", "compile(") or _requires_named_section(src)
 
 
+# The suffixes that make a path beside the code STATE rather than more source. Both
+# halves carry this list and `test_parity.py` pins them equal: a suffix present in one
+# and missing from the other means the same harness is a finding in one language and
+# clean in the other, off one `assay.json`.
+STATE_SUFFIXES = (".json", ".tsv", ".db", ".jsonl", ".txt")
+
+
+def state_targets(tree):
+    """Every `os.path.join(HERE, "x.json")` that is CODE, as the names it aims at.
+
+    Only the segment DIRECTLY under `HERE` counts, which is what the text version
+    measured too: `os.path.join(HERE, "..", other, "x.json")` leaves this directory and
+    is not state beside the code under test.
+
+    An unparseable runner never reaches here — `audit_runners` reports it as a finding
+    before any detector runs — so this has no third answer that could be mistaken for
+    a clean one.
+    """
+    out = []
+    for node in ast.walk(tree):
+        fn = getattr(node, "func", None)
+        if not (isinstance(node, ast.Call)
+                and isinstance(fn, ast.Attribute) and fn.attr == "join"
+                and isinstance(fn.value, ast.Attribute) and fn.value.attr == "path"
+                and getattr(fn.value.value, "id", "") == "os"):
+            continue
+        if len(node.args) < 2 or getattr(node.args[0], "id", "") != "HERE":
+            continue
+        seg = node.args[1]
+        if (isinstance(seg, ast.Constant) and isinstance(seg.value, str)
+                and seg.value.endswith(STATE_SUFFIXES)):
+            out.append(seg.value)
+    return out
+
+
 def _p_no_tree_writes(src, tree):
-    """No scratch state written beside the code under test.
+    """No scratch state AIMED at a path beside the code under test.
 
     Restoring the file you EDITED is not the invariant; leaving no scratch state in
     the working tree is. A harness that restores its target and lets the suite it runs
     write results into a tracked file leaves the tree looking clean while a committed
     artifact records the behaviour of deliberately broken code.
+
+    THE TELL IS THE PATH RATHER THAN THE WRITE CALL, and the sentence above is why: the
+    write is usually performed by the CHILD, and what the harness contributes is a
+    location beside its own source. The defect this property was extracted from wrote
+    nothing itself — an `os.environ.setdefault` handing `os.path.join(HERE,
+    ".mutation-sources.json")` to a subprocess that then wrote it — so a detector keyed
+    on `open(..., "w")` would have watched it ship. There is no bounded list of ways to
+    write a file in Python (`open`, `json.dump`, `Path.write_text`, `csv`,
+    `sqlite3.connect`, an `--out` argument, an environment variable), and keying on the
+    write makes this a whitelist; what a whitelist omits is silence.
+
+    THIS READS THE TREE, NOT THE TEXT, and that distinction is the whole function. The
+    first version was a regex over the entire source, and a mutation runner is the one
+    kind of file where that cannot work: its ANCHORS are string literals holding
+    fragments of the code under test, for `replace(old, new, 1)` to find. A harness
+    whose target legitimately writes `results.json` therefore quotes that line without
+    writing anything itself, and the regex read the quotation as the deed. It failed
+    six innocent runners in the research repository this package was extracted from —
+    15 matching lines between them, every one inside a string constant, not one an
+    executable statement — while the runners beside them passed only because their
+    targets used an extension this list does not name, which is a property of neither.
+    `ast` tells quotation from deed for free, because a string's CONTENTS are never
+    parsed as code.
     """
-    return not re.search(r"os\.path\.join\(\s*HERE\s*,\s*[\"'][^\"']+\.(json|tsv|db|"
-                         r"jsonl|txt)[\"']", src)
+    return not state_targets(tree)
 
 
 # THE TELLS ARE NAMED CONSTANTS because both halves must accept the same harness. A

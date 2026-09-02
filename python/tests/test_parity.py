@@ -182,6 +182,53 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertEqual(found["RESTORE_FAILURE_TELLS"],
                          set(checks.RESTORE_FAILURE_TELLS))
 
+    def test_the_no_tree_writes_SUFFIXES_are_the_same_in_both_halves(self):
+        """The other property whose detectors read DIFFERENT files and must still
+        reach the same verdict. A suffix in one list and not the other means a harness
+        aiming state at `results.tsv` beside itself is a finding in one language and
+        clean in the other, off one `assay.json` — and the six wrongly-flagged runners
+        that occasioned this fix were separated from the two that passed by exactly
+        that: their targets used an extension this list happens to name.
+
+        The list is the contract; the scan around it is not, which is why this
+        compares the lists rather than the detectors.
+        """
+        table = re.search(r"export const STATE_SUFFIXES = \[(.*?)\];",
+                          js("checks.js"), re.S).group(1)
+        self.assertEqual(set(re.findall(r"'([^']*)'", table)),
+                         set(checks.STATE_SUFFIXES))
+
+    def test_both_halves_read_no_tree_writes_out_of_CODE_not_text(self):
+        """The defect this pin exists to stop coming back, in either half.
+
+        A mutation runner is the one kind of file that deliberately QUOTES other files,
+        and a detector matching raw text reads the quotation as the deed. Python has
+        `ast`; JavaScript has no parser in the standard library and this package has no
+        dependencies, so it carries `codeOnly`, a scan that knows where a string begins
+        and ends. Different machinery, one requirement — neither half may go back to
+        matching the file as text, and a half that did would pass every other check
+        here while producing a finding the other one does not.
+        """
+        self.assertIn("for node in ast.walk(tree):", py("checks.py"))
+        self.assertIn("(src) => !stateTargets(src).length]", js("checks.js"))
+        self.assertIn("export function codeOnly(src)", js("checks.js"))
+
+    def test_both_halves_take_no_tree_writes_from_the_JOIN_not_the_write_call(self):
+        """The halves once disagreed about what the property MEANS, which is worse
+        than either reading: this half fired on `os.path.join(HERE, "x.json")` and the
+        other required a `writeFileSync` around it, so the same harness was a finding
+        or clean depending on which binary CI invoked.
+
+        The join is what both settled on. The write is usually performed by the CHILD
+        suite — the conformance table marks `cosmic-ray` for a `.pytest_cache/` its
+        default test command wrote — so what a harness contributes is a LOCATION beside
+        its own source, and keying on the write makes the detector a whitelist of
+        spellings whose omissions are silent.
+        """
+        self.assertIn(r"const STATE_TARGET_RE = /(?:path\.)?join\(", js("checks.js"))
+        self.assertIn('and isinstance(fn, ast.Attribute) and fn.attr == "join"',
+                      py("checks.py"))
+
     def test_both_halves_treat_a_SHALLOW_COPY_as_vacuous(self):
         """The vacuity guard decides what `same` is worth, so it has to decide the same
         thing twice. A function that only copies its argument through has not been
