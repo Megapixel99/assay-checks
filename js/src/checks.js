@@ -22,6 +22,14 @@
  * version can be satisfied by code that merely mentions the right names. It will not
  * produce a false FINDING, it will miss a real one. If your harnesses are Python, run
  * the Python half over them and get the stronger detector.
+ *
+ * `no-tree-writes` USED TO BE IN THAT PARAGRAPH TOO and no longer is, which is worth
+ * saying because the fix generalises. It needed to tell code from text — a runner's
+ * anchors are string literals holding fragments of the code under test, and matching
+ * the file as text reads the quotation as the deed — and that distinction does not
+ * need a parse, only a scan that knows where a string begins and ends. `codeOnly` is
+ * that scan. What still needs a parser is everything ABOUT the code once you have it,
+ * which is why `dead-vs-real` stays where it is.
  */
 
 import { execFileSync } from 'node:child_process';
