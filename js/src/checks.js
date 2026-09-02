@@ -90,6 +90,130 @@ export const DIGEST_TELLS = ['hexdigest', '.digest(', 'sha256', 'sha1', 'sha512'
 export const RESTORE_FAILURE_TELLS = ['RESTORE FAILED', 'NOT RESTORED',
   'restore_failed', 'restoreFailed', 'did not come back'];
 
+// The suffixes that make a path beside the code STATE rather than more source. Both
+// halves carry this list and `test_parity.py` pins them equal: a suffix present in one
+// and missing from the other means the same harness is a finding in one language and
+// clean in the other, off one `assay.json`.
+export const STATE_SUFFIXES = ['.json', '.tsv', '.db', '.jsonl', '.txt'];
+
+// A NUL, because no source file contains one and the sentinel has to be a character a
+// harness cannot introduce. `codeOnly` puts a pair around the VALUE of every string
+// literal that is CODE; text merely quoted INSIDE such a literal never gets a pair, and
+// that difference is the whole check.
+const STATE_TARGET_RE = /(?:path\.)?join\(\s*(?:HERE|__dirname)\s*,\s*\0([^\0]*)\0/g;
+
+// A `/` after any of these is a regular expression rather than a division, which is the
+// one ambiguity a scanner this size has to settle. Getting it wrong is not cosmetic: a
+// regex holding a lone quote — `/['"]/` — would otherwise open a string that never
+// closes, and every literal after it in the file would be read with its polarity
+// inverted, turning quoted anchors into "code".
+const REGEX_LEAD_CHARS = '(,=:[!&|?{};+-*%~^<>';
+const REGEX_LEAD_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'do', 'else',
+  'yield', 'await', 'throw', 'new', 'delete', 'void']);
+
+/**
+ * The source with comments gone and every string literal reduced to its VALUE between
+ * NUL sentinels. Template and regular-expression literals become a bare `0`.
+ *
+ * JAVASCRIPT HAS NO PARSER IN THE STANDARD LIBRARY and this package has no
+ * dependencies, so the Python half's `ast.walk` has no equivalent here. It does not
+ * need one: the only distinction `no-tree-writes` turns on is whether the text it
+ * matched is code or is quoted inside a string, and a scanner that knows where strings
+ * begin and end answers exactly that and nothing more. What it cannot do is the rest of
+ * a parse, and the property does not ask for it.
+ *
+ * TEMPLATES BECOME `0` RATHER THAN THEIR TEXT so the two halves agree: Python sees an
+ * f-string as a `JoinedStr` and not a `Constant`, so it does not match one either. A
+ * violation written with a backtick is therefore missed by both, in the same way, and
+ * that is the direction to be wrong in.
+ */
+export function codeOnly(src) {
+  let out = '';
+  let prev = '';         // last non-space character of CODE emitted
+  let word = '';         // the identifier run ending at `prev`, for `return /re/`
+  let i = 0;
+  const step = (ch) => {
+    prev = ch;
+    word = /[\w$]/.test(ch) ? word + ch : '';
+  };
+  while (i < src.length) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < src.length && src[i] !== '\n') i += 1;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+        if (src[i] === '\n') out += '\n';
+        i += 1;
+      }
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let value = '';
+      i += 1;
+      while (i < src.length && src[i] !== c && src[i] !== '\n') {
+        if (src[i] === '\\') { value += src[i + 1] || ''; i += 2; continue; }
+        value += src[i];
+        i += 1;
+      }
+      i += 1;
+      out += `\0${value.split('\0').join('')}\0`;
+      step('"');
+      continue;
+    }
+    if (c === '`') {
+      i += 1;
+      while (i < src.length && src[i] !== '`') {
+        if (src[i] === '\\') { i += 2; continue; }
+        if (src[i] === '\n') out += '\n';
+        i += 1;
+      }
+      i += 1;
+      out += '0';
+      step('0');
+      continue;
+    }
+    if (c === '/' && (prev === '' || REGEX_LEAD_CHARS.includes(prev)
+      || REGEX_LEAD_WORDS.has(word))) {
+      i += 1;
+      let inClass = false;
+      while (i < src.length && src[i] !== '\n') {
+        if (src[i] === '\\') { i += 2; continue; }
+        if (src[i] === '[') inClass = true;
+        else if (src[i] === ']') inClass = false;
+        else if (src[i] === '/' && !inClass) { i += 1; break; }
+        i += 1;
+      }
+      out += '0';
+      step('0');
+      continue;
+    }
+    out += c;
+    if (!/\s/.test(c)) step(c);
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * Every `join(__dirname, 'x.json')` that is CODE, as the names it aims at.
+ *
+ * Only the segment DIRECTLY under the directory constant counts, as on the Python side:
+ * `join(__dirname, '..', other, 'x.json')` leaves this directory and is not state beside
+ * the code under test.
+ */
+export function stateTargets(src) {
+  const out = [];
+  for (const match of codeOnly(src).matchAll(STATE_TARGET_RE)) {
+    if (STATE_SUFFIXES.some((suffix) => match[1].endsWith(suffix))) out.push(match[1]);
+  }
+  return out;
+}
+
 export const PROPERTIES = [
   ['evidence', 'positive proof each suite RAN',
     'no failures reported and no test executed look identical',
@@ -115,9 +239,17 @@ export const PROPERTIES = [
     'a syntax error makes every suite fail, which reads as a catch',
     (src) => has(src, 'new Function(', 'checkSyntax', '--check', 'parseSync', 'acorn')
       || requiresNamedSection(src)],
+  // THE TELL IS THE PATH RATHER THAN THE WRITE CALL, and this half used to require a
+  // literal `writeFileSync(...)`. Two things were wrong with that. It read a bare
+  // `join(__dirname, 'x.json')` as clean while the Python half read it as a finding, so
+  // one `assay.json` gave two verdicts for the same harness depending on which binary
+  // CI invoked — the drift `test_parity.py` exists to stop. And it is the narrower
+  // question: the write is usually performed by the CHILD suite, and what the harness
+  // contributes is a location beside its own source, so keying on the write is a
+  // whitelist of spellings and what a whitelist omits is silence.
   ['no-tree-writes', 'no scratch state beside the code under test',
     'a clean target is not a clean tree',
-    (src) => !/writeFileSync\s*\(\s*(?:path\.)?join\(\s*(?:HERE|__dirname)\s*,\s*['"][^'"]+\.(?:json|tsv|db|jsonl|txt)['"]/.test(src)],
+    (src) => !stateTargets(src).length],
   // THE TREE CAME BACK, proved rather than assumed because the restore ran.
   // `restore-in-finally` proves the restore PATH EXECUTES; it says nothing about the
   // file on disk. A harness that restores from a buffer it read AFTER mutating, that
