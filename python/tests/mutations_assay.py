@@ -563,6 +563,20 @@ MUTATIONS = [
      "checks.py",
      '''    return _has(src, "ast.parse", "compile(") or _requires_named_section(src)''',
      '''    return True'''),
+    # THE DEFECT THIS SHIPPED WITH, kept as a mutation rather than as a comment. The
+    # regex read a mutation runner's ANCHORS — string literals holding fragments of the
+    # code under test — as the runner's own code, and failed six innocent harnesses on
+    # a target's file extension. Silently STRICT rather than silently permissive, which
+    # is the direction that gets an audit switched off.
+    ("checks: no-tree-writes reads the file as TEXT again (a shipped defect)",
+     "checks.py",
+     '''    return not state_targets(tree)''',
+     '''    return not re.search(r"os\\.path\\.join\\(\\s*HERE\\s*,\\s*[\\"'][^\\"']+\\.(json|tsv|db|"
+                         r"jsonl|txt)[\\"']", src)'''),
+    ("checks: the tree-writes detector is always satisfied",
+     "checks.py",
+     '''    return not state_targets(tree)''',
+     '''    return True'''),
     ("checks: the restore-verified detector is always satisfied",
      "checks.py",
      '''    digested = _has(src, *DIGEST_TELLS)
@@ -1534,6 +1548,27 @@ MUTATIONS += [
      "checks.js",
      """export const RESTORE_FAILURE_TELLS = ['RESTORE FAILED', 'NOT RESTORED',""",
      """export const RESTORE_FAILURE_TELLS = ['', 'NOT RESTORED',"""),
+
+    # ---- no-tree-writes, in the half with no parser -------------------------- #
+    ("js checks: no-tree-writes reads the file as TEXT again (a shipped defect)",
+     "checks.js",
+     """    (src) => !stateTargets(src).length],""",
+     """    (src) => !/(?:path\\.)?join\\(\\s*(?:HERE|__dirname)\\s*,\\s*['"][^'"]+\\.(?:json|tsv|db|jsonl|txt)['"]/.test(src)],"""),
+    # A regular expression read as code lets its contents open a string that never
+    # closes, and every literal after it in the file is then scanned with its polarity
+    # INVERTED — quoted anchors becoming "code". Silently strict, and the only guard in
+    # `codeOnly` whose absence produces a false conviction rather than a miss.
+    ("js checks: a regex literal is scanned as code, inverting the literals after it",
+     "checks.js",
+     """    if (c === '/' && (prev === '' || REGEX_LEAD_CHARS.includes(prev)""",
+     """    if (false && (prev === '' || REGEX_LEAD_CHARS.includes(prev)"""),
+    # The mirror, and the quieter direction: every `/` read as a regular expression
+    # swallows the code up to the next one or to the end of the line, so a real write
+    # inside that span is never reported at all.
+    ("js checks: a division is scanned as a regex, swallowing the rest of its line",
+     "checks.js",
+     """    if (c === '/' && (prev === '' || REGEX_LEAD_CHARS.includes(prev)""",
+     """    if (c === '/' && (true || REGEX_LEAD_CHARS.includes(prev)"""),
 
     # ---- the answer channel -------------------------------------------------- #
     ("js sameness: the probe answer shares stdout again (a shipped defect)",

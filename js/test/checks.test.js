@@ -201,20 +201,29 @@ test('a path a COMMENT mentions is not a write either', () => {
   assert.deepEqual([...missing(source)], []);
 });
 
-test('a REGEX holding a quote does not invert every literal after it', () => {
-  // The one ambiguity a scanner this size has to settle, and getting it wrong is a
-  // false CONVICTION rather than a miss: `/['"]/` read as the start of a string opens
-  // one that never closes, and every literal after it in the file is then read with
-  // its polarity inverted — so the anchor below would come back as "code".
-  const source = `${runner()}\nconst QUOTED = /['"]/;\n`
-    + "const ANCHOR = '  writeFileSync(join(__dirname, \"results.json\"), x);';\n";
+test('a REGEX holding a quote does not invert the literals after it', () => {
+  // The one ambiguity a scanner this size has to settle, and getting it wrong here is
+  // a false CONVICTION rather than a miss: `/['"]/` read as the start of a string
+  // opens one that runs to the anchor's opening quote, and everything from there is
+  // then scanned with its polarity inverted — the quoted write arriving as "code".
+  //
+  // ONE LINE, and that is the fixture doing work rather than looking tidy. A string
+  // here ends at a newline whether or not it was closed, so the damage a mis-scanned
+  // regex can do is bounded by the line it is on. Written across two lines this case
+  // passes with the guard REMOVED, which is a fixture that cannot tell the guard from
+  // its absence.
+  const source = `${runner()}\n`
+    + 'const OK = /[\'"]/.test(\'  writeFileSync(join(__dirname, "results.json"), x);\');\n';
   assert.deepEqual([...missing(source)], []);
 });
 
 test('a DIVISION is not mistaken for a regular expression', () => {
-  // The mirror of the case above. Reading `a / b` as a regex swallows the code after
-  // it up to the next `/`, and a real write inside that span goes unreported.
-  const source = `${runner({ treeWrite: true })}\nconst RATIO = passed / total;\n`;
+  // The mirror of the case above, and the same one-line reason. Reading `a / b` as a
+  // regex swallows everything to the next `/` or the end of the line, so a real write
+  // sitting in that span goes unreported — silence rather than a wrong conviction, and
+  // the harder of the two to notice.
+  const source = `${runner()}\n`
+    + "const RATIO = passed / total; const OUT = join(__dirname, 'results.json');\n";
   assert.deepEqual([...missing(source)], ['no-tree-writes']);
 });
 
