@@ -120,8 +120,8 @@ jobs:
     # runtime claimed, this asks whether anything ran at all, which one runtime
     # answers.
     #
-    # THE FLOORS ARE ROUND AND WELL UNDER THE CURRENT COUNTS (388 JavaScript tests,
-    # 409 Python) so that ADDING tests never trips a gate, and no one is tempted to
+    # THE FLOORS ARE ROUND AND WELL UNDER THE CURRENT COUNTS (394 JavaScript tests,
+    # 416 Python) so that ADDING tests never trips a gate, and no one is tempted to
     # edit a number to make CI green. What they catch is a suite collapsing, not a
     # suite changing size.
     runs-on: ubuntu-latest
@@ -212,11 +212,11 @@ jobs:
     # Separate job so the fast feedback above is never held up behind it.
     runs-on: ubuntu-latest
     # THE COST IS (mutations × suite), PER HALF. Every mutation runs a whole suite from
-    # scratch, so the wall clock is 139 Python mutations plus 112 JavaScript ones, each
+    # scratch, so the wall clock is 141 Python mutations plus 115 JavaScript ones, each
     # paying its half's suite in full.
     #
     # THE 28 MINUTES THIS ONCE REPORTED WAS MEASURED AT 182 MUTATIONS, and that is the
-    # last time anyone timed the whole table. It is 251 now, so 28 is a floor and not an
+    # last time anyone timed the whole table. It is 256 now, so 28 is a floor and not an
     # estimate, and the honest reading of the gap is that nobody has re-measured it —
     # which is why the timeout is set off the failure mode rather than off this number.
     # (At 182 it was 93 minutes before the probe stopped importing `asyncio` on every
@@ -249,7 +249,7 @@ jobs:
       - name: every guard, broken in turn
         # Wrapped because the one number this job exists to produce is the one a
         # `--only` filter, a truncated table, or a bad `--root` would quietly shrink:
-        # `3/3 mutations detected` and `251/251 mutations detected` are both a clean
+        # `3/3 mutations detected` and `256/256 mutations detected` are both a clean
         # sweep and both exit 0. The floor reads the DENOMINATOR — how many mutations
         # were SCORED, not how many were caught — so a run over a handful fails here
         # even when every one of the handful was caught. PARTIAL RUN says so in the
