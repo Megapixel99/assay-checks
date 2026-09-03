@@ -6,6 +6,7 @@ should pass, and that is the failure mode that gets an audit switched off. Each
 property below has a runner that must be flagged and one that must not.
 """
 
+import ast
 import os
 import subprocess
 import sys
@@ -529,3 +530,66 @@ class Owns(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TheUnreadableSegment(unittest.TestCase):
+    """`os.path.join(HERE, name)` is not a violation and not a clean bill either.
+
+    Three runners in the tree this was measured against join their own directory with a
+    variable driven from their mutation table, and all three hold only `.py` subjects. They
+    are clean -- but the check cannot know that, because its verdict for them depends on the
+    contents of a table it never opens. `ok` is a claim it has not earned, and `finding` is
+    one it cannot support. That is what `look` is for.
+    """
+
+    def targets(self, src):
+        return checks.state_targets(ast.parse(src))
+
+    def looks(self, src):
+        return checks.unresolvable_segments(ast.parse(src))
+
+    def test_the_join_is_found_however_os_path_was_spelled(self):
+        # Each of these was invisible before, and none of them was reported as invisible.
+        # The JavaScript half has matched `(path.)?join` since it was written, so this is
+        # the Python half catching up rather than a widening of the property.
+        for label, src in [
+            ("os.path.join", 'import os\np = os.path.join(HERE, "s.json")'),
+            ("bare join", 'from os.path import join\np = join(HERE, "s.json")'),
+            ("aliased module", 'import os.path as pp\np = pp.join(HERE, "s.json")'),
+            ("renamed constant",
+             'import os\nROOT = os.path.dirname(os.path.abspath(__file__))\n'
+             'p = os.path.join(ROOT, "s.json")'),
+        ]:
+            self.assertEqual(["s.json"], self.targets(src), label)
+
+    def test_a_quoted_join_is_still_not_code(self):
+        self.assertEqual([], self.targets('M = ["  os.path.join(HERE, \'s.json\')"]'))
+
+    def test_an_unreadable_segment_is_a_look_when_a_state_NAME_is_in_reach(self):
+        self.assertEqual(
+            [(4, "`fname` is a variable, not a literal")],
+            self.looks('import os\nMUT = [("a", "results.json", "x", "y")]\n'
+                       'for n, fname, o, w in MUT:\n    p = os.path.join(HERE, fname)'))
+
+    def test_it_stays_SILENT_when_no_literal_could_be_a_state_file(self):
+        # The narrowing, and it is measured rather than argued: without it this fired on 115
+        # of 152 real runners, because joining HERE with a table-driven name is the ordinary
+        # shape of a mutation runner rather than a hazard.
+        self.assertEqual(
+            [], self.looks('import os\nMUT = [("a", "run.py", "x", "y")]\n'
+                           'for n, fname, o, w in MUT:\n    p = os.path.join(HERE, fname)'))
+
+    def test_a_state_suffix_inside_PROSE_is_not_a_filename(self):
+        # The only survivor of the narrowing over 152 runners was a mutation's own
+        # explanation mentioning results.json. A sentence about a file is not a harness
+        # naming one.
+        self.assertEqual(
+            [], self.looks('import os\nWHY = "removing it would change results.json"\n'
+                           'p = os.path.join(HERE, fname)'))
+
+    def test_a_literal_segment_is_DECIDED_and_never_merely_looked_at(self):
+        # The two must not both fire on one join: a look beside a finding reads as the tool
+        # hedging on something it actually settled.
+        src = 'import os\np = os.path.join(HERE, "results.json")'
+        self.assertEqual(["results.json"], self.targets(src))
+        self.assertEqual([], self.looks(src))

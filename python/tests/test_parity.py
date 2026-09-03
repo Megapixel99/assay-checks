@@ -226,8 +226,48 @@ class TheTwoHalvesAgree(unittest.TestCase):
         spellings whose omissions are silent.
         """
         self.assertIn(r"const STATE_TARGET_RE = /(?:path\.)?join\(", js("checks.js"))
-        self.assertIn('and isinstance(fn, ast.Attribute) and fn.attr == "join"',
-                      py("checks.py"))
+        self.assertIn('fn.attr == "join"', py("checks.py"))
+        # Driven as well as read, because the assertions above pin SPELLINGS and a
+        # refactor that moved the join test into a helper would break them while
+        # changing no behaviour -- which is what happened when `_join_calls` was
+        # extracted. What the property means is a claim about verdicts.
+        import ast as _ast
+        self.assertEqual(
+            ["s.json"],
+            checks.state_targets(_ast.parse('import os\np = os.path.join(HERE, "s.json")')),
+            "a join beside the harness is the tell, with no write call anywhere")
+        self.assertEqual(
+            [], checks.state_targets(_ast.parse('import os\nopen("s.json", "w")')),
+            "and a write with no join under the directory constant is not this property's")
+
+    def test_neither_half_PASSES_where_the_other_LOOKS(self):
+        """Different resolution power between the halves is fine. One of them silently
+        saying `ok` where the other says `look` is not: a caller running the JavaScript
+        binary would get a clean bill on a harness the Python binary could not read, and
+        nothing would say so.
+
+        THIS FILE COMPARES TEXT, which is its design and also its limit -- two halves can
+        match every string here and still behave differently. So the four cases that decide
+        this are DRIVEN, in each half's own suite: `TheUnreadableSegment` in
+        `test_checks.py` and "an unreadable segment is a look" in `checks.test.js` run the
+        same four inputs and assert the same four answers. What is pinned here is that both
+        halves still HAVE the mechanism and the narrowing, so neither can quietly drop it
+        and leave the other looking alone.
+        """
+        for source, member in ((js("checks.js"), "unresolvedSegments"),
+                               (py("checks.py"), "unresolvable_segments")):
+            self.assertIn(member, source)
+        # the narrowing, in both: stay silent unless some literal could BE a filename
+        self.assertIn("FILENAME_RE", js("checks.js"))
+        self.assertIn("_could_be_a_filename", py("checks.py"))
+        # and the four inputs are the same four in both suites, so the two are comparable
+        for suite in (open(os.path.join(REPO, "js", "test", "checks.test.js"),
+                           encoding="utf-8").read(),
+                      open(os.path.join(REPO, "python", "tests", "test_checks.py"),
+                           encoding="utf-8").read()):
+            self.assertIn("results.json", suite)
+            self.assertIn("run.py", suite)
+            self.assertIn("would change results.json", suite)
 
     def test_both_halves_read_INTERPOLATED_code_as_code(self):
         """An f-string and a template literal both hold text AND expressions, and the two

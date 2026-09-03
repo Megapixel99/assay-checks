@@ -110,6 +110,23 @@ export const STATE_SUFFIXES = ['.json', '.tsv', '.db', '.jsonl', '.txt'];
 // that difference is the whole check.
 const STATE_TARGET_RE = /(?:path\.)?join\(\s*(?:HERE|__dirname)\s*,\s*\0([^\0]*)\0/g;
 
+// The same join, with a segment that is NOT a quoted literal -- no NUL sentinel follows the
+// comma. `codeOnly` has already removed comments and reduced strings, so anything left here
+// is an expression: a variable, a call, a template. Deliberately not anchored on what the
+// expression IS, because the point is that this cannot read it.
+// The segment is captured and then TESTED in code rather than excluded by a lookahead:
+// `\s*(?!\0)` backtracks to match zero spaces and then passes, so a quoted literal slipped
+// through as "unresolved". Caught by the control that asserts a literal segment produces no
+// look -- which is why that control is in the suite and not just in the reasoning.
+const UNRESOLVED_SEGMENT_RE =
+  /(?:path\.)?join\(\s*(?:HERE|__dirname)\s*,\s*([^,)\n]{1,60})/g;
+
+// A state suffix inside PROSE is not a filename. Measured on the Python side over 152 real
+// runners: the only survivor of the narrowing was a mutation's own explanation, "because
+// removing it would change the code that produced results.json". A look raised on a sentence
+// is the noise that stops looks being read.
+const FILENAME_RE = /^\S+$/;
+
 // A `/` after any of these is a regular expression rather than a division, which is the
 // one ambiguity a scanner this size has to settle. Getting it wrong is not cosmetic: a
 // regex holding a lone quote — `/['"]/` — would otherwise open a string that never
@@ -240,6 +257,35 @@ export function codeOnly(src) {
   }
 
   scan(0, false);
+  return out;
+}
+
+/**
+ * [[line, text]] -- joins beside the harness whose segment this cannot READ.
+ *
+ * A non-literal segment is not evidence of a violation and must not be scored as one:
+ * `join(HERE, name)` inside a restore helper, with `name` driven from the harness's own
+ * table, is the STANDARD shape of a mutation runner. Reporting every one produced 115 looks
+ * over one real tree, which is a check nobody reads.
+ *
+ * So the same narrowing as the Python half: stay silent unless some literal in the harness
+ * could actually BE a state filename. Sound in the direction that matters -- if no such
+ * literal exists, no value that variable holds is one -- and it is an over-approximation, so
+ * a harness building `"results" + ".json"` defeats it. Said here rather than found later.
+ */
+export function unresolvedSegments(src) {
+  const code = codeOnly(src);
+  const literals = [...code.matchAll(/\0([^\0]*)\0/g)].map((m) => m[1]);
+  if (!literals.some((t) => STATE_SUFFIXES.some((sfx) => t.endsWith(sfx)) && FILENAME_RE.test(t))) {
+    return [];
+  }
+  const out = [];
+  for (const m of code.matchAll(UNRESOLVED_SEGMENT_RE)) {
+    const seg = m[1].trim();
+    if (seg.startsWith("\0")) continue;          // a quoted literal: the property decides it
+    const line = code.slice(0, m.index).split("\n").length;
+    out.push([line, `\`${seg}\` is not a string literal`]);
+  }
   return out;
 }
 
