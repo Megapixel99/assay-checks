@@ -10,7 +10,8 @@
  */
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync
+} from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,7 +19,7 @@ import test from 'node:test';
 
 import {
   auditDiff, auditRunners, changedFiles, checkExemptions, codeOnly, findRunners,
-  PROPERTIES, PROPERTY_KEYS, stateTargets, targetsMentioned,
+  PROPERTIES, PROPERTY_KEYS, stateTargets, targetsMentioned, unresolvedSegments,
 } from '../src/checks.js';
 import { Config } from '../src/config.js';
 import { Report } from '../src/verdicts.js';
@@ -492,4 +493,34 @@ test('limitation-shaped tests are a LOOK', () => {
   const report = auditDiff(root, 'HEAD', new Config(), new Report());
   assert.ok(report.looks.some((i) => /limitation-shaped/.test(i.message)));
   assert.equal(report.exitCode(), 0);
+});
+
+test("an unreadable segment is a look, and only where a state name is in reach", () => {
+  // `join(HERE, name)` is not a violation and not a clean bill either: three runners in the
+  // tree this was measured against do exactly that with a table holding only `.py` subjects.
+  // They are clean, and the check cannot know it — its verdict depends on a table it never
+  // opens. Mirrors the Python half; `test_parity.py` drives both.
+  assert.deepEqual(
+    unresolvedSegments('const M=[["a","results.json"]];\nfor (const [n,f] of M) { const p = join(HERE, f); }'),
+    [[2, "`f` is not a string literal"]]);
+
+  // The narrowing, measured rather than argued: without it the Python side fired on 115 of
+  // 152 real runners, because joining the harness directory with a table-driven name is the
+  // ordinary shape of a mutation runner.
+  assert.deepEqual(
+    unresolvedSegments('const M=[["a","run.py"]];\nconst p = join(HERE, f);'), []);
+
+  // A state suffix inside PROSE is not a filename.
+  assert.deepEqual(
+    unresolvedSegments('const WHY="removing it would change results.json";\nconst p = join(HERE, f);'), []);
+
+  // A literal segment is DECIDED, never merely looked at — the two must not both fire on
+  // one join. This control is what caught `\s*(?!\0)` backtracking to match zero spaces.
+  assert.deepEqual(unresolvedSegments('const p = join(HERE, "results.json");'), []);
+  assert.deepEqual(stateTargets('const p = join(HERE, "results.json");'), ["results.json"]);
+
+  // `__dirname` is the other directory constant this half has always accepted.
+  assert.deepEqual(
+    unresolvedSegments('const M=["results.json"];\nconst p = path.join(__dirname, nm);'),
+    [[2, "`nm` is not a string literal"]]);
 });

@@ -168,6 +168,13 @@ STATE_SUFFIXES = (".json", ".tsv", ".db", ".jsonl", ".txt")
 def state_targets(tree):
     """Every `os.path.join(HERE, "x.json")` that is CODE, as the names it aims at.
 
+    `os.path.join` is one SPELLING and not the contract. `from os.path import join` and
+    `import os.path as p` name the same function, and a directory constant is free to be
+    called `ROOT` or `_HERE`; each was outside this detector's reach and none of them was
+    reported as out of reach. `_join_calls` and `_dir_constant_names` resolve the bindings so
+    the coverage matches the JavaScript half, which has accepted `(path.)?join` with `HERE`
+    or `__dirname` since it was written.
+
     Only the segment DIRECTLY under `HERE` counts, which is what the text version
     measured too: `os.path.join(HERE, "..", other, "x.json")` leaves this directory and
     is not state beside the code under test.
@@ -176,21 +183,135 @@ def state_targets(tree):
     before any detector runs — so this has no third answer that could be mistaken for
     a clean one.
     """
+    consts, aliases = _dir_constant_names(tree)
     out = []
-    for node in ast.walk(tree):
-        fn = getattr(node, "func", None)
-        if not (isinstance(node, ast.Call)
-                and isinstance(fn, ast.Attribute) and fn.attr == "join"
-                and isinstance(fn.value, ast.Attribute) and fn.value.attr == "path"
-                and getattr(fn.value.value, "id", "") == "os"):
-            continue
-        if len(node.args) < 2 or getattr(node.args[0], "id", "") != "HERE":
+    for node in _join_calls(tree, aliases):
+        if len(node.args) < 2 or getattr(node.args[0], "id", "") not in consts:
             continue
         seg = node.args[1]
         if (isinstance(seg, ast.Constant) and isinstance(seg.value, str)
                 and seg.value.endswith(STATE_SUFFIXES)):
             out.append(seg.value)
     return out
+
+
+def _dir_constant_names(tree):
+    """Names bound to a directory-of-this-file expression, plus the `os.path` aliases.
+
+    `HERE` is the convention this started with and it is not the contract. A runner is free
+    to call it `_HERE`, `ROOT` or `THIS_DIR`, and one that does was silently outside the
+    detector's reach -- not reported as unreachable, just absent from the findings, which is
+    the difference between a gap you can see and one you cannot.
+    """
+    names, aliases = set(), {"os.path"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == "os.path" and a.asname:
+                    aliases.add(a.asname)
+        if isinstance(node, ast.ImportFrom) and node.module == "os.path":
+            for a in node.names:
+                if a.name == "join":
+                    aliases.add(a.asname or "join")
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            # `X = os.path.dirname(os.path.abspath(__file__))` and the `Path(__file__).parent`
+            # spelling both name the directory this file sits in.
+            text = ast.dump(node.value)
+            if ("dirname" in text and "__file__" in text) or \
+               ("__file__" in text and "parent" in text):
+                names.add(target.id)
+    return names or {"HERE"}, aliases
+
+
+def _join_calls(tree, aliases):
+    """Every call that is a path join, however `os.path` was spelled when it was bound."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        # `os.path.join(...)` or `p.join(...)` for an aliased `import os.path as p`
+        if isinstance(fn, ast.Attribute) and fn.attr == "join":
+            owner = fn.value
+            dotted = None
+            if isinstance(owner, ast.Attribute) and owner.attr == "path":
+                dotted = "%s.path" % getattr(owner.value, "id", "")
+            elif isinstance(owner, ast.Name):
+                dotted = owner.id
+            if dotted in aliases:
+                yield node
+        # bare `join(...)` from `from os.path import join`
+        elif isinstance(fn, ast.Name) and fn.id in aliases:
+            yield node
+
+
+def unresolvable_segments(tree):
+    """[(line, text)] -- joins under the directory constant whose segment cannot be READ.
+
+    A NON-LITERAL SEGMENT IS NOT EVIDENCE OF A VIOLATION, and scoring it as one would be
+    wrong: three runners in the tree this was measured against join their directory with a
+    variable driven from their own mutation table, and all three hold only `.py` subjects.
+    They are clean. But the check cannot know that -- its verdict for them depends on the
+    contents of a table it never opens -- so `ok` is a claim it has not earned either.
+
+    That is what `look` is for, and it is why this is separate from the property rather than
+    folded into it. The property answers a question it CAN answer (is there a literal state
+    path here); this says out loud where it could not look. Silence in both directions is how
+    a check stops being read.
+    """
+    # NARROWED BY MEASUREMENT, and the first version is why. Reporting every non-literal
+    # segment produced 115 looks over one real tree -- because `os.path.join(HERE, path)`
+    # inside a `_restore()` helper, with `path` driven from the runner's own table, is the
+    # STANDARD shape of a mutation runner rather than a hazard. A check that fires on the
+    # idiom is one nobody reads, which costs more than the gap it closes.
+    #
+    # The narrowing is an over-approximation and is sound in the direction that matters: if
+    # no string literal ANYWHERE in the harness carries a state suffix, then no value that
+    # variable can hold is a state filename, and the silence is earned rather than assumed.
+    # A harness that builds "results" + ".json" defeats it, and that is a look this does not
+    # claim to produce -- stated here rather than discovered later.
+    if not any(_could_be_a_filename(n.value)
+               for n in ast.walk(tree)
+               if isinstance(n, ast.Constant) and isinstance(n.value, str)):
+        return []
+    consts, aliases = _dir_constant_names(tree)
+    out = []
+    for node in _join_calls(tree, aliases):
+        if len(node.args) < 2 or getattr(node.args[0], "id", "") not in consts:
+            continue
+        seg = node.args[1]
+        if isinstance(seg, ast.Constant) and isinstance(seg.value, str):
+            continue
+        out.append((getattr(node, "lineno", 0), _describe(seg)))
+    return out
+
+
+def _could_be_a_filename(text):
+    """A state suffix inside PROSE is not a filename, and the whitespace test is why.
+
+    Measured: the only survivor of the narrowing above, over 152 real runners, was a
+    mutation's own explanation -- "because removing it would change the code that produced
+    results.json". A sentence mentioning a file is not a harness naming one, and a look
+    raised on prose is the noise that stops looks being read.
+    """
+    return text.endswith(STATE_SUFFIXES) and not any(c.isspace() for c in text)
+
+
+def _describe(node):
+    """What KIND of thing the segment is, because "unresolvable" alone sends nobody anywhere."""
+    if isinstance(node, ast.Name):
+        return "`%s` is a variable, not a literal" % node.id
+    if isinstance(node, ast.JoinedStr):
+        return "an f-string, whose value depends on what is interpolated"
+    if isinstance(node, ast.Call):
+        return "a call, whose result is not known without running it"
+    if isinstance(node, ast.Attribute):
+        return "an attribute lookup, not a literal"
+    if isinstance(node, ast.Subscript):
+        return "a subscript, so the value comes from a container this cannot read"
+    return "not a string literal (%s)" % type(node).__name__
 
 
 def _p_no_tree_writes(src, tree):
@@ -320,6 +441,13 @@ def audit_runners(root, config, report=None):
             if config.exempt_runner(rel, key):
                 continue
             missing.append((key, why))
+        # Said BEFORE the verdict, and it is not a footnote to it: an `ok` earned partly by
+        # not being able to read something is a different claim from a plain `ok`, and this
+        # is the sentence that keeps the two apart.
+        for line, why in unresolvable_segments(tree):
+            rep.look("%s:%d joins its own directory with a segment this cannot read -- %s; "
+                     "whether it writes state there depends on a value only running it "
+                     "would settle" % (rel, line, why), rel)
         if missing:
             for key, why in missing:
                 rep.finding("%s: no `%s` (%s)" % (rel, key, why), rel)
