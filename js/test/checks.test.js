@@ -238,6 +238,46 @@ test('the scanner reduces a string literal to its VALUE and nothing else', () =>
   assert.deepEqual(stateTargets(runner({ treeWrite: true })), ['results.json']);
 });
 
+test('a template inside a template does not invert the polarity of the rest of the line', () => {
+  // THE 0.6.0 FALSE NEGATIVE. The backtick branch ran to the next unescaped backtick, so
+  // `x${`inner`}z` ended at the INNER OPENING one. `inner` was then read as code, an
+  // apostrophe in it opened a runaway string, and that string swallowed the join() after
+  // it -- so the anchor never got its NUL pair and the write went UNREPORTED. A miss, not
+  // a cry of wolf, which is the direction that matters.
+  //
+  // Four conditions had to hold together and the controls below pin each one, so a future
+  // change that fixes the symptom by disabling the scan cannot pass this.
+  assert.deepEqual(
+    stateTargets('const a = `x${`it\'s`}z`; writeFileSync(join(HERE, "a.json"), d);'),
+    ['a.json'], 'nested template, quote inside it, write after it on the same line');
+  assert.deepEqual(
+    stateTargets("const m = `${n ? `don't` : ''}`; writeFileSync(join(HERE, \"a.json\"), d);"),
+    ['a.json'], 'the realistic form: a ternary between two templates');
+  assert.deepEqual(
+    stateTargets('const a = `it\'s fine`; writeFileSync(join(HERE, "a.json"), d);'),
+    ['a.json'], 'CONTROL: one level of template, same apostrophe, always worked');
+  assert.deepEqual(
+    stateTargets('writeFileSync(join(HERE, "a.json"), d);'),
+    ['a.json'], 'CONTROL: no template at all');
+});
+
+test('a write inside a ${} substitution is code, because Python reads it that way', () => {
+  // The other half of the same defect, and a PARITY gap rather than a scanning slip.
+  // 0.6.0 collapsed the whole template to `0` and justified it by claiming Python does
+  // not match an f-string either. Only its TEXT: `ast.walk` descends through
+  // `FormattedValue`, so `f"{open(os.path.join(HERE, 'a.json'))}"` is found by the Python
+  // half. This half missed it. One config, two verdicts -- what test_parity exists to stop.
+  assert.deepEqual(
+    stateTargets('const x = `${writeFileSync(join(HERE, "a.json"), d)}`;'),
+    ['a.json'], 'a substitution is an expression, not decoration');
+  assert.deepEqual(
+    stateTargets('const x = `${a ? `${writeFileSync(join(HERE, "a.json"), d)}` : 0}`;'),
+    ['a.json'], 'and it still holds one template deeper');
+  assert.deepEqual(
+    stateTargets('const x = `no join(HERE, "a.json") here`;'),
+    [], 'CONTROL: the literal TEXT of a template is still not code');
+});
+
 test('a restore nothing VERIFIES is flagged', () => {
   // The seventh property, and the one the other six cannot see. This harness restores
   // in a `finally` and so passes `restore-in-finally`; it never reads the file back,

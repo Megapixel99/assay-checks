@@ -15,6 +15,51 @@ the honest reading: a tool whose whole purpose is finding things you had not che
 cannot promise that a patch release finds nothing new. Pin exactly if that matters,
 and use the `baseline` in `assay.json` to accept what you have read.
 
+## 0.6.1
+
+### 0.6.0's scanner mis-read a template inside a template, and MISSED a real write
+
+A false negative in a shipped release, found by a reader who went at `codeOnly`
+adversarially rather than by anything in this repository noticing.
+
+The backtick branch scanned to the next unescaped backtick, so ``` `x${`it's`}z` ``` ended
+at the INNER OPENING one. What followed was read as code; the apostrophe in `it's` opened a
+runaway string in what the scanner believed was code, and that string ran to the end of the
+line and swallowed the `join(HERE, "a.json")` after it. The anchor never got its sentinel
+pair, `STATE_TARGET_RE` could not match, and `no-tree-writes` reported nothing. It is
+exactly the polarity inversion the `REGEX_LEAD_CHARS` note warns about, arriving through
+`${}` instead of through `/`.
+
+Four conditions had to hold together, which is why the release went out with it: a template
+nested in another's `${}`, a quote character inside the inner one, a tree-write later on the
+SAME line, and the write using the opposite quote type. Any of those absent and detection
+recovers. Each is now pinned by its own control.
+
+### A write inside `${}` was a finding in Python and silence in JavaScript
+
+The other half of the same bug, and a parity gap rather than a slip. 0.6.0 collapsed the
+whole template to `0` and justified it in a comment: *"Python sees an f-string as a
+`JoinedStr` and not a `Constant`, so it does not match one either."* True of the TEXT only.
+`ast.walk` descends through `FormattedValue`, so
+`f"{open(os.path.join(HERE, 'a.json'))}"` **is** found by the Python half, and was missed
+here. Substitutions are now scanned as code and only the literal chunks collapse; the
+comment that asserted otherwise is corrected rather than deleted, and `test_parity.py`
+gained a pin that drives both halves over an interpolated write.
+
+396 JavaScript tests, 417 Python. Both new regressions were run against 0.6.0's scanner and
+FAIL there, which is the only thing that makes them regressions.
+
+### Known and NOT fixed here
+
+The two halves still disagree about what a path expression looks like: JavaScript matches
+`(?:path\.)?join` and accepts `HERE` or `__dirname`, while Python requires the full
+`os.path.join` and only `HERE`. A bare `join` bound from `os.path`, an aliased `os.path`,
+a `pathlib` form, or a non-literal segment is invisible to the Python half. Three runners in
+the tree this was measured against already use the non-literal form and are clean only
+because of what their mutation tables happen to hold — which the check never inspects. That
+is a coverage change with its own risk and it is not being smuggled into a patch release
+for a false negative.
+
 ## 0.6.0
 
 ### `no-tree-writes` read quoted text as code, and it convicted six innocent harnesses

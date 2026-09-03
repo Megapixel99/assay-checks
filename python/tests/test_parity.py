@@ -229,6 +229,31 @@ class TheTwoHalvesAgree(unittest.TestCase):
         self.assertIn('and isinstance(fn, ast.Attribute) and fn.attr == "join"',
                       py("checks.py"))
 
+    def test_both_halves_read_INTERPOLATED_code_as_code(self):
+        """An f-string and a template literal both hold text AND expressions, and the two
+        halves have to make the same cut between them. Python gets it from `ast.walk`,
+        which skips a `JoinedStr`'s text and descends through `FormattedValue` into the
+        expression. 0.6.0's JavaScript half collapsed the whole template to `0`, so a write
+        inside `${}` was a finding in one language and silence in the other — one config,
+        two verdicts, which is the drift this file exists to stop. Asserted on the SCANNER
+        rather than on prose: the substitution must be scanned, and the literal text must
+        not be."""
+        source = js("checks.js")
+        self.assertIn("j = scan(j + 2, true);", source,
+                      "the `${}` region must be scanned as code, not skipped")
+        self.assertIn("if (untilBrace && c === '}' && depth === 0) return i;", source,
+                      "and it must stop at the brace that closes it, counting nested ones")
+        import ast as _ast
+        self.assertEqual(
+            ["a.json"],
+            checks.state_targets(_ast.parse(
+                'x = f"{open(os.path.join(HERE, \'a.json\'))}"')),
+            "the Python half finds a write inside an f-string, so the other half must too")
+        self.assertEqual(
+            [],
+            checks.state_targets(_ast.parse('x = f"no os.path.join(HERE, \'a.json\') here"')),
+            "and neither half may read a template's literal TEXT as code")
+
     def test_both_halves_treat_a_SHALLOW_COPY_as_vacuous(self):
         """The vacuity guard decides what `same` is worth, so it has to decide the same
         thing twice. A function that only copies its argument through has not been

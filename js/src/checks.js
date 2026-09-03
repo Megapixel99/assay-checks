@@ -130,80 +130,116 @@ const REGEX_LEAD_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'do', 
  * begin and end answers exactly that and nothing more. What it cannot do is the rest of
  * a parse, and the property does not ask for it.
  *
- * TEMPLATES BECOME `0` RATHER THAN THEIR TEXT so the two halves agree: Python sees an
- * f-string as a `JoinedStr` and not a `Constant`, so it does not match one either. A
- * violation written with a backtick is therefore missed by both, in the same way, and
- * that is the direction to be wrong in.
+ * A TEMPLATE'S LITERAL TEXT BECOMES `0`, AND ITS `${}` SUBSTITUTIONS ARE SCANNED AS CODE.
+ * The halves agree on both halves of that sentence, which is why it is stated in two
+ * parts. Python sees an f-string's TEXT as a `JoinedStr` rather than a `Constant`, so it
+ * does not match quoted text in one -- and `ast.walk` descends through `FormattedValue`
+ * into the expression, so it DOES find a call inside `{}`. 0.6.0 collapsed the whole
+ * template on the first fact alone and missed the second, which made a write inside a
+ * substitution a finding in Python and silence here.
  */
 export function codeOnly(src) {
   let out = '';
   let prev = '';         // last non-space character of CODE emitted
   let word = '';         // the identifier run ending at `prev`, for `return /re/`
-  let i = 0;
   const step = (ch) => {
     prev = ch;
     word = /[\w$]/.test(ch) ? word + ch : '';
   };
-  while (i < src.length) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (c === '/' && next === '/') {
-      while (i < src.length && src[i] !== '\n') i += 1;
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      i += 2;
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
-        if (src[i] === '\n') out += '\n';
-        i += 1;
+
+  // A TEMPLATE IS NOT ONE STRING, and 0.6.0 scanned it as though it were. The old branch
+  // ran to the next unescaped backtick, so `` `x${`inner`}z` `` ended at the INNER OPENING
+  // backtick; everything after it was read as code, and an apostrophe in the inner template
+  // then opened a runaway string that swallowed the rest of the line. That is the polarity
+  // inversion the REGEX_LEAD_CHARS note warns about, arriving through `${}` instead of `/`,
+  // and it made `no-tree-writes` MISS a real write -- a false negative in a shipped release.
+  //
+  // The substitutions are scanned as CODE rather than skipped, which is the other half of
+  // the same bug. The old comment claimed collapsing the whole template kept the two halves
+  // in agreement "because Python sees an f-string as a JoinedStr and not a Constant". That
+  // is only true of the TEXT: `ast.walk` descends through `FormattedValue` into the
+  // expression, so `f"{open(os.path.join(HERE, 'a.json'))}"` is found by the Python half and
+  // was missed by this one. The literal chunks still collapse to `0`, which is the part that
+  // was right.
+  const template = (start) => {
+    let j = start + 1;
+    out += '0';
+    step('0');
+    while (j < src.length && src[j] !== '`') {
+      if (src[j] === '\\') { j += 2; continue; }
+      if (src[j] === '$' && src[j + 1] === '{') {
+        out += ' ';
+        j = scan(j + 2, true);
+        if (src[j] === '}') j += 1;
+        continue;
       }
-      i += 2;
-      continue;
+      if (src[j] === '\n') out += '\n';
+      j += 1;
     }
-    if (c === '"' || c === "'") {
-      let value = '';
-      i += 1;
-      while (i < src.length && src[i] !== c && src[i] !== '\n') {
-        if (src[i] === '\\') { value += src[i + 1] || ''; i += 2; continue; }
-        value += src[i];
-        i += 1;
+    return j + 1;
+  };
+
+  // `untilBrace` stops at the `}` closing a template substitution, counting the braces an
+  // object literal or a block opens on the way so they cannot close it early.
+  function scan(from, untilBrace) {
+    let i = from;
+    let depth = 0;
+    while (i < src.length) {
+      const c = src[i];
+      const next = src[i + 1];
+      if (untilBrace && c === '}' && depth === 0) return i;
+      if (c === '/' && next === '/') {
+        while (i < src.length && src[i] !== '\n') i += 1;
+        continue;
       }
-      i += 1;
-      out += `\0${value.split('\0').join('')}\0`;
-      step('"');
-      continue;
-    }
-    if (c === '`') {
-      i += 1;
-      while (i < src.length && src[i] !== '`') {
-        if (src[i] === '\\') { i += 2; continue; }
-        if (src[i] === '\n') out += '\n';
-        i += 1;
+      if (c === '/' && next === '*') {
+        i += 2;
+        while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+          if (src[i] === '\n') out += '\n';
+          i += 1;
+        }
+        i += 2;
+        continue;
       }
-      i += 1;
-      out += '0';
-      step('0');
-      continue;
-    }
-    if (c === '/' && (prev === '' || REGEX_LEAD_CHARS.includes(prev)
-      || REGEX_LEAD_WORDS.has(word))) {
-      i += 1;
-      let inClass = false;
-      while (i < src.length && src[i] !== '\n') {
-        if (src[i] === '\\') { i += 2; continue; }
-        if (src[i] === '[') inClass = true;
-        else if (src[i] === ']') inClass = false;
-        else if (src[i] === '/' && !inClass) { i += 1; break; }
+      if (c === '"' || c === "'") {
+        let value = '';
         i += 1;
+        while (i < src.length && src[i] !== c && src[i] !== '\n') {
+          if (src[i] === '\\') { value += src[i + 1] || ''; i += 2; continue; }
+          value += src[i];
+          i += 1;
+        }
+        i += 1;
+        out += `\0${value.split('\0').join('')}\0`;
+        step('"');
+        continue;
       }
-      out += '0';
-      step('0');
-      continue;
+      if (c === '`') { i = template(i); continue; }
+      if (c === '/' && (prev === '' || REGEX_LEAD_CHARS.includes(prev)
+        || REGEX_LEAD_WORDS.has(word))) {
+        i += 1;
+        let inClass = false;
+        while (i < src.length && src[i] !== '\n') {
+          if (src[i] === '\\') { i += 2; continue; }
+          if (src[i] === '[') inClass = true;
+          else if (src[i] === ']') inClass = false;
+          else if (src[i] === '/' && !inClass) { i += 1; break; }
+          i += 1;
+        }
+        out += '0';
+        step('0');
+        continue;
+      }
+      if (untilBrace && c === '{') depth += 1;
+      else if (untilBrace && c === '}') depth -= 1;
+      out += c;
+      if (!/\s/.test(c)) step(c);
+      i += 1;
     }
-    out += c;
-    if (!/\s/.test(c)) step(c);
-    i += 1;
+    return i;
   }
+
+  scan(0, false);
   return out;
 }
 
